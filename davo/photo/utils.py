@@ -24,4 +24,4 @@ def date_as_path(path):
         st_ctime.strftime('%d'),
     )
     root, base = os.path.split(path)
-    return os.path.join(root, sub_root), base
+    return os.path.join(root, sub_root), sub_root, base

@@ -34,8 +34,7 @@ def _command_move(namespace):
 
 
 def main():
-    if settings.LOGGING:
-        logging.config.dictConfig(settings.LOGGING)
+    logging.config.dictConfig(settings.LOGGING)
 
     parser = init_parser()
     namespace = parser.parse_args()
