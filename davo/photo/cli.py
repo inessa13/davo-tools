@@ -19,10 +19,18 @@ def init_parser():
     subparsers = parser.add_subparsers(title='list of commands')
 
     cmd = subparsers.add_parser('move', help='move files')
-    cmd.set_defaults(func=helpers.command_move)
+    cmd.set_defaults(func=_command_move)
     cmd.add_argument('path', nargs='?', default=os.getcwd())
+    cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
 
     return parser
+
+
+def _command_move(namespace):
+    helpers.command_move(
+        root=namespace.path,
+        commit=not namespace.dry,
+    )
 
 
 def main():

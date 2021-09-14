@@ -12,11 +12,6 @@ LOGGING = {
         },
     },
     'handlers': {
-        'console': {
-            'level': 'DEBUG',
-            'class': 'logging.StreamHandler',
-            'formatter': 'console',
-        },
         'stream': {
             'level': 'INFO',
             'class': 'logging.StreamHandler',
