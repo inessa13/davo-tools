@@ -4,10 +4,15 @@ import os
 from . import errors
 
 
-def iter_files(path):
+def iter_files(path, recursive=False):
     if os.path.isdir(path):
-        for file_ in os.listdir(path):
-            yield os.path.join(path, file_)
+        if recursive:
+            for dir_path, __, file_names in os.walk(path):
+                for file_ in file_names:
+                    yield os.path.join(dir_path, file_)
+        else:
+            for file_ in os.listdir(path):
+                yield os.path.join(path, file_)
 
     elif os.path.isfile(path):
         yield path

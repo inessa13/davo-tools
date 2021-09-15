@@ -13,6 +13,7 @@ setup(
     install_requires=[
         'pyyaml',
         'argcomplete',
+        'pillow',
     ],
     entry_points={'console_scripts': [
         'davo-photo = davo.photo.cli:main',

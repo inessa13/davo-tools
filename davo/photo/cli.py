@@ -23,12 +23,29 @@ def init_parser():
     cmd.add_argument('path', nargs='?', default=os.getcwd())
     cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
 
+    cmd = subparsers.add_parser('thumbnail', help='prepare thumbnails')
+    cmd.set_defaults(func=_command_thumbnail)
+    cmd.add_argument('path', nargs='?', default=os.getcwd())
+    cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
+    cmd.add_argument(
+        '-s', '--size', action='store', type=int, default=120, help='max size')
+    cmd.add_argument('-r', '--recursive', action='store_true', help='max size')
+
     return parser
 
 
 def _command_move(namespace):
     helpers.command_move(
         root=namespace.path,
+        commit=not namespace.dry,
+    )
+
+
+def _command_thumbnail(namespace):
+    helpers.command_thumbnail(
+        root=namespace.path,
+        size=namespace.size,
+        recursive=namespace.recursive,
         commit=not namespace.dry,
     )
 
