@@ -1,7 +1,10 @@
+# PYTHON_ARGCOMPLETE_OK
 import argparse
 import logging
 import logging.config
 import os
+
+import argcomplete
 
 from . import __version__, errors, helpers, settings
 
@@ -54,6 +57,7 @@ def main():
     logging.config.dictConfig(settings.LOGGING)
 
     parser = init_parser()
+    argcomplete.autocomplete(parser)
     namespace = parser.parse_args()
 
     try:
