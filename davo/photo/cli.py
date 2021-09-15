@@ -21,9 +21,26 @@ def init_parser():
 
     subparsers = parser.add_subparsers(title='list of commands')
 
-    cmd = subparsers.add_parser('move', help='move files')
-    cmd.set_defaults(func=_command_move)
+    cmd = subparsers.add_parser('tree', help='move files into tree struct')
+    cmd.set_defaults(func=_command_tree)
     cmd.add_argument('path', nargs='?', default=os.getcwd())
+    cmd.add_argument(
+        '-r', '--reverse', action='store_true', help='reverse tree to flat')
+    cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
+
+    cmd = subparsers.add_parser('rename', help='rename files')
+    cmd.set_defaults(func=_command_rename)
+    cmd.add_argument('path', nargs='?', default=os.getcwd())
+    cmd.add_argument(
+        '-p', '--prefix', action='store', default='IMAGE_',
+        help='file name prefix')
+    cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
+
+    cmd = subparsers.add_parser('regexp', help='rename files by regexp')
+    cmd.set_defaults(func=_command_regexp)
+    cmd.add_argument('path', nargs='?', default=os.getcwd())
+    cmd.add_argument('-p', '--pattern', action='store', help='search pattern')
+    cmd.add_argument('-r', '--replace', action='store', help='replace pattern')
     cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
 
     cmd = subparsers.add_parser('thumbnail', help='prepare thumbnails')
@@ -34,12 +51,50 @@ def init_parser():
         '-s', '--size', action='store', type=int, default=120, help='max size')
     cmd.add_argument('-r', '--recursive', action='store_true', help='max size')
 
+    cmd = subparsers.add_parser(
+        'iphone-clean-live', help='clean iphone live photo .mov files')
+    cmd.set_defaults(func=_command_clean_live)
+    cmd.add_argument('path', nargs='?', default=os.getcwd())
+    cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
+    cmd.add_argument('-r', '--recursive', action='store_true', help='max size')
+
     return parser
 
 
-def _command_move(namespace):
-    helpers.command_move(
+def _command_tree(namespace):
+    if namespace.reverse:
+        helpers.command_tree_reverse(
+            root=namespace.path,
+            commit=not namespace.dry,
+        )
+    else:
+        helpers.command_tree(
+            root=namespace.path,
+            commit=not namespace.dry,
+        )
+
+
+def _command_rename(namespace):
+    helpers.command_rename(
         root=namespace.path,
+        prefix=namespace.prefix,
+        commit=not namespace.dry,
+    )
+
+
+def _command_regexp(namespace):
+    helpers.command_regexp(
+        root=namespace.path,
+        pattern=namespace.pattern,
+        replace=namespace.replace,
+        commit=not namespace.dry,
+    )
+
+
+def _command_clean_live(namespace):
+    helpers.command_live(
+        root=namespace.path,
+        recursive=namespace.recursive,
         commit=not namespace.dry,
     )
 
