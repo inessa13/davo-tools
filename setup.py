@@ -14,6 +14,7 @@ setup(
         'pyyaml',
         'argcomplete',
         'pillow',
+        'exif',
     ],
     entry_points={'console_scripts': [
         'davo-photo = davo.photo.cli:main',

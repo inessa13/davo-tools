@@ -39,7 +39,8 @@ def init_parser():
     cmd = subparsers.add_parser('regexp', help='rename files by regexp')
     cmd.set_defaults(func=_command_regexp)
     cmd.add_argument('path', nargs='?', default=os.getcwd())
-    cmd.add_argument('-p', '--pattern', action='store', help='search pattern')
+    cmd.add_argument(
+        '-p', '--pattern', action='store', default='.*', help='search pattern')
     cmd.add_argument('-r', '--replace', action='store', help='replace pattern')
     cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
 

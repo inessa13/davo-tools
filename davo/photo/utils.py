@@ -68,7 +68,10 @@ def replace_file_params(filename, pattern, replace, **context):
             if code in replace:
                 replace = replace.replace(code, method(basename, context))
 
-    basename = re.sub(pattern, replace, basename)
+    if pattern == '.*':
+        basename = replace
+    else:
+        basename = re.sub(pattern, replace, basename)
     return basename
 
 

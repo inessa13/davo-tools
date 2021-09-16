@@ -1,15 +1,42 @@
 import datetime
 import os
 
-
-def m_date(filename, _context):
-    st_mtime = datetime.datetime.fromtimestamp(os.path.getmtime(filename))
-    return st_mtime.strftime('%Y%m%d')
+import exif
 
 
-def m_time(filename, _context):
-    st_mtime = datetime.datetime.fromtimestamp(os.path.getmtime(filename))
-    return st_mtime.strftime('%H%M%S')
+def modified_date(filename, _context):
+    date = datetime.datetime.fromtimestamp(os.path.getmtime(filename))
+    return date.strftime('%Y%m%d')
+
+
+def modified_time(filename, _context):
+    date = datetime.datetime.fromtimestamp(os.path.getmtime(filename))
+    return date.strftime('%H%M%S')
+
+
+def modified_datetime(filename, _context):
+    date = datetime.datetime.fromtimestamp(os.path.getmtime(filename))
+    return date.strftime('%Y%m%d_%H%M%S')
+
+
+def modified_date_path(filename, _context):
+    date = datetime.datetime.fromtimestamp(os.path.getmtime(filename))
+    return date.strftime('%Y/%m/%d/')
+
+
+def created_date(filename, _context):
+    date = datetime.datetime.fromtimestamp(os.path.getctime(filename))
+    return date.strftime('%Y%m%d')
+
+
+def created_time(filename, _context):
+    date = datetime.datetime.fromtimestamp(os.path.getctime(filename))
+    return date.strftime('%H%M%S')
+
+
+def created_datetime(filename, _context):
+    date = datetime.datetime.fromtimestamp(os.path.getctime(filename))
+    return date.strftime('%Y%m%d_%H%M%S')
 
 
 def ext_without_dot(filename, _context):
@@ -43,9 +70,92 @@ def counter(_filename, context, size=3):
     return pattern.format(context.get('index', 0))
 
 
+def exif_date(filename, _context):
+    with open(filename, 'rb') as file:
+        image = exif.Image(file)
+
+    if not image.has_exif:
+        return ''
+
+    if datetime := image.get('datetime'):
+        return datetime[:10].replace(':', '')
+
+    return ''
+
+
+def exif_time(filename, _context):
+    with open(filename, 'rb') as file:
+        image = exif.Image(file)
+
+    if not image.has_exif:
+        return ''
+
+    if datetime := image.get('datetime'):
+        return datetime[11:].replace(':', '')
+
+    return ''
+
+
+def exif_datetime(filename, _context):
+    with open(filename, 'rb') as file:
+        image = exif.Image(file)
+
+    if not image.has_exif:
+        return ''
+
+    if datetime := image.get('datetime'):
+        return datetime.replace(':', '').replace(' ', '_')
+
+    return ''
+
+
+def exif_date_original(filename, _context):
+    with open(filename, 'rb') as file:
+        image = exif.Image(file)
+
+    if not image.has_exif:
+        return ''
+
+    if datetime_original := image.get('datetime_original'):
+        return datetime_original[:10].replace(':', '')
+
+    return ''
+
+
+def exif_time_original(filename, _context):
+    with open(filename, 'rb') as file:
+        image = exif.Image(file)
+
+    if not image.has_exif:
+        return ''
+
+    if datetime_original := image.get('datetime_original'):
+        return datetime_original[11:].replace(':', '')
+
+    return ''
+
+
+def exif_datetime_original(filename, _context):
+    with open(filename, 'rb') as file:
+        image = exif.Image(file)
+
+    if not image.has_exif:
+        return ''
+
+    if datetime_original := image.get('datetime_original'):
+        return datetime_original.replace(':', '').replace(' ', '_')
+
+    return ''
+
+
 CLASSES = {
-    '[mdate]': m_date,
-    '[mtime]': m_time,
+    '[mdate_path]': modified_date_path,
+    '[mdate]': modified_date,
+    '[mtime]': modified_time,
+    '[mdatetime]': modified_datetime,
+    '[cdate]': created_date,
+    '[ctime]': created_time,
+    '[cdatetime]': created_datetime,
     '[Ext]': ext_without_dot,
     '[EXT]': lambda f, c: ext_without_dot(f, c).upper(),
     '[ext]': lambda f, c: ext_without_dot(f, c).lower(),
@@ -55,6 +165,12 @@ CLASSES = {
     '[index3]': lambda f, c: counter(f, c, size=3),
     '[index2]': lambda f, c: counter(f, c, size=2),
     '[CC]': lambda f, c: counter(f, c, size=2),
+    '[exif:date]': exif_date,
+    '[exif:time]': exif_time,
+    '[exif:datetime]': exif_datetime,
+    '[exif:date_original]': exif_date_original,
+    '[exif:time_original]': exif_time_original,
+    '[exif:datetime_original]': exif_datetime_original,
 }
 
 
