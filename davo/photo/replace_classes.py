@@ -9,14 +9,19 @@ def modified_date(filename, _context):
     return date.strftime('%Y%m%d')
 
 
+def _modified(filename, _context):
+    date = datetime.datetime.fromtimestamp(os.path.getmtime(filename))
+    return date
+
+
 def modified_time(filename, _context):
     date = datetime.datetime.fromtimestamp(os.path.getmtime(filename))
     return date.strftime('%H%M%S')
 
 
-def modified_datetime(filename, _context):
+def modified_datetime(filename, _context, sep='_'):
     date = datetime.datetime.fromtimestamp(os.path.getmtime(filename))
-    return date.strftime('%Y%m%d_%H%M%S')
+    return date.strftime('%Y%m%d{}%H%M%S'.format(sep))
 
 
 def modified_date_path(filename, _context):
@@ -34,9 +39,9 @@ def created_time(filename, _context):
     return date.strftime('%H%M%S')
 
 
-def created_datetime(filename, _context):
+def created_datetime(filename, _context, sep='_'):
     date = datetime.datetime.fromtimestamp(os.path.getctime(filename))
-    return date.strftime('%Y%m%d_%H%M%S')
+    return date.strftime('%Y%m%d{}%H%M%S'.format(sep))
 
 
 def ext_without_dot(filename, _context):
@@ -151,11 +156,14 @@ def exif_datetime_original(filename, _context):
 CLASSES = {
     '[mdate_path]': modified_date_path,
     '[mdate]': modified_date,
+    '[myear]': lambda f, c: _modified(f, c).strftime('%Y'),
     '[mtime]': modified_time,
     '[mdatetime]': modified_datetime,
+    '[mdate time]': lambda f, c: modified_datetime(f, c, ' '),
     '[cdate]': created_date,
     '[ctime]': created_time,
     '[cdatetime]': created_datetime,
+    '[cdate time]': lambda f, c: created_datetime(f, c, ' '),
     '[Ext]': ext_without_dot,
     '[EXT]': lambda f, c: ext_without_dot(f, c).upper(),
     '[ext]': lambda f, c: ext_without_dot(f, c).lower(),

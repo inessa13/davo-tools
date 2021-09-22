@@ -28,20 +28,16 @@ def init_parser():
         '-r', '--reverse', action='store_true', help='reverse tree to flat')
     cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
 
-    cmd = subparsers.add_parser('rename', help='rename files')
-    cmd.set_defaults(func=_command_rename)
-    cmd.add_argument('path', nargs='?', default=os.getcwd())
-    cmd.add_argument(
-        '-p', '--prefix', action='store', default='IMAGE_',
-        help='file name prefix')
-    cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
-
-    cmd = subparsers.add_parser('regexp', help='rename files by regexp')
+    choices_output = ('-', 'C', 'T')
+    cmd = subparsers.add_parser('rename', help='rename files by regexp')
     cmd.set_defaults(func=_command_regexp)
     cmd.add_argument('path', nargs='?', default=os.getcwd())
     cmd.add_argument(
         '-p', '--pattern', action='store', default='.*', help='search pattern')
     cmd.add_argument('-r', '--replace', action='store', help='replace pattern')
+    cmd.add_argument(
+        '-o', '--output', action='store', choices=choices_output, default='T',
+        help='replace pattern')
     cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
 
     cmd = subparsers.add_parser('thumbnail', help='prepare thumbnails')
@@ -57,6 +53,12 @@ def init_parser():
     cmd.set_defaults(func=_command_clean_live)
     cmd.add_argument('path', nargs='?', default=os.getcwd())
     cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
+    cmd.add_argument('-r', '--recursive', action='store_true', help='max size')
+
+    cmd = subparsers.add_parser('search-copies', help='search file copies')
+    cmd.set_defaults(func=_command_search_copy)
+    cmd.add_argument('file')
+    cmd.add_argument('path', nargs='?', default=os.getcwd())
     cmd.add_argument('-r', '--recursive', action='store_true', help='max size')
 
     return parser
@@ -75,19 +77,12 @@ def _command_tree(namespace):
         )
 
 
-def _command_rename(namespace):
-    helpers.command_rename(
-        root=namespace.path,
-        prefix=namespace.prefix,
-        commit=not namespace.dry,
-    )
-
-
 def _command_regexp(namespace):
     helpers.command_regexp(
         root=namespace.path,
         pattern=namespace.pattern,
         replace=namespace.replace,
+        output=namespace.output,
         commit=not namespace.dry,
     )
 
@@ -106,6 +101,14 @@ def _command_thumbnail(namespace):
         size=namespace.size,
         recursive=namespace.recursive,
         commit=not namespace.dry,
+    )
+
+
+def _command_search_copy(namespace):
+    helpers.command_search_copy(
+        root=namespace.path,
+        source_file=namespace.file,
+        recursive=namespace.recursive,
     )
 
 

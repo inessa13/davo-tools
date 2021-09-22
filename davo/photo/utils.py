@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 import os
 import re
 
@@ -68,6 +69,10 @@ def replace_file_params(filename, pattern, replace, **context):
             if code in replace:
                 replace = replace.replace(code, method(basename, context))
 
+    for index in range(1, 5):
+        if f'\\{index}' in replace:
+            replace = replace.replace(f'\\{index}', m.group(index))
+
     if pattern == '.*':
         basename = replace
     else:
@@ -80,3 +85,15 @@ def get_known_pattern(pattern):
         return None
     options = replace_classes.PATTERNS[pattern]
     return options['pattern'], options['replace']
+
+
+def file_hash(f_path):
+    file_ = open(f_path, 'rb')
+    hash_ = hashlib.md5()
+    while True:
+        block = file_.read(128)
+        if not block:
+            break
+        hash_.update(block)
+    file_.close()
+    return hash_

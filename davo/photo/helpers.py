@@ -49,25 +49,12 @@ def command_tree_reverse(root, commit=False):
             os.rename(file, os.path.join(root, base))
 
 
-def command_rename(root, prefix, commit=False):
-    index = 1
-    for file in utils.iter_files(root, recursive=False):
-        if not os.path.isfile(file):
-            continue
-        root, base = os.path.split(file)
-        new_name = utils.date_as_name(file, index, prefix=prefix or '')
-        logger.info('mv %s %s', base, new_name)
-        if commit:
-            os.rename(file, os.path.join(root, new_name))
-        index += 1
-
-
-def command_regexp(root, pattern, replace, commit=False):
+def command_regexp(root, pattern, replace, output, commit=False):
     if pattern_options := utils.get_known_pattern(pattern):
         pattern, replace = pattern_options
 
     index = 1
-    for file in utils.iter_files(root, recursive=False):
+    for file in sorted(utils.iter_files(root, recursive=False)):
         if not os.path.isfile(file):
             continue
 
@@ -77,7 +64,21 @@ def command_regexp(root, pattern, replace, commit=False):
         if not new_name:
             continue
 
-        logger.info('mv %s %s', base, new_name)
+        if output == 'C':
+            logger.info('mv %s %s', base, new_name)
+        elif output == 'T':
+            logger.info('%-41s %s', base, new_name)
+
+        if '/' in new_name:
+            p, n = os.path.split(new_name)
+            if not os.path.exists(p):
+                if output == 'C':
+                    logger.info('mkdir -p %s', p)
+                elif output == 'T':
+                    logger.info('%s', p)
+
+                if commit:
+                    os.makedirs(p)
         if commit:
             os.rename(file, os.path.join(root, new_name))
 
@@ -135,3 +136,19 @@ def command_thumbnail(root, size, recursive, commit=False):
         if commit:
             image.thumbnail((size, size))
             image.save(os.path.join(thumbnails_root, file_name))
+
+
+def command_search_copy(root, source_file, recursive):
+    source_hash = utils.file_hash(source_file)
+    source_hash_digest = source_hash.digest()
+    size = os.path.getsize(source_file)
+    source_full = os.path.abspath(source_file)
+
+    for file in utils.iter_files(root, recursive=recursive):
+        if (not os.path.isfile(file)
+                or source_full == file
+                or size != os.path.getsize(file)):
+            continue
+
+        if (h := utils.file_hash(file)) and source_hash_digest == h.digest():
+            logger.info('%s %s', file, source_hash.hexdigest())
