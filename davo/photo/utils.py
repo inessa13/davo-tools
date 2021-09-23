@@ -6,21 +6,27 @@ import re
 from . import errors, replace_classes
 
 
-def iter_files(path, recursive=False):
-    if os.path.isdir(path):
+def iter_files(roo_path, recursive=False):
+    if os.path.isdir(roo_path):
         if recursive:
-            for dir_path, __, file_names in os.walk(path):
-                for file_ in file_names:
-                    yield os.path.join(dir_path, file_)
+            for dir_path, __, file_names in os.walk(roo_path):
+                for file in file_names:
+                    path = os.path.join(dir_path, file)
+                    if not os.path.isfile(path):
+                        continue
+                    yield path
         else:
-            for file_ in os.listdir(path):
-                yield os.path.join(path, file_)
+            for file in os.listdir(roo_path):
+                path = os.path.join(roo_path, file)
+                if not os.path.isfile(path):
+                    continue
+                yield path
 
-    elif os.path.isfile(path):
-        yield path
+    elif os.path.isfile(roo_path):
+        yield roo_path
 
     else:
-        raise errors.UserError('Invalid path {}'.format(path))
+        raise errors.UserError('Invalid path {}'.format(roo_path))
 
 
 def date_as_path(path):

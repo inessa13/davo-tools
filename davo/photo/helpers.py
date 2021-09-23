@@ -14,9 +14,6 @@ P_LIVE = r'(:?IMG_\d{8}_\d{6} \()?IMG_(?P<num>\d+)\)?\.(?P<ext>.*)$'
 def command_tree(root, commit=False):
     sub_root_set = set()
     for file in utils.iter_files(root, recursive=False):
-        if not os.path.isfile(file):
-            continue
-
         sub_root, sub, base = utils.date_as_path(file)
         if not os.path.exists(sub_root) and sub_root not in sub_root_set:
             logger.info('mkdir -p %s', sub)
@@ -33,9 +30,6 @@ def command_tree(root, commit=False):
 def command_tree_reverse(root, commit=False):
     context = {}
     for file in utils.iter_files(root, recursive=True):
-        if not os.path.isfile(file):
-            continue
-
         sub_root, base = os.path.split(file)
         context.setdefault(base, []).append(file)
 
@@ -55,9 +49,6 @@ def command_regexp(root, pattern, replace, output, commit=False):
 
     index = 1
     for file in sorted(utils.iter_files(root, recursive=False)):
-        if not os.path.isfile(file):
-            continue
-
         root, base = os.path.split(file)
         new_name = utils.replace_file_params(
             file, pattern, replace, index=index)
@@ -88,9 +79,6 @@ def command_regexp(root, pattern, replace, output, commit=False):
 def command_live(root, recursive, commit=False):
     context = {}
     for file in utils.iter_files(root, recursive=recursive):
-        if not os.path.isfile(file):
-            continue
-
         root, basename = os.path.split(file)
         if not (m := re.match(P_LIVE, basename)):
             continue
@@ -122,8 +110,6 @@ def command_thumbnail(root, size, recursive, commit=False):
             os.makedirs(thumbnails_root)
 
     for file in utils.iter_files(root, recursive=recursive):
-        if not os.path.isfile(file):
-            continue
         try:
             image = Image.open(file)
         except IOError:
@@ -145,10 +131,49 @@ def command_search_copy(root, source_file, recursive):
     source_full = os.path.abspath(source_file)
 
     for file in utils.iter_files(root, recursive=recursive):
-        if (not os.path.isfile(file)
-                or source_full == file
-                or size != os.path.getsize(file)):
+        if source_full == file or size != os.path.getsize(file):
             continue
 
         if (h := utils.file_hash(file)) and source_hash_digest == h.digest():
             logger.info('%s %s', file, source_hash.hexdigest())
+
+
+def command_search_duplicates(root, md5, recursive):
+    files = {}
+    for file in utils.iter_files(root, recursive=recursive):
+        files[file] = {
+            'size': os.path.getsize(file),
+        }
+
+    for i in utils.iter_files(root, recursive=recursive):
+        # file created after scan
+        if i not in files:
+            continue
+        i_options = files[i]
+        doubles = set()
+        for j, j_options in files.items():
+            if i == j or j_options['size'] != i_options['size']:
+                continue
+            doubles.add(j)
+
+        if doubles and md5:
+            doubles2 = set()
+            if not i_options.get('hash'):
+                i_options['hash'] = utils.file_hash(i)
+            md5sum = i_options['hash']
+            for j in doubles:
+                j_options = files[j]
+                if not j_options.get('hash'):
+                    j_options['hash'] = utils.file_hash(i)
+                if md5sum != j_options['hash']:
+                    continue
+                doubles2.add(j)
+
+            if doubles2:
+                doubles = doubles2
+
+        if doubles:
+            logger.info(
+                '%s %s %s', len(doubles), i.replace(root, '.'),
+                ','.join(doubles).replace(root, '.'),
+            )

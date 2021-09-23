@@ -61,6 +61,12 @@ def init_parser():
     cmd.add_argument('path', nargs='?', default=os.getcwd())
     cmd.add_argument('-r', '--recursive', action='store_true', help='max size')
 
+    cmd = subparsers.add_parser('search-duplicates', help='search duplicates')
+    cmd.set_defaults(func=_command_search_duplicates)
+    cmd.add_argument('path', nargs='?', default=os.getcwd())
+    cmd.add_argument('-r', '--recursive', action='store_true', help='max size')
+    cmd.add_argument('-m', '--md5', action='store_true', help='check md5 hash')
+
     return parser
 
 
@@ -108,6 +114,14 @@ def _command_search_copy(namespace):
     helpers.command_search_copy(
         root=namespace.path,
         source_file=namespace.file,
+        recursive=namespace.recursive,
+    )
+
+
+def _command_search_duplicates(namespace):
+    helpers.command_search_duplicates(
+        root=namespace.path,
+        md5=namespace.md5,
         recursive=namespace.recursive,
     )
 
