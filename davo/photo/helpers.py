@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import shutil
 
 from PIL import Image
 
@@ -11,7 +12,20 @@ logger = logging.getLogger(__name__)
 P_LIVE = r'(:?IMG_\d{8}_\d{6} \()?IMG_(?P<num>\d+)\)?\.(?P<ext>.*)$'
 
 
-def command_tree(root, commit=False):
+def command_tree(root, reverse, commit=False):
+    if reverse:
+        _command_tree_reverse(
+            root=root,
+            commit=commit,
+        )
+    else:
+        _command_tree_straight(
+            root=root,
+            commit=commit,
+        )
+
+
+def _command_tree_straight(root, commit=False):
     sub_root_set = set()
     for file in utils.iter_files(root, recursive=False):
         sub_root, sub, base = utils.date_as_path(file)
@@ -27,7 +41,7 @@ def command_tree(root, commit=False):
             os.rename(file, os.path.join(sub_root, base))
 
 
-def command_tree_reverse(root, commit=False):
+def _command_tree_reverse(root, commit=False):
     context = {}
     for file in utils.iter_files(root, recursive=True):
         sub_root, base = os.path.split(file)
@@ -43,7 +57,7 @@ def command_tree_reverse(root, commit=False):
             os.rename(file, os.path.join(root, base))
 
 
-def command_regexp(root, pattern, replace, output, commit=False):
+def command_regexp(root, pattern, replace, output, copy, commit=False):
     if pattern_options := utils.get_known_pattern(pattern):
         pattern, replace = pattern_options
 
@@ -56,7 +70,11 @@ def command_regexp(root, pattern, replace, output, commit=False):
             continue
 
         if output == 'C':
-            logger.info('mv %s %s', base, new_name)
+            if copy:
+                cmd = 'cp'
+            else:
+                cmd = 'mv'
+            logger.info('%s %s %s', cmd, base, new_name)
         elif output == 'T':
             logger.info('%-41s %s', base, new_name)
 
@@ -71,7 +89,10 @@ def command_regexp(root, pattern, replace, output, commit=False):
                 if commit:
                     os.makedirs(p)
         if commit:
-            os.rename(file, os.path.join(root, new_name))
+            if copy:
+                shutil.copy2(file, os.path.join(root, new_name))
+            else:
+                os.rename(file, os.path.join(root, new_name))
 
         index += 1
 
@@ -101,7 +122,7 @@ def command_live(root, recursive, commit=False):
                 os.remove(os.path.join(root, mov_path))
 
 
-def command_thumbnail(root, size, recursive, commit=False):
+def command_thumbnail(root, size, recursive, type_, commit=False):
     thumbnails_dir = '.thumbnails'
     thumbnails_root = os.path.join(root, thumbnails_dir)
     if not os.path.exists(thumbnails_root):
@@ -116,12 +137,18 @@ def command_thumbnail(root, size, recursive, commit=False):
             continue
 
         file_name = os.path.basename(file)
+        if type_:
+            file_name, file_ext = file_name.split('.', 1)
+            file_dest = '{}.{}'.format(file_name, type_)
+        else:
+            file_dest = file_name
+
         logger.info(
             'convert -thumbnail %d %s %s',
-            size, file_name, os.path.join(thumbnails_dir, file_name))
+            size, file_name, os.path.join(thumbnails_dir, file_dest))
         if commit:
             image.thumbnail((size, size))
-            image.save(os.path.join(thumbnails_root, file_name))
+            image.save(os.path.join(thumbnails_root, file_dest))
 
 
 def command_search_copy(root, source_file, recursive):

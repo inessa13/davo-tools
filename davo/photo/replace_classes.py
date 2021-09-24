@@ -1,7 +1,10 @@
 import datetime
+import logging
 import os
 
 import exif
+
+logger = logging.getLogger(__name__)
 
 
 def modified_date(filename, _context):
@@ -75,79 +78,57 @@ def counter(_filename, context, size=3):
     return pattern.format(context.get('index', 0))
 
 
-def exif_date(filename, _context):
+def _exif_field(filename, field, default=''):
     with open(filename, 'rb') as file:
-        image = exif.Image(file)
+        try:
+            image = exif.Image(file)
+        except Exception as exc:
+            logger.warning('exif parse error: %s', exc)
+            return default
 
     if not image.has_exif:
-        return ''
+        return default
 
-    if datetime := image.get('datetime'):
-        return datetime[:10].replace(':', '')
+    return image.get(field) or default
+
+
+def exif_date(filename, _context):
+    if value := _exif_field(filename, 'datetime'):
+        return value[:10].replace(':', '')
 
     return ''
 
 
 def exif_time(filename, _context):
-    with open(filename, 'rb') as file:
-        image = exif.Image(file)
-
-    if not image.has_exif:
-        return ''
-
-    if datetime := image.get('datetime'):
+    if datetime := _exif_field(filename, 'datetime'):
         return datetime[11:].replace(':', '')
 
     return ''
 
 
 def exif_datetime(filename, _context):
-    with open(filename, 'rb') as file:
-        image = exif.Image(file)
-
-    if not image.has_exif:
-        return ''
-
-    if datetime := image.get('datetime'):
+    if datetime := _exif_field(filename, 'datetime'):
         return datetime.replace(':', '').replace(' ', '_')
 
     return ''
 
 
 def exif_date_original(filename, _context):
-    with open(filename, 'rb') as file:
-        image = exif.Image(file)
-
-    if not image.has_exif:
-        return ''
-
-    if datetime_original := image.get('datetime_original'):
+    if datetime_original := _exif_field(filename, 'datetime_original'):
         return datetime_original[:10].replace(':', '')
 
     return ''
 
 
 def exif_time_original(filename, _context):
-    with open(filename, 'rb') as file:
-        image = exif.Image(file)
-
-    if not image.has_exif:
-        return ''
-
-    if datetime_original := image.get('datetime_original'):
+    if datetime_original := _exif_field(filename, 'datetime_original'):
         return datetime_original[11:].replace(':', '')
 
     return ''
 
 
 def exif_datetime_original(filename, _context):
-    with open(filename, 'rb') as file:
-        image = exif.Image(file)
-
-    if not image.has_exif:
-        return ''
-
-    if datetime_original := image.get('datetime_original'):
+    if datetime_original := _exif_field(filename, 'datetime_original'):
         return datetime_original.replace(':', '').replace(' ', '_')
 
     return ''

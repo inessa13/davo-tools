@@ -19,111 +19,101 @@ def init_parser():
         version='%(prog)s ' + __version__,
         help='show version and exit')
 
+    p_recursive = argparse.ArgumentParser(add_help=False)
+    p_recursive.add_argument(
+        '-r', '--recursive', action='store_true', help='recursive scan')
+
+    p_dry = argparse.ArgumentParser(add_help=False)
+    p_dry.add_argument(
+        '-d', '--dry', action='store_true', help='no-commit mode')
+
+    p_root = argparse.ArgumentParser(add_help=False)
+    p_root.add_argument('path', nargs='?', default=os.getcwd())
+
+    p_common = [p_root, p_recursive, p_dry]
+
     subparsers = parser.add_subparsers(title='list of commands')
 
-    cmd = subparsers.add_parser('tree', help='move files into tree struct')
-    cmd.set_defaults(func=_command_tree)
-    cmd.add_argument('path', nargs='?', default=os.getcwd())
+    cmd = subparsers.add_parser(
+        'tree', parents=[p_root, p_dry], help='move files into tree struct')
     cmd.add_argument(
-        '-r', '--reverse', action='store_true', help='reverse tree to flat')
-    cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
+        '-R', '--reverse', action='store_true', help='reverse tree to flat')
+    cmd.set_defaults(func=lambda namespace: helpers.command_tree(
+        root=namespace.path,
+        reverse=namespace.reverse,
+        commit=not namespace.dry,
+    ))
 
     choices_output = ('-', 'C', 'T')
-    cmd = subparsers.add_parser('rename', help='rename files by regexp')
-    cmd.set_defaults(func=_command_regexp)
-    cmd.add_argument('path', nargs='?', default=os.getcwd())
+    cmd = subparsers.add_parser(
+        'rename', parents=[p_root, p_dry], help='rename files by regexp')
     cmd.add_argument(
         '-p', '--pattern', action='store', default='.*', help='search pattern')
-    cmd.add_argument('-r', '--replace', action='store', help='replace pattern')
+    cmd.add_argument('-R', '--replace', action='store', help='replace pattern')
     cmd.add_argument(
         '-o', '--output', action='store', choices=choices_output, default='T',
         help='replace pattern')
-    cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
-
-    cmd = subparsers.add_parser('thumbnail', help='prepare thumbnails')
-    cmd.set_defaults(func=_command_thumbnail)
-    cmd.add_argument('path', nargs='?', default=os.getcwd())
-    cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
-    cmd.add_argument(
-        '-s', '--size', action='store', type=int, default=120, help='max size')
-    cmd.add_argument('-r', '--recursive', action='store_true', help='max size')
-
-    cmd = subparsers.add_parser(
-        'iphone-clean-live', help='clean iphone live photo .mov files')
-    cmd.set_defaults(func=_command_clean_live)
-    cmd.add_argument('path', nargs='?', default=os.getcwd())
-    cmd.add_argument('-d', '--dry', action='store_true', help='no-commit mode')
-    cmd.add_argument('-r', '--recursive', action='store_true', help='max size')
-
-    cmd = subparsers.add_parser('search-copies', help='search file copies')
-    cmd.set_defaults(func=_command_search_copy)
-    cmd.add_argument('file')
-    cmd.add_argument('path', nargs='?', default=os.getcwd())
-    cmd.add_argument('-r', '--recursive', action='store_true', help='max size')
-
-    cmd = subparsers.add_parser('search-duplicates', help='search duplicates')
-    cmd.set_defaults(func=_command_search_duplicates)
-    cmd.add_argument('path', nargs='?', default=os.getcwd())
-    cmd.add_argument('-r', '--recursive', action='store_true', help='max size')
-    cmd.add_argument('-m', '--md5', action='store_true', help='check md5 hash')
-
-    return parser
-
-
-def _command_tree(namespace):
-    if namespace.reverse:
-        helpers.command_tree_reverse(
-            root=namespace.path,
-            commit=not namespace.dry,
-        )
-    else:
-        helpers.command_tree(
-            root=namespace.path,
-            commit=not namespace.dry,
-        )
-
-
-def _command_regexp(namespace):
-    helpers.command_regexp(
+    cmd.add_argument('-c', '--copy', action='store_true')
+    cmd.set_defaults(func=lambda namespace: helpers.command_regexp(
         root=namespace.path,
         pattern=namespace.pattern,
         replace=namespace.replace,
         output=namespace.output,
+        copy=namespace.copy,
         commit=not namespace.dry,
-    )
+    ))
 
-
-def _command_clean_live(namespace):
-    helpers.command_live(
-        root=namespace.path,
-        recursive=namespace.recursive,
-        commit=not namespace.dry,
-    )
-
-
-def _command_thumbnail(namespace):
-    helpers.command_thumbnail(
+    cmd = subparsers.add_parser(
+        'thumbnail', parents=p_common, help='prepare thumbnails')
+    cmd.add_argument(
+        '-s', '--size', action='store', type=int, default=120, help='max size')
+    cmd.add_argument('-t', '--type', help='convert type')
+    cmd.set_defaults(func=lambda namespace: helpers.command_thumbnail(
         root=namespace.path,
         size=namespace.size,
+        type_=namespace.type,
         recursive=namespace.recursive,
         commit=not namespace.dry,
-    )
+    ))
 
+    cmd = subparsers.add_parser('convert', parents=p_common)
+    cmd.add_argument('replace', help='replace pattern')
+    cmd.set_defaults(func=lambda namespace: helpers.command_convert(
+        root=namespace.path,
+        replace=namespace.replace,
+        recursive=namespace.recursive,
+        commit=not namespace.dry,
+    ))
 
-def _command_search_copy(namespace):
-    helpers.command_search_copy(
+    cmd = subparsers.add_parser(
+        'iphone-clean-live', parents=p_common,
+        help='clean iphone live photo .mov files')
+    cmd.set_defaults(func=lambda namespace: helpers.command_live(
+        root=namespace.path,
+        recursive=namespace.recursive,
+        commit=not namespace.dry,
+    ))
+
+    cmd = subparsers.add_parser(
+        'search-copies', parents=p_common, help='search file copies')
+    cmd.add_argument('file')
+    cmd.set_defaults(func=lambda namespace: helpers.command_search_copy(
         root=namespace.path,
         source_file=namespace.file,
         recursive=namespace.recursive,
-    )
+    ))
 
-
-def _command_search_duplicates(namespace):
-    helpers.command_search_duplicates(
+    cmd = subparsers.add_parser(
+        'search-duplicates', parents=[p_root, p_recursive],
+        help='search duplicates')
+    cmd.add_argument('-m', '--md5', action='store_true', help='check md5 hash')
+    cmd.set_defaults(func=lambda namespace: helpers.command_search_duplicates(
         root=namespace.path,
         md5=namespace.md5,
         recursive=namespace.recursive,
-    )
+    ))
+
+    return parser
 
 
 def main():
