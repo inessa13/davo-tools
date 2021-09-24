@@ -140,6 +140,7 @@ CLASSES = {
     '[myear]': lambda f, c: _modified(f, c).strftime('%Y'),
     '[mtime]': modified_time,
     '[mdatetime]': modified_datetime,
+    '[mdate_time]': modified_datetime,
     '[mdate time]': lambda f, c: modified_datetime(f, c, ' '),
     '[cdate]': created_date,
     '[ctime]': created_time,

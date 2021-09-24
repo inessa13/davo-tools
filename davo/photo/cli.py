@@ -78,10 +78,14 @@ def init_parser():
 
     cmd = subparsers.add_parser('convert', parents=p_common)
     cmd.add_argument('replace', help='replace pattern')
+    cmd.add_argument('-c', '--copy', action='store_true')
+    cmd.add_argument('-t', '--thumbnail', type=int)
     cmd.set_defaults(func=lambda namespace: helpers.command_convert(
         root=namespace.path,
         replace=namespace.replace,
         recursive=namespace.recursive,
+        copy=namespace.copy,
+        thumbnail=namespace.thumbnail,
         commit=not namespace.dry,
     ))
 

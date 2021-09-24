@@ -204,3 +204,39 @@ def command_search_duplicates(root, md5, recursive):
                 '%s %s %s', len(doubles), i.replace(root, '.'),
                 ','.join(doubles).replace(root, '.'),
             )
+
+
+def command_convert(root, replace, recursive, copy, thumbnail, commit=False):
+    index = 1
+    for file_path in sorted(utils.iter_files(root, recursive=recursive)):
+        file_root, file_base = os.path.split(file_path)
+        new_name = utils.replace_file_params(
+            file_path, '.*', replace, index=index)
+        if not new_name:
+            continue
+
+        logger.info('%-41s %s', file_base, new_name)
+
+        file_path_new = os.path.join(file_root, new_name)
+        utils.ensure_path(file_path_new, output=None, commit=commit)
+
+        if (thumbnail
+                or not utils.is_ext_same(file_base, new_name)):
+            utils.image_convert(
+                path_source=file_path,
+                path_dest=file_path_new,
+                thumbnail=thumbnail,
+                save_exif=True,
+                save_mtime=True,
+                commit=commit,
+            )
+
+        elif copy:
+            if commit:
+                shutil.copy2(file_path, file_path_new)
+
+        else:
+            if commit:
+                os.rename(file_path, file_path_new)
+
+        index += 1
