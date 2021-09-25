@@ -22,6 +22,7 @@ setup(
     entry_points={'console_scripts': [
         'davo-photo = davo.photo.cli:main',
         'davo-vpn = davo.vpn.cli:main',
+        'cit = davo.git_tools.cli:main',
     ]},
     classifiers=[
         'Development Status :: 5 - Production/Stable',
