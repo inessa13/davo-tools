@@ -4,3 +4,11 @@ class BaseError(RuntimeError):
 
 class UserError(BaseError):
     pass
+
+
+class Error(BaseError):
+    pass
+
+
+class NotImpl(BaseError):
+    pass

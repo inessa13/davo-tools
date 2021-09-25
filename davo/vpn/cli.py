@@ -1,29 +1,37 @@
 import logging
+import os
 import sys
 
-from . import errors, handlers, utils
+import davo.common
+
+from . import handlers, utils
 
 logger = logging.getLogger(__name__)
 
 
+@davo.common.utils.cli.run
 def main():
+    config_root = '/home/davo/Dropbox/etc/'
     account_name = sys.argv[1] if len(sys.argv) > 1 else None
-    try:
-        conf = utils.load_config('/home/davo/Dropbox/etc/vpn.yaml')
-        account = utils.get_account(conf, account_name)
-        if account.get('handler') == 'openvpn':
-            handlers.connect_openvpn(account)
-        else:
-            handlers.connect_openconnect(account)
 
-    except KeyboardInterrupt:
-        logger.warning('Interrupted')
+    conf = davo.common.utils.conf.load_yaml_config(
+        os.path.join(config_root, 'vpn.yaml'))
 
-    except errors.UserError as exc:
-        logger.warning(exc.args[0])
+    conf = davo.common.utils.conf.fix_config_paths(conf)
 
-    except errors.BaseError as exc:
-        logger.error(exc.args[0])
+    kp = davo.common.utils.conf.load_kp(conf['keepass_db_path'])
+    conf = davo.common.utils.conf.fix_config_secrets(kp, conf)
+
+    account = utils.get_account(conf, account_name)
+    if account.get('handler') == 'openvpn':
+        handlers.connect_openvpn(account)
+
+    elif account.get('handler') == 'openconnect':
+        handlers.connect_openconnect(account)
+
+    else:
+        raise davo.common.errors.Error(
+            'Unknown handler: {}'.format(account.get('handler')))
 
 
 if __name__ == '__main__':
