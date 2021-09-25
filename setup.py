@@ -1,11 +1,11 @@
 from setuptools import setup, find_namespace_packages
 
 setup(
-    name='davo-photo',
-    version='0.0.1',
+    name='davo-tools',
+    version='0.1.0',
     author='davo',
     author_email='davo.fastcall@gmail.com',
-    url='https://github.com/inessa13/davo-photo',
+    url='https://github.com/inessa13/davo-tools',
     packages=find_namespace_packages(include=['davo.*']),
     namespace_packages=['davo'],
     license='GPLv3',
@@ -15,9 +15,13 @@ setup(
         'argcomplete',
         'pillow',
         'exif',
+        'pyotp',
+        'pexpect',
+        'pykeepass',
     ],
     entry_points={'console_scripts': [
         'davo-photo = davo.photo.cli:main',
+        'davo-vpn = davo.vpn.cli:main',
     ]},
     classifiers=[
         'Development Status :: 5 - Production/Stable',
