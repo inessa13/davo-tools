@@ -2,7 +2,7 @@ import glob
 import os
 import random
 
-import davo.common
+import davo
 
 
 def get_account(conf, account_name=None):
@@ -10,7 +10,7 @@ def get_account(conf, account_name=None):
         account_name = conf.get('default_account', 'default')
 
     if account_name not in conf.get('accounts', {}):
-        raise davo.common.errors.Error(
+        raise davo.errors.Error(
             'Unknown account: `{}`'.format(account_name))
 
     return conf['accounts'][account_name]

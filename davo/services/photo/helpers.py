@@ -5,7 +5,10 @@ import shutil
 
 from PIL import Image
 
-from . import utils, errors
+import davo.utils
+from davo import errors
+
+from . import utils
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +155,7 @@ def command_thumbnail(root, size, recursive, type_, commit=False):
 
 
 def command_search_copy(root, source_file, recursive):
-    source_hash = utils.file_hash(source_file)
+    source_hash = davo.utils.path.file_hash(source_file)
     source_hash_digest = source_hash.digest()
     size = os.path.getsize(source_file)
     source_full = os.path.abspath(source_file)
@@ -161,7 +164,8 @@ def command_search_copy(root, source_file, recursive):
         if source_full == file or size != os.path.getsize(file):
             continue
 
-        if (h := utils.file_hash(file)) and source_hash_digest == h.digest():
+        if ((h := davo.utils.path.file_hash(file))
+                and source_hash_digest == h.digest()):
             logger.info('%s %s', file, source_hash.hexdigest())
 
 
@@ -186,12 +190,12 @@ def command_search_duplicates(root, md5, recursive):
         if doubles and md5:
             doubles2 = set()
             if not i_options.get('hash'):
-                i_options['hash'] = utils.file_hash(i)
+                i_options['hash'] = davo.utils.path.file_hash(i)
             md5sum = i_options['hash']
             for j in doubles:
                 j_options = files[j]
                 if not j_options.get('hash'):
-                    j_options['hash'] = utils.file_hash(i)
+                    j_options['hash'] = davo.utils.path.file_hash(i)
                 if md5sum != j_options['hash']:
                     continue
                 doubles2.add(j)
@@ -221,7 +225,8 @@ def command_convert(
     :param bool commit:
     """
     index = 1
-    for file_path in sorted(utils.iter_files(root, recursive=recursive)):
+    converted = 0
+    for file_path in utils.iter_files(root, recursive=recursive, sort=True):
         file_root, file_base = os.path.split(file_path)
         new_name = utils.replace_file_params(
             file_path, '.*', replace, index=index)
@@ -231,7 +236,7 @@ def command_convert(
         logger.info('%-41s %s', file_base, new_name)
 
         file_path_new = os.path.join(file_root, new_name)
-        utils.ensure_path(file_path_new, output=None, commit=commit)
+        davo.utils.path.ensure(file_path_new, commit=commit)
 
         if (thumbnail
                 or not utils.is_ext_same(file_base, new_name)):
@@ -249,13 +254,22 @@ def command_convert(
             # TODO: copy on file_path == file_path_new
             if commit and delete and file_path != file_path_new:
                 os.remove(file_path)
+            converted += 1
+            continue
 
-        elif copy:
+        if file_path == file_path_new:
+            continue
+
+        if copy:
             if commit:
                 shutil.copy2(file_path, file_path_new)
+            converted += 1
 
         else:
             if commit:
                 os.rename(file_path, file_path_new)
+            converted += 1
 
         index += 1
+
+    logger.info('converted: %d', converted)

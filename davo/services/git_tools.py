@@ -1,10 +1,11 @@
-# PYTHON_ARGCOMPLETE_OK
 import argparse
-import argcomplete
-import os
-import yaml
 import logging
+import os
 
+import yaml
+
+import davo
+import davo.errors
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +19,11 @@ CLR_BOLD = '\033[1m'
 CLR_UNDERLINE = '\033[4m'
 
 
-class CitError(Exception):
+class CitError(davo.errors.BaseError):
     pass
 
 
-def init(conf, cwd, exclude):
+def _init(conf, cwd, exclude):
     config_path = os.path.join(cwd, 'cit.yml')
     if os.path.exists(config_path):
         raise CitError('Config already exists')
@@ -41,10 +42,10 @@ def init(conf, cwd, exclude):
     logger.warning('Config `cit.yml` created')
 
 
-def main_(args, argv):
-    logger.addHandler(logging.StreamHandler())
-    if args.verbose:
-        logger.setLevel(logging.INFO)
+def _handler(args, argv):
+    # logger.addHandler(logging.StreamHandler())
+    # if args.verbose:
+    #     logger.setLevel(logging.INFO)
 
     if os.path.exists('cit.yml'):
         with open('cit.yml') as f:
@@ -84,7 +85,7 @@ def main_(args, argv):
                 })
 
     if args.init:
-        return init(conf, cwd, args.exclude_dir)
+        return _init(conf, cwd, args.exclude_dir)
 
     if not conf.get('projects'):
         raise CitError('There is no projects.')
@@ -114,8 +115,10 @@ def main_(args, argv):
         last_result = result
 
 
-def main():
-    parser = argparse.ArgumentParser()
+def init_parser(parser=None):
+    if parser is None:
+        parser = argparse.ArgumentParser()
+
     parser.add_argument('-V', '--verbose', action='store_true')
     parser.add_argument(
         '-S', '--search', action='store_true', help='auto discover projects')
@@ -125,13 +128,20 @@ def main():
         '-T', '--tag', action='append', help='use projects with tag')
     parser.add_argument('-C', '--work-dir', action='store')
     parser.add_argument('-X', '--exclude-dir', action='append')
+    parser.add_argument('cmd', nargs='*', default='')
+    parser.set_defaults(func=lambda namespace: _handler(
+        args=namespace,
+        argv=namespace.cmd,
+    ))
+    return parser
 
-    argcomplete.autocomplete(parser)
 
+def main():
+    parser = init_parser()
     args, argv = parser.parse_known_args()
 
     try:
-        main_(args, argv)
+        _handler(args, argv)
     except CitError as e:
         logger.error(CLR_FAIL + e.args[0] + CLR_ENDC)
 

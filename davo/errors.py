@@ -1,3 +1,11 @@
+__all__ = (
+    'BaseError',
+    'UserError',
+    'Error',
+    'NotImpl',
+)
+
+
 class BaseError(RuntimeError):
     pass
 

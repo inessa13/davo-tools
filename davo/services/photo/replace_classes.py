@@ -100,15 +100,15 @@ def exif_date(filename, _context):
 
 
 def exif_time(filename, _context):
-    if datetime := _exif_field(filename, 'datetime'):
-        return datetime[11:].replace(':', '')
+    if dt := _exif_field(filename, 'datetime'):
+        return dt[11:].replace(':', '')
 
     return ''
 
 
 def exif_datetime(filename, _context):
-    if datetime := _exif_field(filename, 'datetime'):
-        return datetime.replace(':', '').replace(' ', '_')
+    if dt := _exif_field(filename, 'datetime'):
+        return dt.replace(':', '').replace(' ', '_')
 
     return ''
 

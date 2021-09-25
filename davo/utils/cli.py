@@ -3,7 +3,7 @@ import logging
 
 import argcomplete
 
-from .. import errors
+from davo import errors
 
 logger = logging.getLogger(__name__)
 

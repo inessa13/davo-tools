@@ -1,4 +1,4 @@
-from setuptools import setup, find_namespace_packages
+from setuptools import setup
 
 setup(
     name='davo-tools',
@@ -6,8 +6,7 @@ setup(
     author='davo',
     author_email='davo.fastcall@gmail.com',
     url='https://github.com/inessa13/davo-tools',
-    packages=find_namespace_packages(include=['davo.*']),
-    namespace_packages=['davo'],
+    packages=['davo'],
     license='GPLv3',
     python_requires='~=3.0',
     install_requires=[
@@ -21,10 +20,9 @@ setup(
         'keyring',
     ],
     entry_points={'console_scripts': [
-        'davo-photo = davo.photo.cli:main',
-        'davo-vpn = davo.vpn.cli:main',
-        'cit = davo.git_tools.cli:main',
-        'davo-tools = davo.common.cli:main',
+        'cit = davo.services.git_tools:main',
+        'davo-photo = davo.services.photo.cli:main',
+        'davo-tools = davo.cli:main',
     ]},
     classifiers=[
         'Development Status :: 5 - Production/Stable',

@@ -1,37 +1,24 @@
 import datetime
-import hashlib
 import logging
 import os
 import re
 
 from PIL import Image
 
-from . import const, errors, replace_classes
+import davo.utils
+
+from . import replace_classes
 
 logger = logging.getLogger(__name__)
 
 
-def iter_files(roo_path, recursive=False):
-    if os.path.isdir(roo_path):
-        if recursive:
-            for dir_path, __, file_names in os.walk(roo_path):
-                for file in file_names:
-                    path = os.path.join(dir_path, file)
-                    if not os.path.isfile(path):
-                        continue
-                    yield path
-        else:
-            for file in os.listdir(roo_path):
-                path = os.path.join(roo_path, file)
-                if not os.path.isfile(path):
-                    continue
-                yield path
+def iter_files(root_path, recursive=False, sort=False):
+    it = davo.utils.path.iter_files(root_path, recursive=recursive)
 
-    elif os.path.isfile(roo_path):
-        yield roo_path
+    if sort:
+        return sorted(it)
 
-    else:
-        raise errors.UserError('Invalid path {}'.format(roo_path))
+    return it
 
 
 def date_as_path(path):
@@ -85,35 +72,6 @@ def get_known_pattern(pattern):
         return None
     options = replace_classes.PATTERNS[pattern]
     return options['pattern'], options['replace']
-
-
-def file_hash(f_path):
-    file_ = open(f_path, 'rb')
-    hash_ = hashlib.md5()
-    while True:
-        block = file_.read(128)
-        if not block:
-            break
-        hash_.update(block)
-    file_.close()
-    return hash_
-
-
-def ensure_path(path, output=None, commit=False):
-    if '/' not in path:
-        return
-
-    root, basename = os.path.split(path)
-    if os.path.exists(root):
-        return
-
-    if output == const.OUTPUT_COMMAND:
-        logger.info('mkdir -p %s', root)
-    elif output == const.OUTPUT_TABLE:
-        logger.info('%s', root)
-
-    if commit:
-        os.makedirs(root)
 
 
 def image_load_pil(path):

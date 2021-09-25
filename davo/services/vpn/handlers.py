@@ -1,8 +1,9 @@
 import os
 
-import davo.common
 import pexpect
 import pyotp
+
+import davo.utils
 
 from . import utils
 
@@ -34,7 +35,7 @@ def connect_openvpn(account):
     cmd = C_OPENVPN.format(account['openvpn_conf_path'], pass_file)
     print(cmd.replace(account['password'], '***'))
 
-    sudo = davo.common.utils.conf.load_kr_kp_pass()
+    sudo = davo.utils.conf.load_kr_kp_pass()
 
     try:
         ch = pexpect.spawn(cmd)
