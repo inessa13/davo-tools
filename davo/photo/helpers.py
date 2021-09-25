@@ -5,7 +5,7 @@ import shutil
 
 from PIL import Image
 
-from . import utils
+from . import utils, errors
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +206,20 @@ def command_search_duplicates(root, md5, recursive):
             )
 
 
-def command_convert(root, replace, recursive, copy, thumbnail, commit=False):
+def command_convert(
+    root, replace, recursive, copy, delete, thumbnail, commit=False,
+):
+    """
+    Convert command.
+
+    :param str root:
+    :param str replace: replace pattern
+    :param boot recursive:
+    :param bool copy:
+    :param bool delete: delete source on convert (for rename use copy option)
+    :param int thumbnail:
+    :param bool commit:
+    """
     index = 1
     for file_path in sorted(utils.iter_files(root, recursive=recursive)):
         file_root, file_base = os.path.split(file_path)
@@ -222,6 +235,9 @@ def command_convert(root, replace, recursive, copy, thumbnail, commit=False):
 
         if (thumbnail
                 or not utils.is_ext_same(file_base, new_name)):
+            if copy and file_path == file_path_new:
+                raise errors.NotImpl(
+                    '--copy for inplace convert not implemented yet')
             utils.image_convert(
                 path_source=file_path,
                 path_dest=file_path_new,
@@ -230,6 +246,9 @@ def command_convert(root, replace, recursive, copy, thumbnail, commit=False):
                 save_mtime=True,
                 commit=commit,
             )
+            # TODO: copy on file_path == file_path_new
+            if commit and delete and file_path != file_path_new:
+                os.remove(file_path)
 
         elif copy:
             if commit:
