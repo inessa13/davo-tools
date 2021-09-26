@@ -47,17 +47,9 @@ def created_datetime(filename, _context, sep='_'):
     return date.strftime('%Y%m%d{}%H%M%S'.format(sep))
 
 
-def ext_without_dot(filename, _context):
+def extension(filename, _context):
     if '.' in filename:
         ext = filename.rsplit('.', 1)[1]
-    else:
-        ext = ''
-    return ext
-
-
-def ext_with_dot(filename, _context):
-    if '.' in filename:
-        ext = '.' + filename.rsplit('.', 1)[1]
     else:
         ext = ''
     return ext
@@ -78,60 +70,95 @@ def counter(_filename, context, size=3):
     return pattern.format(context.get('index', 0))
 
 
-def _exif_field(filename, field, default=''):
+def get_exif(filename, verbose=True):
     with open(filename, 'rb') as file:
         try:
             image = exif.Image(file)
         except Exception as exc:
-            logger.warning('exif parse error: %s', exc)
-            return default
+            if verbose:
+                logger.warning('exif parse error: %s', exc)
+            return None
 
     if not image.has_exif:
+        return None
+
+    return image
+
+
+def _exif_field(context, filename, field, default=''):
+    if context.get('exif') is not None:
+        image = context['exif']
+    else:
+        image = get_exif(filename, verbose=context.get('verbose', False))
+
+    if image is None or not image.has_exif:
         return default
 
     return image.get(field) or default
 
 
-def exif_date(filename, _context):
-    if value := _exif_field(filename, 'datetime'):
+def exif_date(filename, context):
+    if value := _exif_field(context, filename, 'datetime'):
         return value[:10].replace(':', '')
 
     return ''
 
 
-def exif_time(filename, _context):
-    if dt := _exif_field(filename, 'datetime'):
-        return dt[11:].replace(':', '')
+def exif_time(filename, context):
+    if value := _exif_field(context, filename, 'datetime'):
+        return value[11:].replace(':', '')
 
     return ''
 
 
-def exif_datetime(filename, _context):
-    if dt := _exif_field(filename, 'datetime'):
-        return dt.replace(':', '').replace(' ', '_')
+def exif_datetime(filename, context, sep='_'):
+    if value := _exif_field(context, filename, 'datetime'):
+        return value.replace(':', '').replace(' ', sep)
 
     return ''
 
 
-def exif_date_original(filename, _context):
-    if datetime_original := _exif_field(filename, 'datetime_original'):
-        return datetime_original[:10].replace(':', '')
+def exif_date_original(filename, context):
+    if value := _exif_field(context, filename, 'datetime_original'):
+        return value[:10].replace(':', '')
 
     return ''
 
 
-def exif_time_original(filename, _context):
-    if datetime_original := _exif_field(filename, 'datetime_original'):
-        return datetime_original[11:].replace(':', '')
+def exif_time_original(filename, context):
+    if value := _exif_field(context, filename, 'datetime_original'):
+        return value[11:].replace(':', '')
 
     return ''
 
 
-def exif_datetime_original(filename, _context):
-    if datetime_original := _exif_field(filename, 'datetime_original'):
-        return datetime_original.replace(':', '').replace(' ', '_')
+def exif_datetime_original(filename, context, sep='_'):
+    if value := _exif_field(context, filename, 'datetime_original'):
+        return value.replace(':', '').replace(' ', sep)
 
     return ''
+
+
+def date_time_prioritized(filename, context, sep='_'):
+    if value := exif_datetime_original(filename, context, sep=sep):
+        return value
+
+    if value := exif_datetime(filename, context, sep=sep):
+        return value
+
+    if value := modified_datetime(filename, context, sep=sep):
+        return value
+
+    if value := created_datetime(filename, context, sep=sep):
+        return value
+
+    return ''
+
+
+def df_prioritized(filename, context):
+    value = date_time_prioritized(filename, context, sep=' ')
+    value = datetime.datetime.strptime(value, '%Y%m%d %H%M%S')
+    return value
 
 
 CLASSES = {
@@ -146,10 +173,9 @@ CLASSES = {
     '[ctime]': created_time,
     '[cdatetime]': created_datetime,
     '[cdate time]': lambda f, c: created_datetime(f, c, ' '),
-    '[Ext]': ext_without_dot,
-    '[EXT]': lambda f, c: ext_without_dot(f, c).upper(),
-    '[ext]': lambda f, c: ext_without_dot(f, c).lower(),
-    '[.ext]': ext_with_dot,
+    '[Ext]': extension,
+    '[EXT]': lambda f, c: extension(f, c).upper(),
+    '[ext]': lambda f, c: extension(f, c).lower(),
     '[source]': source_no_ext,
     '[CCC]': lambda f, c: counter(f, c, size=3),
     '[index3]': lambda f, c: counter(f, c, size=3),
@@ -161,6 +187,11 @@ CLASSES = {
     '[exif:date_original]': exif_date_original,
     '[exif:time_original]': exif_time_original,
     '[exif:datetime_original]': exif_datetime_original,
+    '[datetime]': date_time_prioritized,
+    '[date time]': lambda f, c: date_time_prioritized(f, c, sep=' '),
+    '[year]': lambda f, c: df_prioritized(f, c).strftime('%Y'),
+    '[month]': lambda f, c: df_prioritized(f, c).strftime('%m'),
+    '[day]': lambda f, c: df_prioritized(f, c).strftime('%d'),
 }
 
 

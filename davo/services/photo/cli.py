@@ -54,24 +54,28 @@ def init_parser(parser=None, subparsers=None, commands=()):
     if not commands or 'rename' in commands:
         choices_output = ('-', 'C', 'T')
         cmd = subparsers.add_parser(
-            'rename', parents=[p_root, p_commit],
-            help='rename files by regexp')
+            'rename', parents=p_common, help='rename files by regexp')
         cmd.add_argument(
             '-p', '--pattern', action='store', default='.*',
             help='search pattern')
         cmd.add_argument(
-            '-R', '--replace', action='store', help='replace pattern')
+            '-R', '--replace-pattern', action='store',
+            default='[source].[Ext]',
+            help='replace pattern')
         cmd.add_argument(
             '-o', '--output', action='store', choices=choices_output,
             default='T',
             help='replace pattern')
         cmd.add_argument('-C', '--copy', action='store_true')
+        cmd.add_argument('--skip-no-exif', action='store_true')
         cmd.set_defaults(func=lambda namespace: helpers.command_regexp(
             root=namespace.path,
+            recursive=namespace.recursive,
             pattern=namespace.pattern,
-            replace=namespace.replace,
+            replace=namespace.replace_pattern,
             output=namespace.output,
             copy=namespace.copy,
+            skip_no_exif=namespace.skip_no_exif,
             commit=namespace.commit,
         ))
 
@@ -92,7 +96,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
     if not commands or 'convert' in commands:
         cmd = subparsers.add_parser(
             'convert', parents=p_common, help='convert images')
-        cmd.add_argument('-R', '--replace-pattern', default='[source].[ext]')
+        cmd.add_argument('-R', '--replace-pattern', default='[source].[Ext]')
         cmd.add_argument(
             '-D', '--delete-source', action='store_true',
             help='delete source files on image conversion if name had not '
@@ -104,6 +108,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
                  'name had been changed',
         )
         cmd.add_argument('-t', '--thumbnail', type=int)
+        cmd.add_argument('--skip-no-exif', action='store_true')
         cmd.set_defaults(func=lambda namespace: helpers.command_convert(
             root=namespace.path,
             replace=namespace.replace_pattern,
@@ -111,6 +116,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
             copy=namespace.copy,
             delete=namespace.delete_source,
             thumbnail=namespace.thumbnail,
+            skip_no_exif=namespace.skip_no_exif,
             commit=namespace.commit,
         ))
 

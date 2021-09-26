@@ -29,9 +29,12 @@ def init_parser():
         commit=True,
     ))
 
-    services.photo.cli.init_parser(parser, subparsers, commands=(
+    cmd = subparsers.add_parser('file', help='file tools')
+    services.photo.cli.init_parser(cmd, commands=(
         'convert',
         'rename',
+        'iphone-clean-live',
+        'search-duplicates',
     ))
 
     cmd = subparsers.add_parser('vpn', help='connect vpn')
@@ -44,6 +47,15 @@ def init_parser():
     cmd = subparsers.add_parser(
         'cit', help='run git commands on multiple repos')
     services.git_tools.init_parser(cmd)
+
+    cmd = subparsers.add_parser('s3', help='s3 tools')
+    services.s3sync.cli.init_parser(cmd, commands=(
+        'config',
+        'buckets',
+        'list',
+        'diff',
+        'update',
+    ))
 
     return parser
 

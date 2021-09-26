@@ -18,11 +18,14 @@ setup(
         'pexpect',
         'pykeepass',
         'keyring',
+        'boto',
+        'reprint',
     ],
     entry_points={'console_scripts': [
+        'davo = davo.cli:main',
         'cit = davo.services.git_tools:main',
         'davo-photo = davo.services.photo.cli:main',
-        'davo-tools = davo.cli:main',
+        'davo-s3sync = davo.services.s3sync.cli:main',
     ]},
     classifiers=[
         'Development Status :: 5 - Production/Stable',

@@ -8,7 +8,7 @@ from PIL import Image
 import davo.utils
 from davo import errors
 
-from . import utils
+from . import utils, replace_classes
 
 logger = logging.getLogger(__name__)
 
@@ -60,17 +60,38 @@ def _command_tree_reverse(root, commit=False):
             os.rename(file, os.path.join(root, base))
 
 
-def command_regexp(root, pattern, replace, output, copy, commit=False):
+def command_regexp(
+    root, recursive, pattern, replace, output, copy, skip_no_exif,
+    commit=False,
+):
     if pattern_options := utils.get_known_pattern(pattern):
         pattern, replace = pattern_options
 
+    mkdir_no_commit = set()
+
     index = 1
-    for file in sorted(utils.iter_files(root, recursive=False)):
-        root, base = os.path.split(file)
+    for file_path in sorted(utils.iter_files(root, recursive=recursive)):
+        file_root, base = os.path.split(file_path)
+
+        if not re.match(pattern, base):
+            continue
+
+        exif = None
+        if skip_no_exif:
+            exif = replace_classes.get_exif(file_path, verbose=False)
+            if exif is None:
+                continue
+
         new_name = utils.replace_file_params(
-            file, pattern, replace, index=index)
+            file_path, pattern, replace, index=index, exif=exif)
         if not new_name:
             continue
+
+        new_path = os.path.abspath(os.path.join(file_root, new_name))
+        sub_path = file_root.replace(root, '.')
+        if sub_path:
+            base = os.path.join(sub_path, base)
+            new_name = new_path.replace(root, '.')
 
         if output == 'C':
             if copy:
@@ -81,21 +102,27 @@ def command_regexp(root, pattern, replace, output, copy, commit=False):
         elif output == 'T':
             logger.info('%-41s %s', base, new_name)
 
-        if '/' in new_name:
-            p, n = os.path.split(new_name)
-            if not os.path.exists(p):
-                if output == 'C':
-                    logger.info('mkdir -p %s', p)
-                elif output == 'T':
-                    logger.info('%s', p)
+        # if '/' in new_name:
+        new_root, _ = os.path.split(new_path)
+        if not os.path.exists(new_root) and new_root not in mkdir_no_commit:
+            if output == 'C':
+                logger.info('mkdir -p %s', os.path.dirname(new_name))
+            elif output == 'T':
+                logger.info('%s', os.path.dirname(new_name))
 
-                if commit:
-                    os.makedirs(p)
-        if commit:
-            if copy:
-                shutil.copy2(file, os.path.join(root, new_name))
+            if commit:
+                os.makedirs(new_root)
             else:
-                os.rename(file, os.path.join(root, new_name))
+                mkdir_no_commit.add(new_root)
+
+        if commit:
+            if os.path.exists(new_path):
+                raise errors.UserError(
+                    'File already exists: {}'.format(new_path))
+            if copy:
+                shutil.copy2(file_path, new_path)
+            else:
+                os.rename(file_path, new_path)
 
         index += 1
 
@@ -205,13 +232,14 @@ def command_search_duplicates(root, md5, recursive):
 
         if doubles:
             logger.info(
-                '%s %s %s', len(doubles), i.replace(root, '.'),
+                '%s, %s, %s', i.replace(root, '.'), len(doubles),
                 ','.join(doubles).replace(root, '.'),
             )
 
 
 def command_convert(
-    root, replace, recursive, copy, delete, thumbnail, commit=False,
+    root, replace, recursive, copy, delete, thumbnail, skip_no_exif,
+        commit=False,
 ):
     """
     Convert command.
@@ -222,14 +250,22 @@ def command_convert(
     :param bool copy:
     :param bool delete: delete source on convert (for rename use copy option)
     :param int thumbnail:
+    :param bool skip_no_exif: skip files with no exif data
     :param bool commit:
     """
     index = 1
     converted = 0
     for file_path in utils.iter_files(root, recursive=recursive, sort=True):
         file_root, file_base = os.path.split(file_path)
+
+        exif = None
+        if skip_no_exif:
+            exif = replace_classes.get_exif(file_path, verbose=False)
+            if exif is None:
+                continue
+
         new_name = utils.replace_file_params(
-            file_path, '.*', replace, index=index)
+            file_path, '.*', replace, index=index, exif=exif)
         if not new_name:
             continue
 
