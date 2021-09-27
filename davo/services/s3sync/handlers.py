@@ -85,9 +85,11 @@ def on_diff(namespace, print_details=True):
     else:
         modes = namespace.modes
 
+    path = os.path.abspath(namespace.path)
+
     src_files = []
     for file_path in utils.iter_local_path(
-            namespace.path, namespace.recursive):
+            path, namespace.recursive):
         if not os.path.isfile(file_path):
             continue
 
@@ -104,7 +106,7 @@ def on_diff(namespace, print_details=True):
     remote_files = dict()
 
     ls_remote = utils.iter_remote_path(
-        bucket, namespace.path, recursive=namespace.recursive)
+        bucket, path, recursive=namespace.recursive)
 
     for file_ in ls_remote:
         if not isinstance(file_, boto.s3.key.Key) or file_.name[-1] == '/':
@@ -260,9 +262,11 @@ def on_upload(namespace):
     if not bucket:
         raise errors.UserError('missing bucket')
 
+    path = os.path.abspath(namespace.path)
+
     files = {}
     for local_path in utils.iter_local_path(
-            namespace.path, namespace.recursive):
+            path, namespace.recursive):
         if not os.path.isfile(local_path):
             continue
 
@@ -273,7 +277,7 @@ def on_upload(namespace):
         }
 
     for remote in utils.iter_remote_path(
-            bucket, namespace.path, namespace.recursive):
+            bucket, path, namespace.recursive):
         if remote.name in files:
             files[remote.name]['key'] = remote
 

@@ -152,7 +152,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
             recursive=namespace.recursive,
         ))
 
-    return parser
+    return parser, subparsers
 
 
 def main():

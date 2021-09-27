@@ -18,24 +18,17 @@ def init_parser():
 
     subparsers = parser.add_subparsers(title='list of commands')
 
-    cmd = subparsers.add_parser('keyring', help='get/set keyring records')
-    cmd.add_argument('key', action='store')
-    cmd.add_argument('value', nargs='?', action='store')
-    cmd.add_argument('-p', '--enter-pass', action='store_true')
-    cmd.set_defaults(func=lambda namespace: services.common.command_keyring(
-        key=namespace.key,
-        value=namespace.value,
-        enter_pass=namespace.enter_pass,
-        commit=True,
-    ))
+    cmd = subparsers.add_parser('conf', help='conf tools')
+    services.common.init_parser(cmd, commands=('keyring',))
 
     cmd = subparsers.add_parser('file', help='file tools')
-    services.photo.cli.init_parser(cmd, commands=(
+    cmd, _sub = services.photo.cli.init_parser(cmd, commands=(
         'convert',
         'rename',
         'iphone-clean-live',
         'search-duplicates',
     ))
+    services.common.init_parser(cmd, _sub, commands=('compare',))
 
     cmd = subparsers.add_parser('vpn', help='connect vpn')
     cmd.add_argument('account', nargs='?', action='store')
