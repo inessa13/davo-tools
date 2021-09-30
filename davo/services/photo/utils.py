@@ -50,11 +50,17 @@ def replace_file_params(filename, pattern, replace, **context):
     match_dict = m.groupdict()
     if match_dict.get('source'):
         context['source'] = match_dict['source']
+    context['source_match_groups'] = m.groups()
+    context['source_match_group_dict'] = match_dict
 
     if '[' in replace:
         for code, method in replace_classes.CLASSES.items():
             if code in replace:
                 replace = replace.replace(code, method(basename, context))
+        for pattern_, method in replace_classes.CLASSES_RE.items():
+            while m := re.search(pattern_, replace):
+                replace = replace.replace(
+                    m.group(0), method(basename, context, m))
 
     for index in range(1, 5):
         if f'\\{index}' in replace:

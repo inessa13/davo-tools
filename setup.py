@@ -20,6 +20,7 @@ setup(
         'keyring',
         'boto',
         'reprint',
+        'pymediainfo',
     ],
     entry_points={'console_scripts': [
         'davo = davo.cli:main',

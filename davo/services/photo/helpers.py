@@ -61,8 +61,8 @@ def _command_tree_reverse(root, commit=False):
 
 
 def command_regexp(
-    root, recursive, pattern, replace, output, copy, skip_no_exif,
-    commit=False,
+    root, recursive, filters, exclude, pattern, replace, output, copy,
+    skip_no_exif, limit=0, verbose=False, commit=False,
 ):
     if pattern_options := utils.get_known_pattern(pattern):
         pattern, replace = pattern_options
@@ -76,21 +76,34 @@ def command_regexp(
         if not re.match(pattern, base):
             continue
 
-        exif = None
+        if filters:
+            if not any(re.search(p, base) for p in filters):
+                continue
+
+        if exclude:
+            if any(re.search(p, base) for p in exclude):
+                continue
+
+        context = {'verbose': verbose, 'index': index}
+
+        sub_path = file_root.replace(root, '.')
+        if sub_path:
+            base = os.path.join(sub_path, base)
+            context['sub_root'] = sub_path
+
         if skip_no_exif:
             exif = replace_classes.get_exif(file_path, verbose=False)
             if exif is None:
                 continue
+            context['exif'] = exif
 
         new_name = utils.replace_file_params(
-            file_path, pattern, replace, index=index, exif=exif)
+            file_path, pattern, replace, **context)
         if not new_name:
             continue
 
-        new_path = os.path.abspath(os.path.join(file_root, new_name))
-        sub_path = file_root.replace(root, '.')
+        new_path = os.path.abspath(os.path.join(root, new_name))
         if sub_path:
-            base = os.path.join(sub_path, base)
             new_name = new_path.replace(root, '.')
 
         if output == 'C':
@@ -124,6 +137,9 @@ def command_regexp(
             else:
                 os.rename(file_path, new_path)
 
+        if limit and index >= limit:
+            logger.info('limit reached')
+            break
         index += 1
 
 

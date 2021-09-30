@@ -30,6 +30,9 @@ def init_parser(parser=None, subparsers=None, commands=()):
     p_commit.add_argument(
         '-c', '--commit', action='store_true', help='commit mode')
 
+    p_verbose = argparse.ArgumentParser(add_help=False)
+    p_verbose.add_argument('-v', '--verbose', action='store_true')
+
     p_root = argparse.ArgumentParser(add_help=False)
     p_root.add_argument('path', nargs='?', default=os.getcwd())
 
@@ -54,7 +57,9 @@ def init_parser(parser=None, subparsers=None, commands=()):
     if not commands or 'rename' in commands:
         choices_output = ('-', 'C', 'T')
         cmd = subparsers.add_parser(
-            'rename', parents=p_common, help='rename files by regexp')
+            'rename',
+            parents=[p_root, p_recursive, p_commit, p_verbose],
+            help='rename files by regexp')
         cmd.add_argument(
             '-p', '--pattern', action='store', default='.*',
             help='search pattern')
@@ -66,16 +71,25 @@ def init_parser(parser=None, subparsers=None, commands=()):
             '-o', '--output', action='store', choices=choices_output,
             default='T',
             help='replace pattern')
+        cmd.add_argument('-l', '--limit', action='store', type=int, default=0)
         cmd.add_argument('-C', '--copy', action='store_true')
+        cmd.add_argument(
+            '-F', '--filter', action='append', help='filter pattern')
+        cmd.add_argument(
+            '-X', '--exclude', action='append', help='exclude pattern')
         cmd.add_argument('--skip-no-exif', action='store_true')
         cmd.set_defaults(func=lambda namespace: helpers.command_regexp(
             root=namespace.path,
             recursive=namespace.recursive,
+            filters=namespace.filter,
+            exclude=namespace.exclude,
             pattern=namespace.pattern,
             replace=namespace.replace_pattern,
             output=namespace.output,
             copy=namespace.copy,
             skip_no_exif=namespace.skip_no_exif,
+            limit=namespace.limit,
+            verbose=namespace.verbose,
             commit=namespace.commit,
         ))
 
