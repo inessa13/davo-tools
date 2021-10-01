@@ -246,3 +246,12 @@ def _connect_bucket(name, region_host):
         return None
 
     return conn.lookup(name, validate=True)
+
+
+def output_finish(output, string):
+    prefix = conf.get('THREAD_MAX_COUNT')
+    total = prefix + conf.get('ENDED_OUTPUT_MAX_COUNT')
+    if len(output) >= total:
+        output[prefix:total] = output[prefix + 1:total] + [string]
+    else:
+        output.append(string)

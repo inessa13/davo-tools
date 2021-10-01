@@ -12,7 +12,12 @@ _CONFIG = {
     'ENDED_OUTPUT_MAX_COUNT': 4,
     'UPLOAD_CB_NUM': 10,
     'UPLOAD_FORMAT':
-        '[{progress}>{left}] {progress_percent:3.0f}% {speed} {info}',
+        '[{progress}>{left}]'
+        '\t{progress_percent:3.0f}%'
+        '\t{speed}'
+        '\t{estimate}'
+        '\t{elapsed}'
+        '\t{info}',
     'REDUCED_REDUNDANCY': False,
     'BUCKET': None,
     'ALLOWED_REGIONS': None,
