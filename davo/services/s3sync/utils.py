@@ -15,9 +15,11 @@ from . import conf
 logger = logging.getLogger(__name__)
 
 
-def file_path_info(path):
-    project_root = find_project_root() or get_cwd()
-    current_root = get_cwd()
+def file_path_info(path, project_root=None, current_root=None):
+    if project_root is None:
+        project_root = find_project_root() or get_cwd()
+    if current_root is None:
+        current_root = get_cwd()
 
     if not path or path == '.':
         path = current_root
@@ -62,14 +64,18 @@ def iter_local_path(path, recursive=False):
     yield from utils.path.iter_files(path, recursive=recursive)
 
 
-def iter_remote_path(bucket, path, recursive=False):
+def iter_remote_path(bucket, path, current_root=None, recursive=False):
     assert bucket
 
-    local_path, key = file_path_info(path)
+    local_path, key = file_path_info(
+        path,
+        project_root=conf.get('PROJECT_ROOT'),
+        current_root=current_root,
+    )
     if key and os.path.isdir(local_path) and key[-1] != '/':
         key += '/'
 
-    params = dict()
+    params = {}
     if not recursive:
         params['delimiter'] = '/'
 

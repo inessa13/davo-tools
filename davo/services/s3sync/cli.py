@@ -4,9 +4,9 @@ import logging.config
 import os
 
 import davo.utils.cli
-from davo import utils, version
+from davo import constants, utils, version
 
-from . import conf, handlers, utils
+from . import conf, const, handlers, utils
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,18 @@ def init_parser(parser=None, subparsers=None, commands=()):
             '--local',
             action='store_true',
             help='show/edit local config; by default global')
+
+    if not commands or 'info' in commands:
+        name = _command('info', commands)
+        cmd = subparsers.add_parser(name, help='show additional info')
+        cmd.set_defaults(func=handlers.on_info)
+        cmd.add_argument(
+            'topic',
+            nargs='?',
+            choices=('topics',) + tuple(const.TOPICS),
+            default='topics',
+            action='store',
+            help='topic')
 
     if not commands or 'init' in commands:
         name = _command('init', commands)
@@ -102,8 +114,8 @@ def init_parser(parser=None, subparsers=None, commands=()):
 
     common_diff.add_argument(
         '-m', '--modes',
-        action='store', default='-<>+r',
-        help='modes of comparing (by default: -<>+r)')
+        action='store', default=constants.STATES_DIFF_ALL,
+        help='modes of comparing (by default all diff states)')
     common_diff.add_argument(
         '-f', '--file-types',
         action='store',

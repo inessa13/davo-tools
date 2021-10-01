@@ -1,4 +1,3 @@
-import collections
 import datetime
 import logging
 import os
@@ -12,9 +11,9 @@ import reprint
 import yaml
 
 import davo.utils
-from davo import errors, settings
+from davo import constants, errors, settings
 
-from . import conf, const, workers, tasks, utils
+from . import conf, const, tasks, utils, workers
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +37,19 @@ def on_config(namespace):
 
     else:
         print('Config is empty')
+
+
+def on_info(namespace):
+    if namespace.topic == 'topics':
+        logger.info('Available topics:')
+        pprint.pprint(list(const.TOPICS.keys()))
+
+    elif namespace.topic in const.TOPICS:
+        logger.info('Available %s:', namespace.topic)
+        pprint.pprint(const.TOPICS[namespace.topic])
+
+    else:
+        raise errors.UserError('Invalid topic')
 
 
 def on_init(namespace):
@@ -81,7 +93,7 @@ def on_diff(namespace, print_details=True):
         raise errors.UserError('missing bucket')
 
     if namespace.all:
-        modes = '=+-<>r'
+        modes = constants.STATES_ALL
     else:
         modes = namespace.modes
 
@@ -124,7 +136,7 @@ def on_diff(namespace, print_details=True):
             size=file_.size,
             modified=file_.last_modified,
             md5=file_.etag[1:-1],
-            state='-',
+            state=constants.STATE_LOCAL_MISSING,
             comment=[],
             local_path=utils.file_path(file_.name),
         )
@@ -157,7 +169,7 @@ def on_diff(namespace, print_details=True):
                     remote['comment'].append('md5: different')
 
             if equal:
-                remote.update(state='=', comment=[])
+                remote.update(state=constants.STATE_EQUAL, comment=[])
             else:
                 remote['local_size'] = stat.st_size
                 local_modified = datetime.datetime.fromtimestamp(
@@ -175,19 +187,23 @@ def on_diff(namespace, print_details=True):
                     remote['comment'].append('modified: {0}'.format(delta))
 
                 if namespace.force_upload:
-                    remote['state'] = '>'
+                    remote['state'] = constants.STATE_LOCAL_NEWER
+
                 elif namespace.force_download:
-                    remote['state'] = '<'
+                    remote['state'] = constants.STATE_LOCAL_OLDER
+
                 elif local_modified > remote_modified:
-                    remote['state'] = '>'
+                    remote['state'] = constants.STATE_LOCAL_NEWER
+
                 else:
-                    remote['state'] = '<'
+                    remote['state'] = constants.STATE_LOCAL_OLDER
 
             if remote['state'] not in modes:
                 del remote_files[key]
 
         else:
-            if '+' not in modes and 'r' not in modes:
+            if (constants.STATE_LOCAL_NEW not in modes
+                    and constants.STATE_RENAMED not in modes):
                 continue
 
             remote_files[key] = dict(
@@ -195,28 +211,32 @@ def on_diff(namespace, print_details=True):
                 local_path=f_path,
                 modified=stat.st_mtime,
                 md5=None,
-                state='+',
+                state=constants.STATE_LOCAL_NEW,
                 comment=[],
             )
+            if conf.get('ALLOWED_EXTENSIONS'):
+                ext = davo.utils.path.get_extension(f_path, lower=True)
+                if ext not in conf.get('ALLOWED_EXTENSIONS'):
+                    remote_files[key]['state'] = constants.STATE_INVALID_TYPE
             if namespace.md5:
                 remote_files[key]['md5'] = davo.utils.path.file_hash(
                     f_path)
 
     # find renames
-    if 'r' in modes:
+    if constants.STATE_RENAMED in modes:
         to_del = []
         for key, new_data in remote_files.items():
-            if new_data['state'] != '+':
+            if new_data['state'] != constants.STATE_LOCAL_NEW:
                 continue
             for name, data in remote_files.items():
-                if data['state'] != '-':
+                if data['state'] != constants.STATE_LOCAL_MISSING:
                     continue
                 if data['size'] != new_data['local_size']:
                     continue
                 if namespace.md5 and data['md5'] != new_data['md5']:
                     continue
                 remote_files[name].update(
-                    state='r',
+                    state=constants.STATE_RENAMED,
                     local_name=key,
                     local_size=new_data['local_size']
                 )
@@ -285,7 +305,7 @@ def on_upload(namespace):
             conflicts += 1
             continue
 
-        pool.add_task(task, bucket, key, data)
+        pool.add_task(task)
 
     if conflicts:
         print('{} remote paths exists, use force flag'.format(conflicts))
@@ -333,11 +353,11 @@ def _update(bucket, files, namespace):
     for name, data in files.items():
         action = None
 
-        if data['state'] == '=':
+        if data['state'] == constants.STATE_EQUAL:
             processed += 1
             continue
 
-        elif data['state'] == '+':
+        elif data['state'] == constants.STATE_LOCAL_NEW:
             if namespace.upload:
                 action = tasks.Upload()
             elif namespace.delete_local:
@@ -353,7 +373,7 @@ def _update(bucket, files, namespace):
                 else:
                     action = act
 
-        elif data['state'] == '-':
+        elif data['state'] == constants.STATE_LOCAL_MISSING:
             if namespace.download:
                 action = tasks.Download()
             elif namespace.delete_remote:
@@ -369,7 +389,7 @@ def _update(bucket, files, namespace):
                     continue
                 action = act
 
-        elif data['state'] == 'r':
+        elif data['state'] == constants.STATE_RENAMED:
             if _check(
                     name, data, namespace.quiet,
                     namespace.rename_remote):
@@ -381,7 +401,7 @@ def _update(bucket, files, namespace):
             else:
                 continue
 
-        elif data['state'] == '>':
+        elif data['state'] == constants.STATE_LOCAL_NEWER:
             if _check(
                     name, data, namespace.quiet,
                     namespace.replace_upload):
@@ -389,7 +409,7 @@ def _update(bucket, files, namespace):
             else:
                 continue
 
-        elif data['state'] == '<':
+        elif data['state'] == constants.STATE_LOCAL_OLDER:
             if _check(
                     name, data, namespace.quiet,
                     namespace.replace_download):

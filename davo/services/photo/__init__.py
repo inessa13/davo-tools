@@ -1,1 +1,1 @@
-from . import cli  # noqa
+from . import cli, utils  # noqa
