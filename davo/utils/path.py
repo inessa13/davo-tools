@@ -4,7 +4,7 @@ import logging
 import os
 import re
 
-from davo import errors
+from davo import constants, errors
 
 logger = logging.getLogger(__name__)
 
@@ -128,9 +128,12 @@ def _ensure_md5(file_options):
 
 
 def compare_dirs(
-    root1, root2, states='-+~<>r', ignore_case=False, check_size=False,
+    root1, root2, states=None, ignore_case=False, check_size=False,
     check_md5=False, recursive=False, exclude=(), verbose=False,
 ):
+    if states is None:
+        states = constants.STATES_DIFF_VALID
+
     files_src = []
     root1 = os.path.abspath(root1)
     for options in _iter_file_options(
@@ -143,7 +146,7 @@ def compare_dirs(
     files_dest = dict()
     for options in _iter_file_options(
             root2, recursive, ignore_case, check_size):
-        options['state'] = '-'
+        options['state'] = constants.STATE_LOCAL_MISSING
         files_dest[options['key']] = options
 
     if verbose:
@@ -172,31 +175,31 @@ def compare_dirs(
                     equal = False
 
             if equal:
-                dest['state'] = '='
+                dest['state'] = constants.STATE_EQUAL
 
             elif check_size:
                 if source['modified'] > dest['modified']:
-                    dest['state'] = '>'
+                    dest['state'] = constants.STATE_LOCAL_NEWER
                 else:
-                    dest['state'] = '<'
+                    dest['state'] = constants.STATE_LOCAL_OLDER
             else:
-                dest['state'] = '~'
+                dest['state'] = constants.STATE_DIFFERENT
 
-        elif '+' in states or 'r' in states:
+        elif constants.STATE_LOCAL_NEW in states or constants.STATE_RENAMED in states:
             files_dest[key_src] = {
                 'path': source['path'],
                 'size': source.get('size'),
-                'state': '+',
+                'state': constants.STATE_LOCAL_NEW,
             }
 
     # find renames
-    if 'r' in states:
+    if constants.STATE_RENAMED in states:
         for key_new, data_new in files_dest.items():
-            if data_new['state'] != '+':
+            if data_new['state'] != constants.STATE_LOCAL_NEW:
                 continue
 
             for key_missing, data_missing in files_dest.items():
-                if data_missing['state'] != '-':
+                if data_missing['state'] != constants.STATE_LOCAL_MISSING:
                     continue
 
                 if data_missing['size'] != data_new['size']:
@@ -209,11 +212,11 @@ def compare_dirs(
                         continue
 
                 data_missing.update({
-                    'state': 'r',
+                    'state': constants.STATE_RENAMED,
                     'path_new': data_new['path'],
                 })
                 # mark for remove from result
-                data_new['state'] = 'D'
+                data_new['state'] = constants.STATE_MARK_DELETE
                 break
 
     return {
@@ -248,3 +251,41 @@ def count_diff(files, verbose=False):
         logger.info('%d differences (%s)', len(files), info)
 
     return info
+
+
+def split3(filename):
+    """
+    Split file name into 3 item tuple.
+
+    :param str filename:
+
+    :return: root, name, extension
+    :rtype: tuple
+    """
+    root, basename = os.path.split(filename)
+
+    if '.' not in basename:
+        return '', basename
+
+    return root, *basename.rsplit('.', 1)
+
+
+def get_extension(basename, lower=False):
+    if '.' not in basename:
+        return ''
+
+    _root, _name, value = split3(basename)
+
+    if lower:
+        value = value.lower()
+
+    return value
+
+
+def get_filename_no_extension(filename, lower=False):
+    _root, value, _ext = split3(filename)
+
+    if lower:
+        value = value.lower()
+
+    return value
