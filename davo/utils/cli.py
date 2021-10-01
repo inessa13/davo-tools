@@ -7,6 +7,12 @@ from davo import errors
 
 logger = logging.getLogger(__name__)
 
+_PROGRESS = (
+    '[{progress}{arrow}{left}]'
+    ' {progress_percent:3.0f}%'
+    ' {ready}/{total}'
+)
+
 
 def run(func):
     @functools.wraps(func)
@@ -37,3 +43,19 @@ def run_parser(parser, use_completion=True):
         namespace.func(namespace)
     else:
         parser.print_help()
+
+
+def progress_line(
+    ready, total, char_fill='=', char_arrow='>', char_pad=' ', len_full=40,
+):
+    percent = ready / total
+    progress = round(percent, 2) * 100
+    progress_len = int(progress) * len_full // 100
+    return _PROGRESS.format(
+        progress=char_fill * progress_len,
+        arrow=char_arrow,
+        left=char_pad * (len_full - progress_len),
+        progress_percent=progress,
+        ready=ready,
+        total=total,
+    )
