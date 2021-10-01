@@ -145,6 +145,12 @@ def init_parser(parser=None, subparsers=None, commands=()):
             type=int,
             help='process limit')
         cmd.add_argument(
+            '-t', '--threads',
+            action='store',
+            default=0,
+            type=int,
+            help='threads count')
+        cmd.add_argument(
             '-q', '--quiet',
             action='store_true', help='quiet (no interactive)')
         cmd.add_argument(

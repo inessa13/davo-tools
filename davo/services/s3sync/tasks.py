@@ -11,11 +11,12 @@ from . import conf, utils
 class Worker(threading.Thread):
     """ Thread executing tasks from a given tasks queue """
 
-    def __init__(self, index, task_queue, result_queue, output=None):
+    def __init__(self, index, task_queue, result_queue, cb_queue, output=None):
         super(Worker, self).__init__()
         self.index = index
         self.task_queue = task_queue
         self.result_queue = result_queue
+        self.cb_queue = cb_queue
         self.daemon = True
         self.speed_list = []
         self.output = output
@@ -42,39 +43,59 @@ class Worker(threading.Thread):
 
 
 class System(threading.Thread):
-    def __init__(self, index, result_queue, output, tasks_total):
+    def __init__(self, index, result_queue, cb_queue, output, tasks_total):
         super(System, self).__init__()
         self.daemon = True
 
         self.index = index
         self.queue = result_queue
+        self.cb_queue = cb_queue
         self.output = output
 
         self.tasks_total = tasks_total
         self.tasks_processed = 0
+        self.tasks_processed_d = {}
         self.size = 0
 
         self._t = time.time()
 
     def run(self):
         while True:
-            data = self.queue.get()
+            data = self.cb_queue.get()
             try:
-                self.handler(data)
+                self.handler_cb(*data)
             finally:
-                self.queue.task_done()
+                self.cb_queue.task_done()
 
-    def handler(self, data):
+    def handler_done(self, data):
         self.tasks_processed += 1
         self.size += data['size']
-
-        len_full = 40
         progress = float(self.tasks_processed) / self.tasks_total * 100
+        return self._handler(progress, self.size)
+
+    def handler_cb(self, name, progress, size):
+        if (progress == 100 and self.tasks_processed_d.get(
+                name, {}).get('progress') != 100):
+            self.tasks_processed += 1
+
+        self.tasks_processed_d[name] = {
+            'progress': progress,
+            'size': size,
+        }
+
+        progress = sum(
+            item['progress'] for item in self.tasks_processed_d.values())
+        progress = float(progress) / self.tasks_total
+        size = sum(item['size'] for item in self.tasks_processed_d.values())
+        return self._handler(progress, size)
+
+    def _handler(self, progress, size):
+        len_full = 40
         progress_len = int(progress) * len_full // 100
 
         delta = time.time() - self._t
         if delta:
-            speed = utils.humanize_size(self.size / delta)
+            speed = utils.humanize_size(size / delta)
         else:
             speed = 'n\\a'
 
@@ -91,6 +112,7 @@ class ThreadPool:
     def __init__(self, num_threads, auto_start=False):
         self.num_threads = num_threads
         self.result_queue = queue.Queue()
+        self.cb_queue = queue.Queue()
         self.task_queue = queue.Queue()
         self.sys = None
         self.tasks_total = 0
@@ -100,11 +122,21 @@ class ThreadPool:
 
     def start(self, output=None):
         if self.num_threads > 1:
-            self.sys = System(0, self.result_queue, output, self.tasks_total)
+            self.sys = System(
+                index=0,
+                result_queue=self.result_queue,
+                cb_queue=self.cb_queue,
+                output=output,
+                tasks_total=self.tasks_total)
             self.sys.start()
 
         for index in range(1, self.num_threads):
-            worker = Worker(index, self.task_queue, self.result_queue, output)
+            worker = Worker(
+                index=index,
+                task_queue=self.task_queue,
+                result_queue=self.result_queue,
+                cb_queue=self.cb_queue,
+                output=output)
             worker.start()
 
     def add_task(self, task, bucket, name, data):
@@ -150,6 +182,7 @@ class Task:
             self.worker.speed_list.append(size / (time.time() - self._t))
 
         self.output_finish()
+        self.worker.cb_queue.put((self.name, 100, size))
 
         return {'size': size}
 
@@ -168,6 +201,8 @@ class Task:
             speed = utils.humanize_size(speed_value)
         else:
             speed = 'n\\a'
+
+        self.worker.cb_queue.put((self.name, progress, uploaded))
 
         line = conf.get('UPLOAD_FORMAT').format(
             progress='=' * progress_len,

@@ -305,6 +305,10 @@ def on_upload(namespace):
 
 
 def on_update(namespace):
+    conf.init()
+    if namespace.threads:
+        conf.option('THREAD_MAX_COUNT', value=namespace.threads)
+
     bucket, files = on_diff(namespace, print_details=False)
     if not files:
         logger.error('no changes')

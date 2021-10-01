@@ -24,6 +24,11 @@ _CONFIG = {
 
 
 def init():
+    if _CONFIG.get('_init'):
+        return
+
+    _CONFIG['_init'] = True
+
     config = load_config(
         settings.CONFIG_PATH_S3SYNC, load_secrets=True, mask=False)
     _CONFIG.update(config)
