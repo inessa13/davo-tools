@@ -1,3 +1,4 @@
+import collections
 import hashlib
 import logging
 import os
@@ -220,3 +221,30 @@ def compare_dirs(
         for key, options in files_dest.items()
         if options['state'] in states
     }
+
+
+def count_diff(files, verbose=False):
+    """
+    Count files diff states. Compatible with .compare_dirs func result.
+
+    :param dict files:
+    :param bool verbose:
+
+    :return: info
+    :rtype: str
+    """
+    if not files:
+        if verbose:
+            logger.info('%d differences', len(files))
+        return ''
+
+    counter = collections.Counter()
+    for data in files.values():
+        counter.update(data['state'])
+    info = ', '.join(
+        '{}: {}'.format(k, v) for k, v in counter.most_common())
+
+    if verbose:
+        logger.info('%d differences (%s)', len(files), info)
+
+    return info

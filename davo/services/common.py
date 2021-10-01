@@ -62,16 +62,7 @@ def command_compare_dirs(
         for key, data in files.items():
             print('{} {}'.format(data['state'], key))
 
-    if files:
-        counter = collections.Counter()
-        for data in files.values():
-            counter.update(data['state'])
-        info = ', '.join(
-            '{}: {}'.format(k, v) for k, v in counter.most_common())
-        logger.info('%d differences (%s)', len(files), info)
-
-    else:
-        logger.info('%d differences', len(files))
+    davo.utils.path.count_diff(files, verbose=True)
 
 
 def init_parser(parser=None, subparsers=None, commands=()):

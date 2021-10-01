@@ -14,7 +14,7 @@ import yaml
 import davo.utils
 from davo import errors, settings
 
-from . import conf, const, tasks, utils
+from . import conf, const, workers, tasks, utils
 
 logger = logging.getLogger(__name__)
 
@@ -241,18 +241,7 @@ def on_diff(namespace, print_details=True):
                 key,
                 ', '.join(data.get('comment', []))))
 
-    if remote_files:
-        counter = collections.Counter()
-        for data in remote_files.values():
-            counter.update(data['state'])
-        info = ', '.join(
-            '{}: {}'.format(k, v) for k, v in counter.most_common())
-        logger.info('%d differences (%s)', len(remote_files), info)
-
-    else:
-        logger.info('%d differences', len(remote_files))
-
-    return bucket, remote_files
+    davo.utils.path.count_diff(remote_files, verbose=True)
 
 
 def on_upload(namespace):
@@ -282,7 +271,7 @@ def on_upload(namespace):
             files[remote.name]['key'] = remote
 
     conflicts = 0
-    pool = tasks.ThreadPool(conf.get('THREAD_MAX_COUNT'), auto_start=False)
+    pool = workers.ThreadPool(conf.get('THREAD_MAX_COUNT'), auto_start=False)
 
     for key, data in files.items():
         if 'key' in data and namespace.force:
@@ -337,7 +326,7 @@ def _update(bucket, files, namespace):
     processed = 0
     size = 0
 
-    pool = tasks.ThreadPool(conf.get('THREAD_MAX_COUNT'))
+    pool = workers.ThreadPool(conf.get('THREAD_MAX_COUNT'))
 
     for name, data in files.items():
         action = None
