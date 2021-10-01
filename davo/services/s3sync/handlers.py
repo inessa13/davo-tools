@@ -243,6 +243,8 @@ def on_diff(namespace, print_details=True):
 
     davo.utils.path.count_diff(remote_files, verbose=True)
 
+    return bucket, remote_files
+
 
 def on_upload(namespace):
     conf.init()
@@ -398,7 +400,7 @@ def _update(bucket, files, namespace):
         if not action:
             logging.error('Unknown action')
             continue
-        pool.add_task(action, bucket, name, data)
+        pool.add_task(action.init(bucket, name, data))
         processed += 1
 
         if isinstance(action, tasks.Download):

@@ -1,12 +1,12 @@
-from setuptools import setup
+from setuptools import find_packages, setup
 
 setup(
     name='davo-tools',
-    version='0.1.0',
+    version='0.1.1',
     author='davo',
     author_email='davo.fastcall@gmail.com',
     url='https://github.com/inessa13/davo-tools',
-    packages=['davo'],
+    packages=find_packages(exclude=('tests',)),
     license='GPLv3',
     python_requires='~=3.0',
     install_requires=[

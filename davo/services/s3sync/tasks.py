@@ -1,3 +1,4 @@
+import datetime
 import os
 import time
 
@@ -16,19 +17,21 @@ class _Task:
         self.name = None
         self.data = None
         self.worker = None
+        self.show_estimate = False
         self._t = None
 
     def handler(self):
         raise NotImplementedError()
 
-    def __call__(self, bucket, name, data, worker=None):
+    def init(self, bucket, name, data):
         self.bucket = bucket
         self.name = name
         self.data = data
+        return self
+
+    def exec(self, worker=None):
         self.worker = worker
-
         self._t = time.time()
-
         self.handler()
 
         size = self.size()
@@ -50,9 +53,16 @@ class _Task:
         if size:
             uploaded = size * float(uploaded) / full
             speed_value = self.worker.speed(uploaded / (time.time() - self._t))
-            speed = utils.humanize_size(speed_value)
+            speed_human = utils.humanize_size(speed_value)
         else:
-            speed = 'n\\a'
+            speed_value = 0
+            speed_human = 'n\\a'
+
+        if self.show_estimate and speed_value and size:
+            estimate_value = size * (100 - progress) / speed_value
+            estimate = str(datetime.timedelta(seconds=estimate_value))
+        else:
+            estimate = ''
 
         self.worker.cb_queue.put((self.name, progress, uploaded))
 
@@ -60,7 +70,9 @@ class _Task:
             progress='=' * progress_len,
             left=' ' * (len_full - progress_len),
             progress_percent=progress,
-            speed=speed,
+            speed=speed_human,
+            estimate=estimate,
+            elapsed='',
             info='{} {}'.format(self, self.name)
         )
         self.output_edit(line)
@@ -77,13 +89,7 @@ class _Task:
             print(line)
             return
 
-        output = self.worker.output
-        prefix = conf.get('THREAD_MAX_COUNT')
-        total = prefix + conf.get('ENDED_OUTPUT_MAX_COUNT')
-        if len(output) >= total:
-            output[prefix:total] = output[prefix + 1:total] + [line]
-        else:
-            output.append(line)
+        utils.output_finish(self.worker.output, line)
 
 
 def _upload(key, callback, local_path, cb_num, replace=False, rrs=False):
