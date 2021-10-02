@@ -6,7 +6,7 @@ import boto.s3.key
 
 import davo.utils
 
-from . import conf, utils
+from . import cache, conf, utils
 
 
 class _Task:
@@ -104,6 +104,15 @@ def _upload(key, callback, local_path, cb_num, replace=False, rrs=False):
             reduced_redundancy=rrs,
             rewind=True,
         )
+
+    cache.cache.update(key.name, {
+        'name': key.name,
+        'size': key.size,
+        'last_modified': datetime.datetime.utcnow().strftime(
+            '%Y-%m-%dT%H:%M:%S.000Z'),
+        'etag': key.etag,
+    })
+    cache.cache.flush()
 
 
 class Upload(_Task):

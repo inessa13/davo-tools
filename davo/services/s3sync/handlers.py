@@ -13,7 +13,7 @@ import yaml
 import davo.utils
 from davo import constants, errors, settings
 
-from . import conf, const, tasks, utils, workers
+from . import cache, conf, const, tasks, utils, workers
 
 logger = logging.getLogger(__name__)
 
@@ -111,18 +111,28 @@ def on_diff(namespace, print_details=True):
         key = utils.file_key(file_path)
         if namespace.ignore_case:
             key = key.lower()
+
+        if key == conf.get('CACHE_FILE_NAME'):
+            continue
+
         src_files.append((key, file_path))
 
     logger.info('%d local objects', len(src_files))
 
     remote_files = dict()
 
+    if not namespace.no_cache:
+        cache.cache.init()
+        if not cache.cache.total():
+            logger.info('updating cache...')
+            utils.update_cache(bucket)
+
     ls_remote = utils.iter_remote_path(
-        bucket, path, recursive=namespace.recursive)
+        bucket, path,
+        recursive=namespace.recursive,
+        cached=not namespace.no_cache)
 
     for file_ in ls_remote:
-        if not isinstance(file_, boto.s3.key.Key) or file_.name[-1] == '/':
-            continue
         if not utils.check_file_type(file_.name, namespace.file_types):
             continue
 
@@ -141,7 +151,10 @@ def on_diff(namespace, print_details=True):
             local_path=utils.file_path(file_.name),
         )
 
-    logger.info('%d remote objects', len(remote_files.keys()))
+    if not namespace.no_cache:
+        logger.info('%d remote objects, using cache', len(remote_files.keys()))
+    else:
+        logger.info('%d remote objects', len(remote_files.keys()))
 
     if not src_files and not remote_files:
         return None
@@ -507,3 +520,20 @@ def _print_key(key):
 
     pattern = conf.get('KEY_PATTERN')
     print(pattern.format(**params))
+
+
+def on_cache_clean(namespace):
+    conf.init()
+    cache.cache.init()
+    cache.cache.clear()
+    cache.cache.flush()
+    logger.info('objects left: %d', cache.cache.total())
+
+
+def on_cache_update(namespace):
+    conf.init()
+    cache.cache.init()
+    bucket = utils.connect_bucket()
+    with reprint.output() as output:
+        utils.update_cache(bucket, reprint=output)
+    logger.info('cached %d remote objects', cache.cache.total())

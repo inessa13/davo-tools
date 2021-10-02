@@ -121,6 +121,8 @@ def init_parser(parser=None, subparsers=None, commands=()):
         action='store',
         metavar='TYPES',
         help='file types (extension) for compare')
+    common_diff.add_argument('--no-cache', action='store_true')
+    common_diff.add_argument('-v', '--verbose', action='store_true')
 
     if not commands or 'diff' in commands:
         name = _command('diff', commands)
@@ -189,6 +191,16 @@ def init_parser(parser=None, subparsers=None, commands=()):
         cmd.add_argument(
             '--delete-remote',
             action='store_true', help='confirm delete remote file')
+
+    if not commands or 'cache-clean' in commands:
+        name = _command('cache-clean', commands)
+        cmd = subparsers.add_parser(name, help='clean cache')
+        cmd.set_defaults(func=handlers.on_cache_clean)
+
+    if not commands or 'cache-update' in commands:
+        name = _command('cache-update', commands)
+        cmd = subparsers.add_parser(name, help='update cache')
+        cmd.set_defaults(func=handlers.on_cache_update)
 
     return parser
 
