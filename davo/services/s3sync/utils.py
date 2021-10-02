@@ -85,6 +85,7 @@ def iter_remote_path(bucket, path, current_root=None, recursive=False):
     return bucket.list(**params)
 
 
+# TODO: replace with davo.utils.format.humanize_speed
 def humanize_size(value, multiplier=1024, label='Bps'):
     if value > multiplier ** 4:
         value /= multiplier ** 4
