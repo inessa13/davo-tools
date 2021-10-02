@@ -3,6 +3,8 @@ import queue
 import threading
 import time
 
+import davo.utils
+
 from . import conf, utils
 
 
@@ -100,7 +102,7 @@ class _System(threading.Thread):
 
         delta = time.time() - self._t
         if delta:
-            speed = utils.humanize_size(size_all / delta)
+            speed = davo.utils.format.humanize_speed(size_all / delta)
         else:
             speed = 'n\\a'
 

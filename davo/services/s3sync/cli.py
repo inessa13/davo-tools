@@ -71,25 +71,6 @@ def init_parser(parser=None, subparsers=None, commands=()):
         cmd = subparsers.add_parser(name, help='list buckets')
         cmd.set_defaults(func=handlers.on_list_buckets)
 
-    if not commands or 'list' in commands:
-        name = _command('list', commands)
-        cmd = subparsers.add_parser(
-            name,
-            parents=[p_recursive],
-            formatter_class=utils.Formatter,
-            help='list files')
-        cmd.set_defaults(func=handlers.on_list)
-        cmd.add_argument(
-            '-b', '--bucket', action='store', help='bucket')
-        cmd.add_argument(
-            '-p', '--path',
-            action='store', type=str, help='path to compare')
-        cmd.add_argument(
-            '-R', '--region', action='store', help='s3 region')
-        cmd.add_argument(
-            '-l', '--limit',
-            action='store', default=10, type=int, help='output limit')
-
     common_diff = argparse.ArgumentParser(
         add_help=False, parents=[p_root, p_recursive])
     common_diff.add_argument(
@@ -132,16 +113,6 @@ def init_parser(parser=None, subparsers=None, commands=()):
             formatter_class=utils.Formatter,
             help='diff local and remote')
         cmd.set_defaults(func=handlers.on_diff)
-
-    if not commands or 'upload' in commands:
-        name = _command('upload', commands)
-        cmd = subparsers.add_parser(name, help='upload file')
-        cmd.set_defaults(func=handlers.on_upload)
-        cmd.add_argument('path', action='store', help='path to upload')
-        cmd.add_argument(
-            '-f', '--force', action='store_true', help='force upload')
-        cmd.add_argument(
-            '-r', '--recursive', action='store_true', help='list recursive')
 
     if not commands or 'update' in commands:
         name = _command('update', commands)
@@ -191,11 +162,6 @@ def init_parser(parser=None, subparsers=None, commands=()):
         cmd.add_argument(
             '--delete-remote',
             action='store_true', help='confirm delete remote file')
-
-    if not commands or 'cache-clean' in commands:
-        name = _command('cache-clean', commands)
-        cmd = subparsers.add_parser(name, help='clean cache')
-        cmd.set_defaults(func=handlers.on_cache_clean)
 
     if not commands or 'cache-update' in commands:
         name = _command('cache-update', commands)

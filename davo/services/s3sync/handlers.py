@@ -4,9 +4,6 @@ import os
 import pprint
 import time
 
-import boto.s3
-import boto.s3.connection
-import boto.s3.key
 import reprint
 import yaml
 
@@ -65,24 +62,6 @@ def on_list_buckets(_namespace):
     conn = utils.connect_host()
     for bucket in conn.get_all_buckets():
         logger.info(bucket.name)
-
-
-def on_list(namespace):
-    conf.init()
-
-    bucket = utils.iter_remote_path(
-        utils.connect_bucket(namespace.bucket, namespace.region),
-        namespace.path,
-        recursive=namespace.recursive)
-
-    if not bucket:
-        raise errors.UserError('Missing bucket')
-
-    for index, key in enumerate(bucket):
-        if index >= namespace.limit > 0:
-            logger.info('list limit reached!')
-            break
-        _print_key(key)
 
 
 def on_diff(namespace, print_details=True):
@@ -279,55 +258,6 @@ def on_diff(namespace, print_details=True):
     return bucket, remote_files
 
 
-def on_upload(namespace):
-    conf.init()
-
-    bucket = utils.connect_bucket()
-    if not bucket:
-        raise errors.UserError('missing bucket')
-
-    path = os.path.abspath(namespace.path)
-
-    files = {}
-    for local_path in utils.iter_local_path(
-            path, namespace.recursive):
-        if not os.path.isfile(local_path):
-            continue
-
-        key = utils.file_key(local_path)
-        files[key] = {
-            'local_size': os.stat(local_path).st_size,
-            'local_path': local_path,
-        }
-
-    for remote in utils.iter_remote_path(
-            bucket, path, namespace.recursive):
-        if remote.name in files:
-            files[remote.name]['key'] = remote
-
-    conflicts = 0
-    pool = workers.ThreadPool(conf.get('THREAD_MAX_COUNT'), auto_start=False)
-
-    for key, data in files.items():
-        if 'key' in data and namespace.force:
-            task = tasks.ReplaceUpload()
-        elif 'key' not in data:
-            data['key'] = boto.s3.key.Key(bucket=bucket, name=key)
-            task = tasks.Upload()
-        else:
-            conflicts += 1
-            continue
-
-        pool.add_task(task)
-
-    if conflicts:
-        print('{} remote paths exists, use force flag'.format(conflicts))
-
-    with reprint.output(initial_len=conf.get('THREAD_MAX_COUNT')) as output:
-        pool.start(output)
-        pool.join()
-
-
 def on_update(namespace):
     conf.init()
     if namespace.threads:
@@ -348,7 +278,7 @@ def on_update(namespace):
     finally:
         delta = time.time() - _t
         if delta:
-            speed = utils.humanize_size(size / delta)
+            speed = davo.utils.format.humanize_speed(size / delta)
             logger.info('average speed: %s', speed)
 
         logger.info(
@@ -490,47 +420,7 @@ def _confirm_update(name, data, *values):
     return values_map[input_data[0]]
 
 
-def _print_key(key):
-    name_len = conf.get('KEY_PATTERN_NAME_LEN')
-
-    if len(key.name) < name_len:
-        name = key.name.ljust(name_len, ' ')
-    else:
-        name = key.name[:name_len - 3] + '...'
-
-    if isinstance(key, boto.s3.key.Key):
-        params = {
-            'name': name,
-            'size': str(key.size).ljust(10, ' '),
-            'owner': key.owner.display_name,
-            'modified': key.last_modified,
-            'storage': const.STORAGE_ALIASES.get(
-                key.storage_class, '?'),
-            'md5': key.etag[1:-1],
-        }
-    else:
-        params = {
-            'name': name,
-            'size': '<DIR>'.ljust(10, ' '),
-            'owner': '',
-            'modified': '',
-            'storage': '?',
-            'md5': ''
-        }
-
-    pattern = conf.get('KEY_PATTERN')
-    print(pattern.format(**params))
-
-
-def on_cache_clean(namespace):
-    conf.init()
-    cache.cache.init()
-    cache.cache.clear()
-    cache.cache.flush()
-    logger.info('objects left: %d', cache.cache.total())
-
-
-def on_cache_update(namespace):
+def on_cache_update(_namespace):
     conf.init()
     cache.cache.init()
     bucket = utils.connect_bucket()

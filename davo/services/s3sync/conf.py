@@ -18,7 +18,6 @@ _CONFIG = {
         '\t{estimate}'
         '\t{elapsed}'
         '\t{info}',
-    'REDUCED_REDUNDANCY': False,
     'BUCKET': None,
     'ALLOWED_REGIONS': None,
     'ACCESS_KEY': None,

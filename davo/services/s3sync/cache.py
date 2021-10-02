@@ -62,7 +62,7 @@ class Cache:
     def select(self, prefix=None, delimiter=None):
         cur = self.conn.cursor()
 
-        query = 'WHERE 1=1'
+        query = ' WHERE 1=1'
         if prefix:
             prefix = prefix.strip('/')
             query += ' and name like "{}/%"'.format(prefix)
