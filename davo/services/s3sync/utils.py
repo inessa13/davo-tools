@@ -163,26 +163,6 @@ def update_cache(bucket, reprint=None):
         reprint[0] = 'saved successfully'
 
 
-# TODO: replace with davo.utils.format.humanize_speed
-def humanize_size(value, multiplier=1024, label='Bps'):
-    if value > multiplier ** 4:
-        value /= multiplier ** 4
-        label = 'T' + label
-    elif value > multiplier ** 3:
-        value /= multiplier ** 3
-        label = 'G' + label
-    elif value > multiplier ** 2:
-        value /= multiplier ** 2
-        label = 'M' + label
-    elif value > multiplier:
-        value /= multiplier
-        label = 'K' + label
-    else:
-        label = ' ' + label
-
-    return '{:7.2f} {}'.format(value, label)
-
-
 def check_file_type(filename, types):
     if not types:
         return True
