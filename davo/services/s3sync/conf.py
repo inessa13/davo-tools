@@ -26,6 +26,7 @@ _CONFIG = {
     'PROJECT_ROOT': None,
     'LOCAL_CONFIG': None,
     'ALLOWED_EXTENSIONS': (),
+    'CACHE_FILE_NAME': '.s3cache.db',
 }
 
 

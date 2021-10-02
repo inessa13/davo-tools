@@ -49,6 +49,8 @@ def init_parser():
         'list',
         'diff',
         'update',
+        'cache-clean',
+        'cache-update',
     ))
 
     return parser

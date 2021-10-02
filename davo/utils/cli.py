@@ -11,6 +11,7 @@ _PROGRESS = (
     '[{progress}{arrow}{left}]'
     ' {progress_percent:3.0f}%'
     ' {ready}/{total}'
+    '{elapsed}'
 )
 
 
@@ -47,10 +48,16 @@ def run_parser(parser, use_completion=True):
 
 def progress_line(
     ready, total, char_fill='=', char_arrow='>', char_pad=' ', len_full=40,
+    elapsed=None,
 ):
     percent = ready / total
     progress = round(percent, 2) * 100
     progress_len = int(progress) * len_full // 100
+    if elapsed is None:
+        elapsed = ''
+    else:
+        elapsed = ' Elapsed: {:.2f}s'.format(elapsed)
+
     return _PROGRESS.format(
         progress=char_fill * progress_len,
         arrow=char_arrow,
@@ -58,4 +65,9 @@ def progress_line(
         progress_percent=progress,
         ready=ready,
         total=total,
+        elapsed=elapsed,
     )
+
+
+def spinner(index=0, pattern='|/-\\'):
+    return pattern[index % len(pattern)]
