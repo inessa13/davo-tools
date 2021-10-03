@@ -94,7 +94,7 @@ def _get_rel_path(root, path):
     return re.sub('^{}'.format(root), '', path).strip('/')
 
 
-def _iter_file_options(
+def iter_file_options(
     root, recursive=False, ignore_case=False, check_size=False, exclude=(),
 ):
     for file_path in iter_files(root, recursive, exclude=exclude):
@@ -136,7 +136,7 @@ def compare_dirs(
 
     files_src = []
     root1 = os.path.abspath(root1)
-    for options in _iter_file_options(
+    for options in iter_file_options(
             root1, recursive, ignore_case, check_size, exclude):
         files_src.append(options)
 
@@ -144,7 +144,7 @@ def compare_dirs(
         logger.info('%d files in %s', len(files_src), root1)
 
     files_dest = dict()
-    for options in _iter_file_options(
+    for options in iter_file_options(
             root2, recursive, ignore_case, check_size):
         options['state'] = constants.STATE_LOCAL_MISSING
         files_dest[options['key']] = options
@@ -154,6 +154,33 @@ def compare_dirs(
 
     if not files_src and not files_dest:
         return
+
+    return compare(
+        files_src, files_dest, states=states, check_size=check_size,
+        check_md5=check_md5, verbose=verbose,
+    )
+
+
+def compare(
+    files_src, files_dest, states=None, check_size=False, check_date=False,
+    check_md5=False, verbose=False,
+):
+    """
+    Compare files_src and files_dest compatible with iter_file_options.
+
+    :param list files_src:
+    :param dict files_dest:
+    :param set states:
+    :param bool check_size:
+    :param bool check_date:
+    :param bool check_md5:
+    :param bool verbose:
+
+    :return: modified files_dest
+    :rtype: dict
+    """
+    if states is None:
+        states = constants.STATES_DIFF_VALID
 
     if verbose:
         logger.info('comparing...')
@@ -177,20 +204,18 @@ def compare_dirs(
             if equal:
                 dest['state'] = constants.STATE_EQUAL
 
-            elif check_size:
+            elif check_date:
                 if source['modified'] > dest['modified']:
                     dest['state'] = constants.STATE_LOCAL_NEWER
                 else:
                     dest['state'] = constants.STATE_LOCAL_OLDER
+
             else:
                 dest['state'] = constants.STATE_DIFFERENT
 
-        elif constants.STATE_LOCAL_NEW in states or constants.STATE_RENAMED in states:
-            files_dest[key_src] = {
-                'path': source['path'],
-                'size': source.get('size'),
-                'state': constants.STATE_LOCAL_NEW,
-            }
+        elif (constants.STATE_LOCAL_NEW in states
+              or constants.STATE_RENAMED in states):
+            files_dest[key_src] = source
 
     # find renames
     if constants.STATE_RENAMED in states:
@@ -213,7 +238,8 @@ def compare_dirs(
 
                 data_missing.update({
                     'state': constants.STATE_RENAMED,
-                    'path_new': data_new['path'],
+                    'new_options': data_new,
+                    'comment': 'new key: {}'.format(data_new['key'])
                 })
                 # mark for remove from result
                 data_new['state'] = constants.STATE_MARK_DELETE
