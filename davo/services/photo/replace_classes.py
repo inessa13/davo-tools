@@ -79,18 +79,15 @@ def _path(filename, context):
 
 
 def _exif_field(context, filename, field, default=''):
-    if context.get('exif') is not None:
-        image = context['exif']
+    if context.get('exif_data') is not None:
+        exif_data = context['exif_data']
     else:
-        image = utils.get_exif(
+        exif_data, _details = utils.get_exif_with_details(
             _path(filename, context),
             verbose=context.get('verbose', False),
         )
 
-    if image is None or not image.has_exif:
-        return default
-
-    return image.get(field) or default
+    return exif_data.get(field, default=default)
 
 
 def exif_date(filename, context):
