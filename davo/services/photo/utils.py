@@ -1,7 +1,6 @@
 import datetime
 import logging
 import os
-import pprint
 import re
 
 import exif
@@ -86,22 +85,55 @@ def image_load_pil(path):
         return None
 
 
-def get_exif(filename, verbose=False):
+def get_exif_with_details(filename, verbose=False):
+    ext = davo.utils.path.get_extension(filename, lower=True)
+    if ext not in {'jpg', 'jpeg'}:
+        return None, 'extension'
+
     with open(filename, 'rb') as file:
         try:
             image = exif.Image(file)
         except Exception as exc:
             if verbose:
                 logger.warning('exif parse error: %s', exc)
-            return None
+            return None, 'failed'
 
     if not image.has_exif:
-        return None
+        return None, 'missing'
 
-    if verbose:
-        logger.info('exif: %s', pprint.pformat(image.get_all()))
+    data = exif_get_all_tags(image, verbose=verbose)
+    data = {
+        key: value if type(value) in (str, float, int) else str(value)
+        for key, value in data.items()
+    }
+    return data, 'ok'
 
-    return image
+
+def get_exif(filename):
+    return get_exif_with_details(filename, verbose=False)[0]
+
+
+def exif_get_all_tags(exif_image, verbose=False):
+    """
+    Fixed exif_image.get_all. Correctly handles ValueError.
+    :param exif_image:
+    :param bool verbose:
+    :rtype: dict
+    """
+    data = {}
+    for tag_name in exif_image.list_all():
+        try:
+            tag_value = exif_image.__getattr__(tag_name)
+        except Exception as exc:
+            if verbose:
+                logger.warning(
+                    'exif tag lad failed: %s, %s', tag_name,
+                    str(exc).split('\n')[0],
+                )
+            continue
+
+        data[tag_name] = tag_value
+    return data
 
 
 def get_media_info(path):
