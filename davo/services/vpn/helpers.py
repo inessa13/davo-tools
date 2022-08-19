@@ -18,8 +18,14 @@ def connect(config_root, account_name=None):
     if account.get('handler') == 'openvpn':
         handlers.connect_openvpn(account)
 
+    elif account.get('handler') == 'openvpn_otp':
+        handlers.connect_openvpn_otp(account)
+
     elif account.get('handler') == 'openconnect':
         handlers.connect_openconnect(account)
+
+    elif account.get('handler') == 'openconnect_sudo':
+        handlers.connect_openconnect_sudo(account)
 
     else:
         raise davo.errors.Error(
