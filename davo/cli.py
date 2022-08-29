@@ -44,10 +44,13 @@ def init_parser():
     cmd = subparsers.add_parser('s3', help='s3 tools')
     services.s3sync.cli.init_parser(cmd, commands=(
         'config',
+        'info',
         'buckets',
         'list',
         'diff',
         'update',
+        'cache-clean',
+        'cache-update',
     ))
 
     return parser

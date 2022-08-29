@@ -1,23 +1,27 @@
 import argparse
+import dataclasses
 import logging
 import os
 import re
 
 import boto.s3
+import boto.s3.bucket
 import boto.s3.connection
 import boto.s3.key
 
 import davo.errors
 from davo import settings, utils
 
-from . import conf
+from . import cache, conf
 
 logger = logging.getLogger(__name__)
 
 
-def file_path_info(path):
-    project_root = find_project_root() or get_cwd()
-    current_root = get_cwd()
+def file_path_info(path, project_root=None, current_root=None):
+    if project_root is None:
+        project_root = find_project_root() or get_cwd()
+    if current_root is None:
+        current_root = get_cwd()
 
     if not path or path == '.':
         path = current_root
@@ -62,40 +66,101 @@ def iter_local_path(path, recursive=False):
     yield from utils.path.iter_files(path, recursive=recursive)
 
 
-def iter_remote_path(bucket, path, recursive=False):
-    assert bucket
-
-    local_path, key = file_path_info(path)
+def iter_remote_path(
+    bucket, path, current_root=None, recursive=False, cached=False,
+):
+    local_path, key = file_path_info(
+        path,
+        project_root=conf.get('PROJECT_ROOT'),
+        current_root=current_root,
+    )
     if key and os.path.isdir(local_path) and key[-1] != '/':
         key += '/'
 
-    params = dict()
+    params = {}
     if not recursive:
         params['delimiter'] = '/'
 
     if key:
         params['prefix'] = key.replace('\\', '/')
 
-    return bucket.list(**params)
+    if cached:
+        return _iter_remote_cache(bucket, **params)
+
+    return _iter_remote(bucket, **params)
 
 
-def humanize_size(value, multiplier=1024, label='Bps'):
-    if value > multiplier ** 4:
-        value /= multiplier ** 4
-        label = 'T' + label
-    elif value > multiplier ** 3:
-        value /= multiplier ** 3
-        label = 'G' + label
-    elif value > multiplier ** 2:
-        value /= multiplier ** 2
-        label = 'M' + label
-    elif value > multiplier:
-        value /= multiplier
-        label = 'K' + label
-    else:
-        label = ' ' + label
+@dataclasses.dataclass
+class S3KeyCached:
+    bucket: boto.s3.bucket.Bucket
+    name: str
+    size: int
+    last_modified: str
+    etag: str
 
-    return '{:7.2f} {}'.format(value, label)
+    def _key(self):
+        return self.bucket.get_key(self.name)
+
+    def delete(self):
+        self._key().delete()
+        cache.cache.delete(self.name)
+        cache.cache.flush()
+
+    def copy(self, bucket, local_name, **kwargs):
+        new_key = self._key().copy(bucket, local_name, **kwargs)
+        if new_key:
+            cache.cache.update(local_name, {
+                'name': local_name,
+                'size': self.size,
+                'last_modified': self.last_modified,
+                'etag': self.etag,
+            })
+            cache.cache.flush()
+        return new_key
+
+    def get_contents_to_filename(self, *args, **kwargs):
+        return self._key().get_contents_to_filename(*args, **kwargs)
+
+
+def _iter_remote_cache(bucket, prefix=None, delimiter=None):
+    for data in cache.cache.select(prefix=prefix, delimiter=delimiter):
+        yield S3KeyCached(bucket=bucket, **data)
+
+
+def _iter_remote(bucket, **params):
+    for key in bucket.list(**params):
+        if (not isinstance(key, boto.s3.key.Key)
+                or key.name[-1] == '/'):
+            continue
+        yield key
+
+
+def update_cache(bucket, reprint=None):
+    if cache.cache.total():
+        cache.cache.clear()
+
+    if reprint:
+        reprint[0] = 'connecting...'
+
+    it = iter_remote_path(
+        bucket, path='', current_root='', recursive=True, cached=False)
+    for index, s3key in enumerate(it):
+        if reprint and index % 100 == 0:
+            reprint[0] = 'loading... ({})'.format(index)
+        cache.cache.update(s3key.name, {
+            'name': s3key.name,
+            'size': s3key.size,
+            'last_modified': s3key.last_modified,
+            'etag': s3key.etag,
+        })
+
+    if reprint:
+        reprint[0] = 'saving...'
+
+    cache.cache.flush()
+
+    if reprint:
+        reprint[0] = 'saved successfully'
 
 
 def check_file_type(filename, types):

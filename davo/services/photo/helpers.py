@@ -8,7 +8,7 @@ from PIL import Image
 import davo.utils
 from davo import errors
 
-from . import utils, replace_classes
+from . import utils
 
 logger = logging.getLogger(__name__)
 
@@ -92,10 +92,10 @@ def command_regexp(
             context['sub_root'] = sub_path
 
         if skip_no_exif:
-            exif = replace_classes.get_exif(file_path, verbose=False)
+            exif = utils.get_exif(file_path)
             if exif is None:
                 continue
-            context['exif'] = exif
+            context['exif_data'] = exif
 
         new_name = utils.replace_file_params(
             file_path, pattern, replace, **context)
@@ -276,12 +276,12 @@ def command_convert(
 
         exif = None
         if skip_no_exif:
-            exif = replace_classes.get_exif(file_path, verbose=False)
+            exif = utils.get_exif(file_path)
             if exif is None:
                 continue
 
         new_name = utils.replace_file_params(
-            file_path, '.*', replace, index=index, exif=exif)
+            file_path, '.*', replace, index=index, exif_data=exif)
         if not new_name:
             continue
 

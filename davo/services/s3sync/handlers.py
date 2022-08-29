@@ -1,20 +1,16 @@
-import collections
 import datetime
 import logging
 import os
 import pprint
 import time
 
-import boto.s3
-import boto.s3.connection
-import boto.s3.key
 import reprint
 import yaml
 
 import davo.utils
-from davo import errors, settings
+from davo import constants, errors, settings
 
-from . import conf, const, workers, tasks, utils
+from . import cache, conf, const, tasks, utils, workers
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +36,19 @@ def on_config(namespace):
         print('Config is empty')
 
 
+def on_info(namespace):
+    if namespace.topic == 'topics':
+        logger.info('Available topics:')
+        pprint.pprint(list(const.TOPICS.keys()))
+
+    elif namespace.topic in const.TOPICS:
+        logger.info('Available %s:', namespace.topic)
+        pprint.pprint(const.TOPICS[namespace.topic])
+
+    else:
+        raise errors.UserError('Invalid topic')
+
+
 def on_init(namespace):
     config_path = os.path.join(os.getcwd(), settings.CONFIG_PATH_S3SYNC_LOCAL)
     with open(config_path, 'w') as config_file:
@@ -55,24 +64,6 @@ def on_list_buckets(_namespace):
         logger.info(bucket.name)
 
 
-def on_list(namespace):
-    conf.init()
-
-    bucket = utils.iter_remote_path(
-        utils.connect_bucket(namespace.bucket, namespace.region),
-        namespace.path,
-        recursive=namespace.recursive)
-
-    if not bucket:
-        raise errors.UserError('Missing bucket')
-
-    for index, key in enumerate(bucket):
-        if index >= namespace.limit > 0:
-            logger.info('list limit reached!')
-            break
-        _print_key(key)
-
-
 def on_diff(namespace, print_details=True):
     conf.init()
 
@@ -81,7 +72,7 @@ def on_diff(namespace, print_details=True):
         raise errors.UserError('missing bucket')
 
     if namespace.all:
-        modes = '=+-<>r'
+        modes = constants.STATES_ALL
     else:
         modes = namespace.modes
 
@@ -99,18 +90,28 @@ def on_diff(namespace, print_details=True):
         key = utils.file_key(file_path)
         if namespace.ignore_case:
             key = key.lower()
+
+        if key == conf.get('CACHE_FILE_NAME'):
+            continue
+
         src_files.append((key, file_path))
 
     logger.info('%d local objects', len(src_files))
 
     remote_files = dict()
 
+    if not namespace.no_cache:
+        cache.cache.init()
+        if not cache.cache.total():
+            logger.info('updating cache...')
+            utils.update_cache(bucket)
+
     ls_remote = utils.iter_remote_path(
-        bucket, path, recursive=namespace.recursive)
+        bucket, path,
+        recursive=namespace.recursive,
+        cached=not namespace.no_cache)
 
     for file_ in ls_remote:
-        if not isinstance(file_, boto.s3.key.Key) or file_.name[-1] == '/':
-            continue
         if not utils.check_file_type(file_.name, namespace.file_types):
             continue
 
@@ -124,12 +125,15 @@ def on_diff(namespace, print_details=True):
             size=file_.size,
             modified=file_.last_modified,
             md5=file_.etag[1:-1],
-            state='-',
+            state=constants.STATE_LOCAL_MISSING,
             comment=[],
             local_path=utils.file_path(file_.name),
         )
 
-    logger.info('%d remote objects', len(remote_files.keys()))
+    if not namespace.no_cache:
+        logger.info('%d remote objects, using cache', len(remote_files.keys()))
+    else:
+        logger.info('%d remote objects', len(remote_files.keys()))
 
     if not src_files and not remote_files:
         return None
@@ -157,7 +161,7 @@ def on_diff(namespace, print_details=True):
                     remote['comment'].append('md5: different')
 
             if equal:
-                remote.update(state='=', comment=[])
+                remote.update(state=constants.STATE_EQUAL, comment=[])
             else:
                 remote['local_size'] = stat.st_size
                 local_modified = datetime.datetime.fromtimestamp(
@@ -175,19 +179,23 @@ def on_diff(namespace, print_details=True):
                     remote['comment'].append('modified: {0}'.format(delta))
 
                 if namespace.force_upload:
-                    remote['state'] = '>'
+                    remote['state'] = constants.STATE_LOCAL_NEWER
+
                 elif namespace.force_download:
-                    remote['state'] = '<'
+                    remote['state'] = constants.STATE_LOCAL_OLDER
+
                 elif local_modified > remote_modified:
-                    remote['state'] = '>'
+                    remote['state'] = constants.STATE_LOCAL_NEWER
+
                 else:
-                    remote['state'] = '<'
+                    remote['state'] = constants.STATE_LOCAL_OLDER
 
             if remote['state'] not in modes:
                 del remote_files[key]
 
         else:
-            if '+' not in modes and 'r' not in modes:
+            if (constants.STATE_LOCAL_NEW not in modes
+                    and constants.STATE_RENAMED not in modes):
                 continue
 
             remote_files[key] = dict(
@@ -195,28 +203,32 @@ def on_diff(namespace, print_details=True):
                 local_path=f_path,
                 modified=stat.st_mtime,
                 md5=None,
-                state='+',
+                state=constants.STATE_LOCAL_NEW,
                 comment=[],
             )
+            if conf.get('ALLOWED_EXTENSIONS'):
+                ext = davo.utils.path.get_extension(f_path, lower=True)
+                if ext not in conf.get('ALLOWED_EXTENSIONS'):
+                    remote_files[key]['state'] = constants.STATE_INVALID_TYPE
             if namespace.md5:
                 remote_files[key]['md5'] = davo.utils.path.file_hash(
                     f_path)
 
     # find renames
-    if 'r' in modes:
+    if constants.STATE_RENAMED in modes:
         to_del = []
         for key, new_data in remote_files.items():
-            if new_data['state'] != '+':
+            if new_data['state'] != constants.STATE_LOCAL_NEW:
                 continue
             for name, data in remote_files.items():
-                if data['state'] != '-':
+                if data['state'] != constants.STATE_LOCAL_MISSING:
                     continue
                 if data['size'] != new_data['local_size']:
                     continue
                 if namespace.md5 and data['md5'] != new_data['md5']:
                     continue
                 remote_files[name].update(
-                    state='r',
+                    state=constants.STATE_RENAMED,
                     local_name=key,
                     local_size=new_data['local_size']
                 )
@@ -246,55 +258,6 @@ def on_diff(namespace, print_details=True):
     return bucket, remote_files
 
 
-def on_upload(namespace):
-    conf.init()
-
-    bucket = utils.connect_bucket()
-    if not bucket:
-        raise errors.UserError('missing bucket')
-
-    path = os.path.abspath(namespace.path)
-
-    files = {}
-    for local_path in utils.iter_local_path(
-            path, namespace.recursive):
-        if not os.path.isfile(local_path):
-            continue
-
-        key = utils.file_key(local_path)
-        files[key] = {
-            'local_size': os.stat(local_path).st_size,
-            'local_path': local_path,
-        }
-
-    for remote in utils.iter_remote_path(
-            bucket, path, namespace.recursive):
-        if remote.name in files:
-            files[remote.name]['key'] = remote
-
-    conflicts = 0
-    pool = workers.ThreadPool(conf.get('THREAD_MAX_COUNT'), auto_start=False)
-
-    for key, data in files.items():
-        if 'key' in data and namespace.force:
-            task = tasks.ReplaceUpload()
-        elif 'key' not in data:
-            data['key'] = boto.s3.key.Key(bucket=bucket, name=key)
-            task = tasks.Upload()
-        else:
-            conflicts += 1
-            continue
-
-        pool.add_task(task, bucket, key, data)
-
-    if conflicts:
-        print('{} remote paths exists, use force flag'.format(conflicts))
-
-    with reprint.output(initial_len=conf.get('THREAD_MAX_COUNT')) as output:
-        pool.start(output)
-        pool.join()
-
-
 def on_update(namespace):
     conf.init()
     if namespace.threads:
@@ -315,7 +278,7 @@ def on_update(namespace):
     finally:
         delta = time.time() - _t
         if delta:
-            speed = utils.humanize_size(size / delta)
+            speed = davo.utils.format.humanize_speed(size / delta)
             logger.info('average speed: %s', speed)
 
         logger.info(
@@ -333,11 +296,11 @@ def _update(bucket, files, namespace):
     for name, data in files.items():
         action = None
 
-        if data['state'] == '=':
+        if data['state'] == constants.STATE_EQUAL:
             processed += 1
             continue
 
-        elif data['state'] == '+':
+        elif data['state'] == constants.STATE_LOCAL_NEW:
             if namespace.upload:
                 action = tasks.Upload()
             elif namespace.delete_local:
@@ -353,7 +316,7 @@ def _update(bucket, files, namespace):
                 else:
                     action = act
 
-        elif data['state'] == '-':
+        elif data['state'] == constants.STATE_LOCAL_MISSING:
             if namespace.download:
                 action = tasks.Download()
             elif namespace.delete_remote:
@@ -369,7 +332,7 @@ def _update(bucket, files, namespace):
                     continue
                 action = act
 
-        elif data['state'] == 'r':
+        elif data['state'] == constants.STATE_RENAMED:
             if _check(
                     name, data, namespace.quiet,
                     namespace.rename_remote):
@@ -381,7 +344,7 @@ def _update(bucket, files, namespace):
             else:
                 continue
 
-        elif data['state'] == '>':
+        elif data['state'] == constants.STATE_LOCAL_NEWER:
             if _check(
                     name, data, namespace.quiet,
                     namespace.replace_upload):
@@ -389,7 +352,7 @@ def _update(bucket, files, namespace):
             else:
                 continue
 
-        elif data['state'] == '<':
+        elif data['state'] == constants.STATE_LOCAL_OLDER:
             if _check(
                     name, data, namespace.quiet,
                     namespace.replace_download):
@@ -457,33 +420,10 @@ def _confirm_update(name, data, *values):
     return values_map[input_data[0]]
 
 
-def _print_key(key):
-    name_len = conf.get('KEY_PATTERN_NAME_LEN')
-
-    if len(key.name) < name_len:
-        name = key.name.ljust(name_len, ' ')
-    else:
-        name = key.name[:name_len - 3] + '...'
-
-    if isinstance(key, boto.s3.key.Key):
-        params = {
-            'name': name,
-            'size': str(key.size).ljust(10, ' '),
-            'owner': key.owner.display_name,
-            'modified': key.last_modified,
-            'storage': const.STORAGE_ALIASES.get(
-                key.storage_class, '?'),
-            'md5': key.etag[1:-1],
-        }
-    else:
-        params = {
-            'name': name,
-            'size': '<DIR>'.ljust(10, ' '),
-            'owner': '',
-            'modified': '',
-            'storage': '?',
-            'md5': ''
-        }
-
-    pattern = conf.get('KEY_PATTERN')
-    print(pattern.format(**params))
+def on_cache_update(_namespace):
+    conf.init()
+    cache.cache.init()
+    bucket = utils.connect_bucket()
+    with reprint.output() as output:
+        utils.update_cache(bucket, reprint=output)
+    logger.info('cached %d remote objects', cache.cache.total())

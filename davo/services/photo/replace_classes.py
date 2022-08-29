@@ -2,11 +2,11 @@ import datetime
 import logging
 import mimetypes
 import os
-import pprint
 import re
 
-import exif
-import pymediainfo
+import davo.utils
+
+from . import utils
 
 logger = logging.getLogger(__name__)
 
@@ -22,26 +22,17 @@ def _ctime(filename, context, fmt):
 
 
 def extension(filename, context):
-    if context.get('ext'):
-        return context['ext']
+    if context.get('ext') is None:
+        context['ext'] = davo.utils.path.get_extension(filename)
 
-    if '.' in filename:
-        ext = filename.rsplit('.', 1)[1]
-    else:
-        ext = ''
-
-    context['ext'] = ext
-    return ext
+    return context['ext']
 
 
 def source_no_ext(filename, context):
-    if context.get('source'):
-        return context['source']
+    if context.get('source') is None:
+        context['source'] = davo.utils.path.get_filename_no_extension(filename)
 
-    base = os.path.basename(filename)
-    if '.' in base:
-        base = base.rsplit('.', 1)[0]
-    return base
+    return context['source']
 
 
 def source_int(filename, context):
@@ -54,7 +45,7 @@ def source_img_(filename, context):
     return ''
 
 
-def source_rel(filename, context):
+def source_rel(_filename, context):
     return context.get('sub_root', '')
 
 
@@ -83,41 +74,20 @@ def counter(_filename, context, size=3):
     return pattern.format(context.get('index', 0))
 
 
-def get_exif(filename, verbose=True):
-    with open(filename, 'rb') as file:
-        try:
-            image = exif.Image(file)
-        except Exception as exc:
-            if verbose:
-                logger.warning('exif parse error: %s', exc)
-            return None
-
-    if not image.has_exif:
-        return None
-
-    if verbose:
-        logger.info('exif: %s', pprint.pformat(image.get_all()))
-
-    return image
-
-
 def _path(filename, context):
     return os.path.join(context.get('sub_root', ''), filename)
 
 
 def _exif_field(context, filename, field, default=''):
-    if context.get('exif') is not None:
-        image = context['exif']
+    if context.get('exif_data') is not None:
+        exif_data = context['exif_data']
     else:
-        image = get_exif(
+        exif_data, _details = utils.get_exif_with_details(
             _path(filename, context),
             verbose=context.get('verbose', False),
         )
 
-    if image is None or not image.has_exif:
-        return default
-
-    return image.get(field) or default
+    return exif_data.get(field, default=default)
 
 
 def exif_date(filename, context):
@@ -175,8 +145,7 @@ def _media_info(filename, context):
     if context.get('mediainfo') is not None:
         return context['mediainfo']
 
-    path = _path(filename, context)
-    media = pymediainfo.MediaInfo.parse(path).to_data()['tracks'][0]
+    media = utils.get_media_info(_path(filename, context))
     if media:
         context['mediainfo'] = media
 

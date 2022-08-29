@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name='davo-tools',
-    version='0.1.1',
+    version='0.2.0',
     author='davo',
     author_email='davo.fastcall@gmail.com',
     url='https://github.com/inessa13/davo-tools',

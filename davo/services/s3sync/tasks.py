@@ -6,7 +6,7 @@ import boto.s3.key
 
 import davo.utils
 
-from . import conf, utils
+from . import cache, conf, utils
 
 
 class _Task:
@@ -53,7 +53,7 @@ class _Task:
         if size:
             uploaded = size * float(uploaded) / full
             speed_value = self.worker.speed(uploaded / (time.time() - self._t))
-            speed_human = utils.humanize_size(speed_value)
+            speed_human = davo.utils.format.humanize_speed(speed_value)
         else:
             speed_value = 0
             speed_human = 'n\\a'
@@ -92,7 +92,7 @@ class _Task:
         utils.output_finish(self.worker.output, line)
 
 
-def _upload(key, callback, local_path, cb_num, replace=False, rrs=False):
+def _upload(key, callback, local_path, cb_num, replace=False):
     local_file_path = utils.file_path(local_path)
 
     with open(local_file_path, 'rb') as local_file:
@@ -101,9 +101,17 @@ def _upload(key, callback, local_path, cb_num, replace=False, rrs=False):
             replace=replace,
             cb=callback,
             num_cb=cb_num,
-            reduced_redundancy=rrs,
             rewind=True,
         )
+
+    cache.cache.update(key.name, {
+        'name': key.name,
+        'size': key.size,
+        'last_modified': datetime.datetime.utcnow().strftime(
+            '%Y-%m-%dT%H:%M:%S.000Z'),
+        'etag': key.etag,
+    })
+    cache.cache.flush()
 
 
 class Upload(_Task):
@@ -121,7 +129,6 @@ class Upload(_Task):
             self.progress,
             self.data['local_path'],
             conf.get('UPLOAD_CB_NUM'),
-            rrs=conf.get('REDUCED_REDUNDANCY'),
         )
         self.data['comment'] = ['uploaded']
 
@@ -167,7 +174,6 @@ class RenameRemote(_Task):
         new_key = self.data['key'].copy(
             conf.get('BUCKET'), self.data['local_name'],
             metadata=None,
-            reduced_redundancy=conf.get('REDUCED_REDUNDANCY'),
             preserve_acl=True,
             encrypt_key=False,
             validate_dst_bucket=True,

@@ -18,33 +18,59 @@ _CONFIG = {
         '\t{estimate}'
         '\t{elapsed}'
         '\t{info}',
-    'REDUCED_REDUNDANCY': False,
     'BUCKET': None,
     'ALLOWED_REGIONS': None,
     'ACCESS_KEY': None,
     'SECRET_KEY': None,
     'PROJECT_ROOT': None,
     'LOCAL_CONFIG': None,
+    'ALLOWED_EXTENSIONS': (),
+    'CACHE_FILE_NAME': '.s3cache.db',
 }
 
 
-def init():
-    if _CONFIG.get('_init'):
-        return
+def update(options):
+    _CONFIG.update(options)
 
+
+def is_init():
+    return _CONFIG.get('_init', False)
+
+
+def mark_init():
     _CONFIG['_init'] = True
 
-    config = load_config(
-        settings.CONFIG_PATH_S3SYNC, load_secrets=True, mask=False)
-    _CONFIG.update(config)
 
-    if local_root := utils.find_project_root():
+def init(
+    global_root=settings.CONFIG_PATH_S3SYNC, local_root=None,
+    keepass_path=None, keepass_pwd=None,
+):
+    if is_init():
+        return
+
+    mark_init()
+
+    config = load_config(
+        global_root,
+        load_secrets=True,
+        mask=False,
+        keepass_path=keepass_path,
+        keepass_pwd=keepass_pwd,
+    )
+    update(config)
+
+    if local_root or (local_root := utils.find_project_root()):
         _CONFIG['PROJECT_ROOT'] = local_root
         _CONFIG['LOCAL_CONFIG'] = os.path.join(
             _CONFIG['PROJECT_ROOT'], settings.CONFIG_PATH_S3SYNC_LOCAL)
         config = load_config(
-            _CONFIG['LOCAL_CONFIG'], load_secrets=True, mask=False)
-        _CONFIG.update(config)
+            _CONFIG['LOCAL_CONFIG'],
+            load_secrets=True,
+            mask=False,
+            keepass_path=keepass_path,
+            keepass_pwd=keepass_pwd,
+        )
+        update(config)
 
 
 def option(key, default=None, value=None):
@@ -59,10 +85,13 @@ def get(key, default=None):
     return _CONFIG.get(key, default)
 
 
-def load_config(conf_path, load_secrets=False, mask=True):
+def load_config(
+    conf_path, load_secrets=False, mask=True, keepass_path=None,
+    keepass_pwd=None,
+):
     config = davo.utils.conf.load_yaml_config(conf_path)
     config = {key: value for key, value in config.items() if key in _CONFIG}
     if load_secrets:
-        kp = davo.utils.conf.load_kp()
+        kp = davo.utils.conf.load_kp(path=keepass_path, password=keepass_pwd)
         config = davo.utils.conf.fix_config_secrets(kp, config, mask=mask)
     return config

@@ -4,9 +4,9 @@ import logging.config
 import os
 
 import davo.utils.cli
-from davo import utils, version
+from davo import constants, utils, version
 
-from . import conf, handlers, utils
+from . import conf, const, handlers, utils
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,18 @@ def init_parser(parser=None, subparsers=None, commands=()):
             action='store_true',
             help='show/edit local config; by default global')
 
+    if not commands or 'info' in commands:
+        name = _command('info', commands)
+        cmd = subparsers.add_parser(name, help='show additional info')
+        cmd.set_defaults(func=handlers.on_info)
+        cmd.add_argument(
+            'topic',
+            nargs='?',
+            choices=('topics',) + tuple(const.TOPICS),
+            default='topics',
+            action='store',
+            help='topic')
+
     if not commands or 'init' in commands:
         name = _command('init', commands)
         cmd = subparsers.add_parser(name, help='init project')
@@ -58,25 +70,6 @@ def init_parser(parser=None, subparsers=None, commands=()):
         name = _command('buckets', commands)
         cmd = subparsers.add_parser(name, help='list buckets')
         cmd.set_defaults(func=handlers.on_list_buckets)
-
-    if not commands or 'list' in commands:
-        name = _command('list', commands)
-        cmd = subparsers.add_parser(
-            name,
-            parents=[p_recursive],
-            formatter_class=utils.Formatter,
-            help='list files')
-        cmd.set_defaults(func=handlers.on_list)
-        cmd.add_argument(
-            '-b', '--bucket', action='store', help='bucket')
-        cmd.add_argument(
-            '-p', '--path',
-            action='store', type=str, help='path to compare')
-        cmd.add_argument(
-            '-R', '--region', action='store', help='s3 region')
-        cmd.add_argument(
-            '-l', '--limit',
-            action='store', default=10, type=int, help='output limit')
 
     common_diff = argparse.ArgumentParser(
         add_help=False, parents=[p_root, p_recursive])
@@ -102,13 +95,15 @@ def init_parser(parser=None, subparsers=None, commands=()):
 
     common_diff.add_argument(
         '-m', '--modes',
-        action='store', default='-<>+r',
-        help='modes of comparing (by default: -<>+r)')
+        action='store', default=constants.STATES_DIFF_ALL,
+        help='modes of comparing (by default all diff states)')
     common_diff.add_argument(
         '-f', '--file-types',
         action='store',
         metavar='TYPES',
         help='file types (extension) for compare')
+    common_diff.add_argument('--no-cache', action='store_true')
+    common_diff.add_argument('-v', '--verbose', action='store_true')
 
     if not commands or 'diff' in commands:
         name = _command('diff', commands)
@@ -118,16 +113,6 @@ def init_parser(parser=None, subparsers=None, commands=()):
             formatter_class=utils.Formatter,
             help='diff local and remote')
         cmd.set_defaults(func=handlers.on_diff)
-
-    if not commands or 'upload' in commands:
-        name = _command('upload', commands)
-        cmd = subparsers.add_parser(name, help='upload file')
-        cmd.set_defaults(func=handlers.on_upload)
-        cmd.add_argument('path', action='store', help='path to upload')
-        cmd.add_argument(
-            '-f', '--force', action='store_true', help='force upload')
-        cmd.add_argument(
-            '-r', '--recursive', action='store_true', help='list recursive')
 
     if not commands or 'update' in commands:
         name = _command('update', commands)
@@ -177,6 +162,11 @@ def init_parser(parser=None, subparsers=None, commands=()):
         cmd.add_argument(
             '--delete-remote',
             action='store_true', help='confirm delete remote file')
+
+    if not commands or 'cache-update' in commands:
+        name = _command('cache-update', commands)
+        cmd = subparsers.add_parser(name, help='update cache')
+        cmd.set_defaults(func=handlers.on_cache_update)
 
     return parser
 

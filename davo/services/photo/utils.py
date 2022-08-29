@@ -3,6 +3,8 @@ import logging
 import os
 import re
 
+import exif
+import pymediainfo
 from PIL import Image
 
 import davo.utils
@@ -32,14 +34,9 @@ def date_as_path(path):
     return os.path.join(root, sub_root), sub_root, base
 
 
-def _get_ext(basename):
-    if '.' in basename:
-        return basename.rsplit('.', 1)[1]
-    return ''
-
-
 def is_ext_same(path1, path2):
-    return _get_ext(path1).lower() == _get_ext(path2).lower()
+    return davo.utils.path.get_extension(
+        path1, lower=True) == davo.utils.path.get_extension(path2, lower=True)
 
 
 def replace_file_params(filename, pattern, replace, **context):
@@ -86,6 +83,80 @@ def image_load_pil(path):
     except IOError as exc:
         logger.warning('image load error: %s', exc)
         return None
+
+
+def get_exif_with_details(filename, verbose=False):
+    ext = davo.utils.path.get_extension(filename, lower=True)
+    if ext not in {'jpg', 'jpeg'}:
+        return None, 'extension'
+
+    with open(filename, 'rb') as file:
+        try:
+            image = exif.Image(file)
+        except Exception as exc:
+            if verbose:
+                logger.warning('exif parse error: %s', exc)
+            return None, 'failed'
+
+    if not image.has_exif:
+        return None, 'missing'
+
+    data = exif_get_all_tags(image, verbose=verbose)
+    data = {
+        key: value if type(value) in (str, float, int) else str(value)
+        for key, value in data.items()
+    }
+    return data, 'ok'
+
+
+def get_exif(filename):
+    return get_exif_with_details(filename, verbose=False)[0]
+
+
+def exif_get_all_tags(exif_image, verbose=False):
+    """
+    Fixed exif_image.get_all. Correctly handles ValueError.
+    :param exif_image:
+    :param bool verbose:
+    :rtype: dict
+    """
+    data = {}
+    for tag_name in exif_image.list_all():
+        try:
+            tag_value = exif_image.__getattr__(tag_name)
+        except Exception as exc:
+            if verbose:
+                logger.warning(
+                    'exif tag lad failed: %s, %s', tag_name,
+                    str(exc).split('\n')[0],
+                )
+            continue
+
+        data[tag_name] = tag_value
+    return data
+
+
+def get_media_info(path):
+    data = pymediainfo.MediaInfo.parse(path).to_data()['tracks'][0]
+    data = {key: value for key, value in data.items() if key not in {
+        'count',
+        'file_name',
+        # 'file_size',
+        'track_type',
+        'folder_name',
+        # 'stream_size',
+        'complete_name',
+        'file_extension',
+        'kind_of_stream',
+        'other_file_name',
+        'other_file_size',
+        'other_stream_size',
+        'stream_identifier',
+        'other_kind_of_stream',
+        'proportion_of_this_stream',
+        'count_of_stream_of_this_kind',
+    }}
+    return data
 
 
 def image_convert(
