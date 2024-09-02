@@ -36,7 +36,7 @@ def command_compare_dirs(
     recursive=False, exclude=(), verbose=True,
 ):
     if show_all:
-        states = '-+~<>r='
+        states = '-+~<>r=?'
     else:
         if show_renames and 'r' not in states:
             states += 'r'
@@ -47,20 +47,23 @@ def command_compare_dirs(
         raise davo.errors.UserError(
             'Can\t search renames without check_size option')
 
-    files = davo.utils.path.compare_dirs(
-        root1, root2,
-        states=states,
-        ignore_case=ignore_case,
-        check_size=check_size,
-        check_md5=check_md5,
-        recursive=recursive,
-        exclude=exclude,
-        verbose=True,
-    )
+    try:
+        files = davo.utils.path.compare_dirs(
+            root1, root2,
+            states=states,
+            ignore_case=ignore_case,
+            check_size=check_size,
+            check_md5=check_md5,
+            recursive=recursive,
+            exclude=exclude,
+            verbose=True,
+        )
+    except KeyboardInterrupt:
+        raise davo.errors.UserError('KeyboardInterrupt')
 
     if verbose:
         for key, data in files.items():
-            print('{} {}'.format(data['state'], key))
+            print('{} {}'.format(data.get('state', '?'), key))
 
     davo.utils.path.count_diff(files, verbose=True)
 

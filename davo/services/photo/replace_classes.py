@@ -45,6 +45,18 @@ def source_img_(filename, context):
     return ''
 
 
+def source_img_2(filename, context):
+    if m := re.search(r'IMG_(\d+)$', source_no_ext(filename, context)):
+        return m.group(1)
+    return ''
+
+
+def source_dsc_2(filename, context):
+    if m := re.search(r'DSC_(\d+)$', source_no_ext(filename, context)):
+        return m.group(1)
+    return ''
+
+
 def source_rel(_filename, context):
     return context.get('sub_root', '')
 
@@ -87,7 +99,9 @@ def _exif_field(context, filename, field, default=''):
             verbose=context.get('verbose', False),
         )
 
-    return exif_data.get(field, default=default)
+    if exif_data is None:
+        return default
+    return exif_data.get(field, default)
 
 
 def exif_date(filename, context):
@@ -209,6 +223,8 @@ def df_prioritized(filename, context):
 CLASSES = {
     '[source:int]': source_int,
     '[source:img_]': source_img_,
+    '[source:img_$]': source_img_2,
+    '[source:dsc_$]': source_dsc_2,
     '[source:rel]': source_rel,
     '[source:name]': source_no_ext,
     '[source]': source_full,
@@ -217,6 +233,7 @@ CLASSES = {
     '[ext]': lambda f, c: extension(f, c).lower(),
     '[CCC]': lambda f, c: counter(f, c, size=3),
     '[CC]': lambda f, c: counter(f, c, size=2),
+    '[C]': lambda f, c: counter(f, c, size=1),
 
     # stat mtime
     '[mdatetime]': lambda f, c: _mtime(f, c, '%Y%m%d_%H%M%S'),

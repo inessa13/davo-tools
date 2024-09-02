@@ -123,6 +123,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
         )
         cmd.add_argument('-t', '--thumbnail', type=int)
         cmd.add_argument('--skip-no-exif', action='store_true')
+        cmd.add_argument('--drop-alpha', action='store_true')
         cmd.set_defaults(func=lambda namespace: helpers.command_convert(
             root=namespace.path,
             replace=namespace.replace_pattern,
@@ -131,6 +132,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
             delete=namespace.delete_source,
             thumbnail=namespace.thumbnail,
             skip_no_exif=namespace.skip_no_exif,
+            drop_alpha=namespace.drop_alpha,
             commit=namespace.commit,
         ))
 
