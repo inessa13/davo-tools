@@ -121,6 +121,9 @@ class S3KeyCached:
     def get_contents_to_filename(self, *args, **kwargs):
         return self._key().get_contents_to_filename(*args, **kwargs)
 
+    def set_contents_from_file(self, *args, **kwargs):
+        return self._key().set_contents_from_file(*args, **kwargs)
+
 
 def _iter_remote_cache(bucket, prefix=None, delimiter=None):
     for data in cache.cache.select(prefix=prefix, delimiter=delimiter):

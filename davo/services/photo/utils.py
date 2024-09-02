@@ -161,7 +161,7 @@ def get_media_info(path):
 
 def image_convert(
     path_source, path_dest, thumbnail=None, save_exif=False, save_mtime=False,
-    commit=False,
+    drop_alpha=False, commit=False,
 ):
     """
     Convert image with options.
@@ -171,6 +171,7 @@ def image_convert(
     :param int thumbnail:
     :param bool save_exif:
     :param bool save_mtime:
+    :param bool drop_alpha:
     :param bool commit:
     """
     image = image_load_pil(path_source)
@@ -184,6 +185,9 @@ def image_convert(
 
     if save_exif and (exif := image.info.get('exif')):
         save_options['exif'] = exif
+
+    if drop_alpha:
+        image = image.convert('RGB')
 
     if commit:
         image.save(path_dest, **save_options)

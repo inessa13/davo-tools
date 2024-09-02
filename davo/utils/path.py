@@ -217,10 +217,14 @@ def compare(
               or constants.STATE_RENAMED in states):
             files_dest[key_src] = source
 
+    for key, dest in files_dest.items():
+        if not dest.get('state'):
+            dest['state'] = constants.STATE_LOCAL_NEW
+
     # find renames
     if constants.STATE_RENAMED in states:
         for key_new, data_new in files_dest.items():
-            if data_new['state'] != constants.STATE_LOCAL_NEW:
+            if data_new.get('state') != constants.STATE_LOCAL_NEW:
                 continue
 
             for key_missing, data_missing in files_dest.items():
@@ -248,7 +252,7 @@ def compare(
     return {
         key: options
         for key, options in files_dest.items()
-        if options['state'] in states
+        if options.get('state', '?') in states
     }
 
 
@@ -269,7 +273,7 @@ def count_diff(files, verbose=False):
 
     counter = collections.Counter()
     for data in files.values():
-        counter.update(data['state'])
+        counter.update(data.get('state', '?'))
     info = ', '.join(
         '{}: {}'.format(k, v) for k, v in counter.most_common())
 

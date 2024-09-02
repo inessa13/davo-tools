@@ -33,7 +33,7 @@ def connect_openconnect(account):
     os.system(cmd)
 
 
-def connect_openconnect_sudo(account):
+def connect_openconnect_sudo_2fa(account):
     print('Connecting to `{}`'.format(account['auth_group']))
     cmd = C_OPENCONNECT_SUDO.format(
         account['user'], account['auth_group'], account['url'])
@@ -43,10 +43,25 @@ def connect_openconnect_sudo(account):
     sudo = davo.utils.conf.load_kr_kp_pass()
 
     ch = pexpect.spawn(cmd)
-    ch.expect('\[sudo\] ', timeout=1)
+    ch.expect('\[sudo\] ', timeout=5)
     ch.sendline(sudo)
     ch.sendline(account['password'])
     ch.sendline(otp)
+    ch.interact()
+
+
+def connect_openconnect_sudo(account):
+    print('Connecting to `{}`'.format(account['auth_group']))
+    cmd = C_OPENCONNECT_SUDO.format(
+        account['user'], account['auth_group'], account['url'])
+    print(cmd)
+
+    sudo = davo.utils.conf.load_kr_kp_pass()
+
+    ch = pexpect.spawn(cmd)
+    ch.expect('\[sudo\] ', timeout=5)
+    ch.sendline(sudo)
+    ch.sendline(account['password'])
     ch.interact()
 
 

@@ -27,6 +27,9 @@ def connect(config_root, account_name=None):
     elif account.get('handler') == 'openconnect_sudo':
         handlers.connect_openconnect_sudo(account)
 
+    elif account.get('handler') == 'openconnect_sudo_2fa':
+        handlers.connect_openconnect_sudo_2fa(account)
+
     else:
         raise davo.errors.Error(
             'Unknown handler: {}'.format(account.get('handler')))

@@ -255,7 +255,7 @@ def command_search_duplicates(root, md5, recursive):
 
 def command_convert(
     root, replace, recursive, copy, delete, thumbnail, skip_no_exif,
-        commit=False,
+    drop_alpha, commit=False,
 ):
     """
     Convert command.
@@ -267,6 +267,7 @@ def command_convert(
     :param bool delete: delete source on convert (for rename use copy option)
     :param int thumbnail:
     :param bool skip_no_exif: skip files with no exif data
+    :param bool drop_alpha: drop alpha channel
     :param bool commit:
     """
     index = 1
@@ -301,6 +302,7 @@ def command_convert(
                 thumbnail=thumbnail,
                 save_exif=True,
                 save_mtime=True,
+                drop_alpha=drop_alpha,
                 commit=commit,
             )
             # TODO: copy on file_path == file_path_new
