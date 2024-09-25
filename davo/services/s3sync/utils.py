@@ -207,18 +207,8 @@ def memoize(func):
 
 @memoize
 def find_project_root():
-    root = get_cwd()
-    while root:
-        path = os.path.join(root, settings.CONFIG_PATH_S3SYNC_LOCAL)
-        if os.path.exists(path):
-            return root
-
-        # TODO: fix for windows
-        if root == '/':
-            return None
-
-        root = os.path.dirname(root)
-    return None
+    return davo.utils.path.find_config_root(
+        get_cwd(), settings.CONFIG_PATH_S3SYNC_LOCAL)
 
 
 @memoize

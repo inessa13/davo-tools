@@ -3,6 +3,7 @@ import hashlib
 import logging
 import os
 import re
+import shutil
 
 from davo import constants, errors
 
@@ -145,7 +146,7 @@ def compare_dirs(
 
     files_dest = dict()
     for options in iter_file_options(
-            root2, recursive, ignore_case, check_size):
+            root2, recursive, ignore_case, check_size, exclude):
         options['state'] = constants.STATE_LOCAL_MISSING
         files_dest[options['key']] = options
 
@@ -190,6 +191,7 @@ def compare(
         if key_src in files_dest:
             equal = True
             dest = files_dest[key_src]
+            dest['path_source'] = source['path']
 
             if check_size:
                 if source['size'] != dest['size']:
@@ -215,11 +217,13 @@ def compare(
 
         elif (constants.STATE_LOCAL_NEW in states
               or constants.STATE_RENAMED in states):
-            files_dest[key_src] = source
+            files_dest[key_src] = dest = dict(source.items())
+            dest['path_source'] = dest.pop('path')
 
     for key, dest in files_dest.items():
         if not dest.get('state'):
             dest['state'] = constants.STATE_LOCAL_NEW
+            dest.setdefault('path_source', '')
 
     # find renames
     if constants.STATE_RENAMED in states:
@@ -243,7 +247,8 @@ def compare(
                 data_missing.update({
                     'state': constants.STATE_RENAMED,
                     'new_options': data_new,
-                    'comment': 'new key: {}'.format(data_new['key'])
+                    'comment': 'new key: {}'.format(data_new['key']),
+                    'path_source': data_new.get('path_source'),
                 })
                 # mark for remove from result
                 data_new['state'] = constants.STATE_MARK_DELETE
@@ -319,3 +324,45 @@ def get_filename_no_extension(filename, lower=False):
         value = value.lower()
 
     return value
+
+
+def sync_file(path_dest, root_source, root_dest, safe, commit):
+    """
+    Sync file between paths.
+
+    :param path_dest:
+    :param root_source:
+    :param root_dest:
+    :param safe: safe == without deleting
+    :param commit: false = dry run
+    """
+    if safe:
+        source = path_dest.replace(root_dest, root_source)
+        source_dir = os.path.dirname(source)
+        if commit:
+            if not os.path.exists(source_dir):
+                os.mkdir(source_dir)
+            shutil.copy2(path_dest, source, follow_symlinks=False)
+        else:
+            if not os.path.exists(source_dir):
+                print('mkdir {}'.format(source_dir))
+            print('cp {} {}'.format(path_dest, source))
+    else:
+        if commit:
+            os.remove(path_dest)
+        else:
+            print('rm {}'.format(path_dest))
+
+
+def find_config_root(root, config_name):
+    while root:
+        path = os.path.join(root, config_name)
+        if os.path.exists(path):
+            return root
+
+        # TODO: fix for windows
+        if root == '/':
+            return None
+
+        root = os.path.dirname(root)
+    return None

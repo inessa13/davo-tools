@@ -1,13 +1,13 @@
 import argparse
-import collections
 import getpass
 import logging
 import os
+import shutil
 
 import keyring
 
 import davo.utils
-from davo import settings, version
+from davo import constants, settings, version
 
 logger = logging.getLogger(__name__)
 
@@ -33,19 +33,52 @@ def command_keyring(key, value=None, enter_pass=False, commit=False):
 def command_compare_dirs(
     root1, root2, states='-+~<>', show_all=False, show_equals=False,
     show_renames=False, ignore_case=False, check_size=False, check_md5=False,
-    recursive=False, exclude=(), verbose=True,
+    recursive=False, exclude=(), verbose=True, sync_in=False, sync_out=False,
+    commit=False,
 ):
+    if sync_in and sync_out:
+        raise davo.errors.UserError(
+            'sync_in and sync_out are mutually exclusive')
+
+    root = davo.utils.path.find_config_root(
+        os.getcwd(), constants.LOCAL_CONF_PATH)
+    root = os.path.join(root, '')
+    config = davo.utils.conf.load_yaml_config(
+        os.path.join(root, constants.LOCAL_CONF_PATH))
+    if verbose:
+        print('config root: {}'.format(root))
+
+    if root1 == '.':
+        root1 = os.getcwd()
+
+    root1 = os.path.join(root1, '')
+    sub_path = root1.replace(root, '').lstrip('/')
+
+    if root2:
+        root2 = os.path.join(root2, '')
+    else:
+        root2 = config.get('dest_path')
+        if '~' in root2:
+            root2 = os.path.expanduser(root2)
+        root2 = os.path.join(root2, sub_path, '')
+
+    if not exclude:
+        exclude = [constants.LOCAL_CONF_PATH]
+    if config.get('ignore'):
+        exclude += config['ignore']
+
     if show_all:
         states = '-+~<>r=?'
     else:
         if show_renames and 'r' not in states:
             states += 'r'
+            check_size = True
         if show_equals and '=' not in states:
             states += '='
 
     if 'r' in states and not check_size:
         raise davo.errors.UserError(
-            'Can\t search renames without check_size option')
+            'Can\'t search renames without check_size option')
 
     try:
         files = davo.utils.path.compare_dirs(
@@ -61,11 +94,52 @@ def command_compare_dirs(
     except KeyboardInterrupt:
         raise davo.errors.UserError('KeyboardInterrupt')
 
-    if verbose:
-        for key, data in files.items():
-            print('{} {}'.format(data.get('state', '?'), key))
+    if sync_in or sync_out:
+        _make_dirs_sync(
+            files,
+            root1,
+            root2,
+            sync_in=sync_in,
+            safe=True,
+            commit=commit,
+        )
 
-    davo.utils.path.count_diff(files, verbose=True)
+    else:
+        if verbose:
+            for key, data in files.items():
+                print('{} {}\t{}'.format(
+                    data.get('state', '?'),
+                    key,
+                    data.get('comment', ''),
+                ))
+        davo.utils.path.count_diff(files, verbose=True)
+
+
+def _make_dirs_sync(files, root1, root2, sync_in=False, safe=True, commit=False):
+    for file, data in files.items():
+        if sync_in:
+            if data['state'] in ('+', '=', '?'):
+                continue
+
+            if data['state'] == 'r':
+                # TODO:
+                print('rename: Not implemented')
+
+            elif data['state'] == '-':
+                davo.utils.path.sync_file(
+                    data['path'], root1, root2, safe=safe, commit=commit)
+
+        else:
+            if data['state'] in ('-', '=', '?'):
+                continue
+
+            if data['state'] == 'r':
+                # TODO:
+                print('rename: Not implemented')
+
+            elif data['state'] == '+':
+                davo.utils.path.sync_file(
+                    data['path_source'], root2, root1, safe=safe, commit=commit)
 
 
 def init_parser(parser=None, subparsers=None, commands=()):
@@ -94,8 +168,8 @@ def init_parser(parser=None, subparsers=None, commands=()):
 
     if 'compare' in commands:
         cmd = subparsers.add_parser('compare', help='compare dirs')
-        cmd.add_argument('root1')
-        cmd.add_argument('root2', nargs='?', default=os.getcwd())
+        cmd.add_argument('root1', nargs='?', default=os.getcwd())
+        cmd.add_argument('root2', nargs='?', default='')
         cmd.add_argument(
             '-t', '--states', action='store', default='-+~<>')
         cmd.add_argument('-i', '--ignore-case', action='store_true')
@@ -107,6 +181,9 @@ def init_parser(parser=None, subparsers=None, commands=()):
         cmd.add_argument('-e', '--show-equals', action='store_true')
         cmd.add_argument('-R', '--show-renames', action='store_true')
         cmd.add_argument('-x', '--exclude', action='append')
+        cmd.add_argument('--sync-in', action='store_true')
+        cmd.add_argument('--sync-out', action='store_true')
+        cmd.add_argument('--commit', action='store_true')
         cmd.set_defaults(func=lambda namespace: command_compare_dirs(
             root1=namespace.root1,
             root2=namespace.root2,
@@ -120,4 +197,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
             recursive=namespace.recursive,
             exclude=namespace.exclude,
             verbose=namespace.verbose,
+            sync_in=namespace.sync_in,
+            sync_out=namespace.sync_out,
+            commit=namespace.commit,
         ))

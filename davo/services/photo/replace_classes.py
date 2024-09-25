@@ -181,7 +181,22 @@ def _media_info_field(filename, context, field, default=''):
     return default
 
 
+def _datetime_for_video(filename, context, pattern):
+    if value := _media_info_field(filename, context, 'creationdate', ''):
+        if m := re.match(
+                r'(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})[Z+-]', value):
+            value = m.group(1)
+        value = datetime.datetime.fromisoformat(value).strftime(pattern)
+        return value
+
+    if value := _media_info_field(filename, context, 'encoded_date', ''):
+        value = value.replace('UTC ', '')
+        value = datetime.datetime.fromisoformat(value).strftime(pattern)
+        return value
+
+
 def date_time_prioritized(filename, context, sep='_'):
+    pattern = f'%Y%m%d{sep}%H%M%S'
     mime = guess_mime(filename, context)
     if mime in ('image/jpeg',):
         if value := exif_datetime_original(filename, context, sep=sep):
@@ -191,27 +206,40 @@ def date_time_prioritized(filename, context, sep='_'):
             return value
 
     elif mime in ('video/quicktime', 'video/mp4'):
-        if value := _media_info_field(filename, context, 'creationdate', ''):
-            if m := re.match(
-                    r'(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})[Z+-]', value):
-                value = m.group(1)
-            value = datetime.datetime.fromisoformat(value).strftime(
-                f'%Y%m%d{sep}%H%M%S')
+        if value := _datetime_for_video(filename, context, pattern):
             return value
 
-        if value := _media_info_field(filename, context, 'encoded_date', ''):
-            value = value.replace('UTC ', '')
-            value = datetime.datetime.fromisoformat(value).strftime(
-                f'%Y%m%d{sep}%H%M%S')
-            return value
-
-    if value := _mtime(filename, context, f'%Y%m%d{sep}%H%M%S'):
+    if value := _mtime(filename, context, pattern):
         return value
 
-    if value := _ctime(filename, context, f'%Y%m%d{sep}%H%M%S'):
+    if value := _ctime(filename, context, pattern):
         return value
 
     return ''
+
+
+def date_prioritized(filename, context):
+    pattern = '%Y%m%d'
+    mime = guess_mime(filename, context)
+    if mime in ('image/jpeg',):
+        if value := exif_date_original(filename, context):
+            return value
+
+        if value := exif_date(filename, context):
+            return value
+
+    elif mime in ('video/quicktime', 'video/mp4'):
+        if value := _datetime_for_video(filename, context, pattern):
+            return value
+
+    if value := _mtime(filename, context, pattern):
+        return value
+
+    if value := _ctime(filename, context, pattern):
+        return value
+
+    return ''
+
 
 
 def df_prioritized(filename, context):
@@ -257,6 +285,7 @@ CLASSES = {
     '[exif:time_original]': exif_time_original,
     '[exif:datetime_original]': exif_datetime_original,
 
+    '[date]': date_prioritized,
     '[datetime]': date_time_prioritized,
     '[date time]': lambda f, c: date_time_prioritized(f, c, sep=' '),
     '[year]': lambda f, c: df_prioritized(f, c).strftime('%Y'),

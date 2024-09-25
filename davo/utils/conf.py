@@ -30,7 +30,7 @@ def load_yaml_config(conf_path):
     conf_root = os.path.dirname(conf_path)
 
     if not conf_path or not os.path.exists(conf_path):
-        raise errors.Error('Missing vpn config: {}'.format(conf_path))
+        raise errors.Error('Missing config: {}'.format(conf_path))
 
     with open(conf_path, 'rt') as file:
         conf = yaml.safe_load(file)
