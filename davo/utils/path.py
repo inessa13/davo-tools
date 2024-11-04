@@ -273,7 +273,10 @@ def count_diff(files, verbose=False):
     """
     if not files:
         if verbose:
-            logger.info('%d differences', len(files))
+            if files:
+                logger.info('%d differences', len(files))
+            else:
+                logger.info('no differences')
         return ''
 
     counter = collections.Counter()
