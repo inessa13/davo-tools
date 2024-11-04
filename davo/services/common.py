@@ -42,6 +42,8 @@ def command_compare_dirs(
 
     root = davo.utils.path.find_config_root(
         os.getcwd(), constants.LOCAL_CONF_PATH)
+    if not root:
+        raise davo.errors.UserError('No config root found')
     root = os.path.join(root, '')
     config = davo.utils.conf.load_yaml_config(
         os.path.join(root, constants.LOCAL_CONF_PATH))
@@ -121,7 +123,7 @@ def _make_dirs_sync(files, root1, root2, sync_in=False, safe=True, commit=False)
             if data['state'] in ('+', '=', '?'):
                 continue
 
-            if data['state'] == 'r':
+            elif data['state'] == 'r':
                 # TODO:
                 print('rename: Not implemented')
 
@@ -133,7 +135,7 @@ def _make_dirs_sync(files, root1, root2, sync_in=False, safe=True, commit=False)
             if data['state'] in ('-', '=', '?'):
                 continue
 
-            if data['state'] == 'r':
+            elif data['state'] == 'r':
                 # TODO:
                 print('rename: Not implemented')
 
