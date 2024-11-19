@@ -333,11 +333,11 @@ def sync_file(path_dest, root_source, root_dest, safe, commit):
     """
     Sync file between paths.
 
-    :param path_dest:
-    :param root_source:
-    :param root_dest:
-    :param safe: safe == without deleting
-    :param commit: false = dry run
+    :param str path_dest:
+    :param str root_source:
+    :param str root_dest:
+    :param bool safe: safe == without deleting
+    :param bool commit: false = dry run
     """
     if safe:
         source = path_dest.replace(root_dest, root_source)
@@ -345,16 +345,57 @@ def sync_file(path_dest, root_source, root_dest, safe, commit):
         if commit:
             if not os.path.exists(source_dir):
                 os.mkdir(source_dir)
-            shutil.copy2(path_dest, source, follow_symlinks=False)
+            # TODO: protect from overwriting
+            if os.path.exists(source):
+                return 0
+            try:
+                shutil.copy2(path_dest, source, follow_symlinks=False)
+                return 1
+            except OSError:
+                return 0
         else:
             if not os.path.exists(source_dir):
                 print('mkdir {}'.format(source_dir))
             print('cp {} {}'.format(path_dest, source))
+            return 0
     else:
         if commit:
-            os.remove(path_dest)
+            try:
+                os.remove(path_dest)
+                return 1
+            except OSError:
+                return 0
         else:
             print('rm {}'.format(path_dest))
+            return 0
+
+
+def sync_file_rename(path_dest, path_source, root_dest, root_source, commit):
+    """
+    Sync file between paths with renaming.
+
+    :param str path_dest:
+    :param str root_source:
+    :param str root_dest:
+    :param str path_source:
+    :param bool commit: false = dry run
+    """
+    dest = path_dest.replace(root_dest, root_source)
+    dest_dir = os.path.dirname(dest)
+    source = os.path.join(root_source, path_source)
+    if commit:
+        if not os.path.exists(dest_dir):
+            os.mkdir(dest_dir)
+        try:
+            os.rename(source, dest)
+            return 1
+        except OSError:
+            return 0
+    else:
+        if not os.path.exists(dest_dir):
+            print('mkdir {}'.format(dest_dir))
+        print('mv {} {}'.format(source, dest))
+        return 0
 
 
 def find_config_root(root, config_name):
