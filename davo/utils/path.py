@@ -344,7 +344,7 @@ def sync_file(path_dest, root_source, root_dest, safe, commit):
         source_dir = os.path.dirname(source)
         if commit:
             if not os.path.exists(source_dir):
-                os.mkdir(source_dir)
+                os.makedirs(source_dir)
             # TODO: protect from overwriting
             if os.path.exists(source):
                 return 0
@@ -355,7 +355,7 @@ def sync_file(path_dest, root_source, root_dest, safe, commit):
                 return 0
         else:
             if not os.path.exists(source_dir):
-                print('mkdir {}'.format(source_dir))
+                print('mkdir -p {}'.format(source_dir))
             print('cp {} {}'.format(path_dest, source))
             return 0
     else:
@@ -385,7 +385,7 @@ def sync_file_rename(path_dest, path_source, root_dest, root_source, commit):
     source = os.path.join(root_source, path_source)
     if commit:
         if not os.path.exists(dest_dir):
-            os.mkdir(dest_dir)
+            os.makedirs(dest_dir)
         try:
             os.rename(source, dest)
             return 1
@@ -393,7 +393,7 @@ def sync_file_rename(path_dest, path_source, root_dest, root_source, commit):
             return 0
     else:
         if not os.path.exists(dest_dir):
-            print('mkdir {}'.format(dest_dir))
+            print('mkdir -p {}'.format(dest_dir))
         print('mv {} {}'.format(source, dest))
         return 0
 
