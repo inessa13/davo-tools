@@ -339,35 +339,40 @@ def sync_file(path_dest, root_source, root_dest, safe, commit):
     :param bool safe: safe == without deleting
     :param bool commit: false = dry run
     """
-    if safe:
-        source = path_dest.replace(root_dest, root_source)
-        source_dir = os.path.dirname(source)
-        if commit:
-            if not os.path.exists(source_dir):
-                os.makedirs(source_dir)
-            # TODO: protect from overwriting
-            if os.path.exists(source):
+    source = path_dest.replace(root_dest, root_source)
+    source_dir = os.path.dirname(source)
+    if commit:
+        if not os.path.exists(source_dir):
+            os.makedirs(source_dir)
+
+        if os.path.exists(source):
+            # protect from overwriting
+            if safe:
                 return 0
-            try:
-                shutil.copy2(path_dest, source, follow_symlinks=False)
-                return 1
-            except OSError:
-                return 0
-        else:
-            if not os.path.exists(source_dir):
-                print('mkdir -p {}'.format(source_dir))
-            print('cp {} {}'.format(path_dest, source))
+            else:
+                try:
+                    os.remove(source)
+                except OSError:
+                    return 0
+        try:
+            shutil.copy2(path_dest, source, follow_symlinks=False)
+            return 1
+        except OSError:
             return 0
     else:
-        if commit:
-            try:
-                os.remove(path_dest)
-                return 1
-            except OSError:
-                return 0
+        if not os.path.exists(source_dir):
+            print('mkdir -p {}'.format(source_dir))
+
+        if os.path.exists(source):
+            if safe:
+                print('# (overriding will be skipped without --force) cp {} {}'.format(path_dest, source))
+            else:
+                print('rm {}'.format(source))
+                print('cp {} {}'.format(path_dest, source))
         else:
-            print('rm {}'.format(path_dest))
-            return 0
+            print('cp {} {}'.format(path_dest, source))
+
+        return 0
 
 
 def sync_file_rename(path_dest, path_source, root_dest, root_source, commit):
@@ -395,6 +400,21 @@ def sync_file_rename(path_dest, path_source, root_dest, root_source, commit):
         if not os.path.exists(dest_dir):
             print('mkdir -p {}'.format(dest_dir))
         print('mv {} {}'.format(source, dest))
+        return 0
+
+
+def sync_file_remove(path_source, safe, commit):
+    if safe:
+        return 0
+
+    if commit:
+        try:
+            os.remove(path_source)
+            return 1
+        except OSError:
+            return 0
+    else:
+        print('rm {}'.format(path_source))
         return 0
 
 

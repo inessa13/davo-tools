@@ -114,7 +114,8 @@ def _make_dirs_sync(files, root1, root2, sync_in=False, safe=True, commit=False)
     for file, data in files.items():
         if sync_in:
             if data['state'] in ('+', '=', '?'):
-                continue
+                processed += davo.utils.path.sync_file_remove(
+                    data['path_source'], safe=safe, commit=commit)
 
             elif data['state'] == 'r':
                 processed += davo.utils.path.sync_file_rename(
@@ -125,7 +126,7 @@ def _make_dirs_sync(files, root1, root2, sync_in=False, safe=True, commit=False)
                     commit=commit,
                 )
 
-            elif data['state'] == '-':
+            elif data['state'] in ('-', '~'):
                 processed += davo.utils.path.sync_file(
                     data['path'], root1, root2, safe=safe, commit=commit)
 
