@@ -123,6 +123,7 @@ def exif_get_all_tags(exif_image, verbose=False):
     data = {}
     for tag_name in exif_image.list_all():
         try:
+            # with warnings.catch_warnings(action="ignore"):
             tag_value = exif_image.__getattr__(tag_name)
         except Exception as exc:
             if verbose:
@@ -183,8 +184,8 @@ def image_convert(
 
     save_options = {}
 
-    if save_exif and (exif := image.info.get('exif')):
-        save_options['exif'] = exif
+    if save_exif and (exif_ := image.info.get('exif')):
+        save_options['exif'] = exif_
 
     if drop_alpha:
         image = image.convert('RGB')

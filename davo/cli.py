@@ -24,6 +24,7 @@ def init_parser():
     cmd = subparsers.add_parser('file', help='file tools')
     cmd, _sub = services.photo.cli.init_parser(cmd, commands=(
         'convert',
+        'thumbs',
         'rename',
         'iphone-clean-live',
         'search-duplicates',

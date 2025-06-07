@@ -68,6 +68,15 @@ def init_parser(parser=None, subparsers=None, commands=()):
             default='[source].[Ext]',
             help='replace pattern')
         cmd.add_argument(
+            '-d', '--date-around', action='store',
+            help='approximate date, helps with extracting correct one. YYYYMMDD. used with `[dto:...]` classes')
+        cmd.add_argument(
+            '--date-fix', action='store',
+            help='force to fix, used to calculate delta for date-around. used with `[dto:...]` classes')
+        cmd.add_argument(
+            '-D', '--date-force', action='store_true',
+            help='force date-around, is difference is too big. used with `[dto:...]` classes')
+        cmd.add_argument(
             '-o', '--output', action='store', choices=choices_output,
             default='T',
             help='replace pattern')
@@ -86,12 +95,25 @@ def init_parser(parser=None, subparsers=None, commands=()):
             pattern=namespace.pattern,
             replace=namespace.replace_pattern,
             output=namespace.output,
+            date_around=namespace.date_around,
+            date_fix=namespace.date_fix,
+            date_force=namespace.date_force,
             copy=namespace.copy,
             skip_no_exif=namespace.skip_no_exif,
             limit=namespace.limit,
             verbose=namespace.verbose,
             commit=namespace.commit,
         ))
+
+        cmd = subparsers.add_parser(
+            'rename-classes',
+            help='show classes list for rename command')
+        cmd.set_defaults(func=lambda ns: helpers.command_regexp_classes())
+
+        cmd = subparsers.add_parser(
+            'rename-patterns',
+            help='show pattern list for rename command')
+        cmd.set_defaults(func=lambda ns: helpers.command_regexp_patterns())
 
     if not commands or 'thumbnail' in commands:
         cmd = subparsers.add_parser(
@@ -136,6 +158,32 @@ def init_parser(parser=None, subparsers=None, commands=()):
             commit=namespace.commit,
         ))
 
+    if not commands or 'thumbs' in commands:
+        cmd = subparsers.add_parser(
+            'thumbs',
+            parents=[p_root, p_recursive],
+            help='create thumbnails snapshot')
+        cmd.add_argument(
+            '-F', '--force', action='store_true', default=False)
+        cmd.add_argument(
+            '-s', '--size', action='store', type=int, default=300,
+            help='thumbnail size, by default 300')
+        cmd.add_argument(
+            '-c', '--cols', action='store', type=int, default=8,
+            help='thumbnail size, by default 300')
+        cmd.add_argument(
+            '-m', '--max-lines', action='store', type=int, default=10,
+            help='thumbnail size, by default 300')
+        cmd.set_defaults(func=lambda namespace: helpers.command_thumbs(
+            root=namespace.path,
+            recursive=namespace.recursive,
+            force=namespace.force,
+            size=namespace.size,
+            cols=namespace.cols,
+            max_lines=namespace.max_lines,
+            commit=True,
+        ))
+
     if not commands or 'iphone-clean-live' in commands:
         cmd = subparsers.add_parser(
             'iphone-clean-live', parents=p_common,
@@ -158,7 +206,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
 
     if not commands or 'search-duplicates' in commands:
         cmd = subparsers.add_parser(
-            'search-duplicates', parents=[p_root, p_recursive],
+            'search-duplicates', parents=[p_root, p_recursive, p_verbose],
             help='search duplicates')
         cmd.add_argument(
             '-m', '--md5', action='store_true', help='check md5 hash')
@@ -166,6 +214,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
             root=namespace.path,
             md5=namespace.md5,
             recursive=namespace.recursive,
+            verbose=namespace.verbose,
         ))
 
     return parser, subparsers

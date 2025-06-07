@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os
 import re
@@ -8,7 +9,7 @@ from PIL import Image
 import davo.utils
 from davo import errors
 
-from . import utils
+from . import replace_classes, utils
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +61,43 @@ def _command_tree_reverse(root, commit=False):
             os.rename(file, os.path.join(root, base))
 
 
+def command_regexp_classes():
+    print('Available classes:')
+    for k, v in replace_classes.CLASSES.items():
+        print(' {}{}'.format('static ', k))
+
+    for k, v in replace_classes.CLASSES_RE.items():
+        print(' {}{}'.format('regexp ', k))
+
+
+def command_regexp_patterns():
+    print('Available patterns:')
+    for k, v in replace_classes.PATTERNS.items():
+        print(' {}{}'.format(k.ljust(20, ' '), v.get('help')))
+
+
+def _parse_date(value):
+    if '-' in value:
+        p = '%Y%m%d-%H%M%S'
+    else:
+        p = '%Y%m%d'
+    try:
+        value = datetime.datetime.strptime(value, p)
+    except ValueError:
+        raise errors.UserError('Invalid date: {}. Use `Ymd[-HMS]` format'.format(value))
+    return value
+
+
 def command_regexp(
-    root, recursive, filters, exclude, pattern, replace, output, copy,
-    skip_no_exif, limit=0, verbose=False, commit=False,
+    root, recursive, filters, exclude, pattern, replace, output,
+    date_around, date_fix, date_force,
+    copy, skip_no_exif, limit=0, verbose=False, commit=False,
 ):
+    if date_around:
+        date_around = _parse_date(date_around)
+    if date_fix:
+        date_fix = _parse_date(date_fix)
+
     if pattern_options := utils.get_known_pattern(pattern):
         pattern, replace = pattern_options
 
@@ -84,7 +118,13 @@ def command_regexp(
             if any(re.search(p, base) for p in exclude):
                 continue
 
-        context = {'verbose': verbose, 'index': index}
+        context = {
+            'verbose': verbose,
+            'index': index,
+            'date_around': date_around,
+            'date_fix': date_fix,
+            'date_force': date_force,
+        }
 
         sub_path = file_root.replace(root, '.')
         if sub_path:
@@ -197,6 +237,52 @@ def command_thumbnail(root, size, recursive, type_, commit=False):
             image.save(os.path.join(thumbnails_root, file_dest))
 
 
+def command_thumbs(root, recursive, force, size, cols, max_lines, commit=False):
+    thumbnails_dir = 'thumb_map.jpg'
+    thumbnails_path = os.path.join(root, thumbnails_dir)
+    if os.path.exists(thumbnails_path) and not force:
+        raise errors.UserError('Thumbnails map file already exists')
+
+    thumbnails = Image.new(
+        'RGB',
+        (size * cols, size * max_lines),
+        'black')
+
+    line = 0
+    for i, file in enumerate(utils.iter_files(root, recursive=recursive)):
+        line = i // cols
+        pos = i % cols
+
+        if thumbnails_dir in file:
+            continue
+
+        if line > max_lines:
+            logger.warning('too much files, skip some from thumnails')
+            break
+
+        try:
+            image = Image.open(file)
+        except IOError:
+            continue
+
+        image.thumbnail((size, size))
+        thumbnails.paste(image, (pos * size, line * size))
+        logger.info('thumbnail: %s', file)
+
+    line += 1
+    if line < max_lines:
+        th = thumbnails
+        # th.crop((0, 0, size * cols - 1, size * line - 1))
+        thumbnails = Image.new(
+        'RGB',
+        (size * cols, size * line),
+        'black')
+        thumbnails.paste(th, (0, 0))
+
+    if commit:
+        thumbnails.save(thumbnails_path)
+
+
 def command_search_copy(root, source_file, recursive):
     source_hash = davo.utils.path.file_hash(source_file)
     source_hash_digest = source_hash.digest()
@@ -212,12 +298,14 @@ def command_search_copy(root, source_file, recursive):
             logger.info('%s %s', file, source_hash.hexdigest())
 
 
-def command_search_duplicates(root, md5, recursive):
+def command_search_duplicates(root, md5, recursive, verbose):
     files = {}
     for file in utils.iter_files(root, recursive=recursive):
         files[file] = {
             'size': os.path.getsize(file),
         }
+
+    logger.info('total: %d', len(files))
 
     for i in utils.iter_files(root, recursive=recursive):
         # file created after scan
