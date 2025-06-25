@@ -195,3 +195,9 @@ def image_convert(
         if save_mtime:
             os.utime(path_dest, (
                 os.path.getatime(path_source), os.path.getmtime(path_source)))
+
+
+def int2frac(value):
+    if not isinstance(value, (int, float)):
+        return 0
+    return max(1, min(100, value)) / 100

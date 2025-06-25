@@ -62,7 +62,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
             help='rename files by regexp')
         cmd.add_argument(
             '-p', '--pattern', action='store', default='.*',
-            help='search pattern')
+            help='search pattern, default %(default)s')
         cmd.add_argument(
             '-R', '--replace-pattern', action='store',
             default='[source].[Ext]',
@@ -79,7 +79,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
         cmd.add_argument(
             '-o', '--output', action='store', choices=choices_output,
             default='T',
-            help='replace pattern')
+            help='replace pattern, default %(default)s')
         cmd.add_argument('-l', '--limit', action='store', type=int, default=0)
         cmd.add_argument('-C', '--copy', action='store_true')
         cmd.add_argument(
@@ -119,7 +119,11 @@ def init_parser(parser=None, subparsers=None, commands=()):
         cmd = subparsers.add_parser(
             'thumbnail', parents=p_common, help='prepare thumbnails')
         cmd.add_argument(
-            '-s', '--size', action='store', type=int, default=120)
+            '-s', '--size',
+            action='store',
+            type=int,
+            default=120,
+            help='default %(default)s')
         cmd.add_argument('-t', '--type', help='convert type')
         cmd.set_defaults(func=lambda namespace: helpers.command_thumbnail(
             root=namespace.path,
@@ -167,13 +171,13 @@ def init_parser(parser=None, subparsers=None, commands=()):
             '-F', '--force', action='store_true', default=False)
         cmd.add_argument(
             '-s', '--size', action='store', type=int, default=300,
-            help='thumbnail size, by default 300')
+            help='thumbnail size, by default %(default)s')
         cmd.add_argument(
             '-c', '--cols', action='store', type=int, default=8,
-            help='thumbnail size, by default 300')
+            help='thumbnail max cols, by default %(default)s')
         cmd.add_argument(
             '-m', '--max-lines', action='store', type=int, default=10,
-            help='thumbnail size, by default 300')
+            help='thumbnail max lines, by default %(default)s')
         cmd.set_defaults(func=lambda namespace: helpers.command_thumbs(
             root=namespace.path,
             recursive=namespace.recursive,
@@ -215,6 +219,69 @@ def init_parser(parser=None, subparsers=None, commands=()):
             md5=namespace.md5,
             recursive=namespace.recursive,
             verbose=namespace.verbose,
+        ))
+
+    if not commands or 'recover' in commands:
+        cmd = subparsers.add_parser(
+            'recover', parents=[
+                p_root,
+                p_verbose,
+                p_commit,
+            ],
+            help='recover')
+        cmd.add_argument('-a', '--algo', action='store')
+        cmd.add_argument(
+            '-s', '--scale', action='store', type=int, default=25,
+            help='scaledown size for speedup in %%, default %(default)s%%'
+        )
+        cmd.add_argument(
+            '-m', '--min-contour', action='store', type=int, default=30,
+            help='min acceptable size of contour found in %%, default %(default)s%%'
+        )
+        cmd.add_argument(
+            '-M', '--max-contour', action='store', type=int, default=99,
+            help='max acceptable size of contour found in %%, default %(default)s%%',
+        )
+        cmd.add_argument(
+            '-d', '--debug', action='store_true', default=False,
+        help='create debug images for intermediate steps')
+        cmd.set_defaults(func=lambda namespace: helpers.command_recover(  # noqa
+            root=namespace.path,
+            algo=namespace.algo,
+            scale=namespace.scale,
+            min_contour=namespace.min_contour,
+            max_contour=namespace.max_contour,
+            debug=namespace.debug,
+            # recursive=namespace.recursive,
+            verbose=namespace.verbose,
+            commit=namespace.commit,
+        ))
+
+    if not commands or 'downscale' in commands:
+        cmd = subparsers.add_parser(
+            'downscale', parents=[
+                p_root,
+                p_verbose,
+                p_commit,
+            ],
+            help='downscale with SSIM threshold')
+        cmd.add_argument(
+            '-t', '--threshold', action='store', type=int, default=95,
+            help='SSIM threshold in %%, default %(default)s%%'
+        )
+        cmd.add_argument(
+            '-w', '--min-width', action='store', type=int, default=1024,
+        )
+        cmd.add_argument(
+            '-H', '--min-height', action='store', type=int, default=1024,
+        )
+        cmd.set_defaults(func=lambda namespace: helpers.command_downscale(  # noqa
+            root=namespace.path,
+            threshold=namespace.threshold,
+            min_width=namespace.min_width,
+            min_height=namespace.min_height,
+            verbose=namespace.verbose,
+            commit=namespace.commit,
         ))
 
     return parser, subparsers

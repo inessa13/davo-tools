@@ -28,6 +28,8 @@ def init_parser():
         'rename',
         'iphone-clean-live',
         'search-duplicates',
+        'recover',
+        'downscale',
     ))
     services.common.init_parser(cmd, _sub, commands=('compare',))
 

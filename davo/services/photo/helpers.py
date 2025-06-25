@@ -4,12 +4,13 @@ import os
 import re
 import shutil
 
+import cv2
 from PIL import Image
 
 import davo.utils
 from davo import errors
 
-from . import replace_classes, utils
+from . import recover, replace_classes, utils
 
 logger = logging.getLogger(__name__)
 
@@ -415,3 +416,86 @@ def command_convert(
         index += 1
 
     logger.info('converted: %d', converted)
+
+
+def command_recover(
+        root,
+        algo: str = None,
+        scale: int = None,
+        min_contour: int = None,
+        max_contour: int = None,
+        debug: bool = False,
+        recursive: bool = False,
+        verbose: bool = False,
+        commit: bool = False,
+):
+    scale, min_contour, max_contour = map(
+        utils.int2frac, (scale, min_contour, max_contour))
+    pipelines = recover.cv3.get_pipelines(verbose=verbose)
+    for file_path in utils.iter_files(root, recursive=recursive, sort=True):
+        file_root, file_base = os.path.split(file_path)
+        if verbose:
+            logger.info('>%s', file_base)
+        image = cv2.imread(file_path)
+
+        contour = recover.image_recover(
+            image.copy(),
+            {
+                'debug': debug,
+                'file': file_base,
+            },
+            pipelines,
+            algo=algo,
+            scale=scale,
+            min_contour=min_contour,
+            max_contour=max_contour,
+            debug=debug,
+            verbose=verbose,
+        )
+        if contour is None:
+            if verbose:
+                logger.info('%s: contour not found', file_base)
+            continue
+
+        name, ext = file_base.rsplit('.', 1)
+        name = os.path.join(file_root, '{}-fixed.{}'.format(name, ext))
+
+        if verbose:
+            logger.info('%s: contour detected', file_base)
+        if commit:
+            recover.rotate(image, contour, name)
+
+
+def command_downscale(
+        root,
+        threshold: int = None,
+        min_width: int = None,
+        min_height: int = None,
+        verbose: bool = False,
+        commit: bool = False,
+):
+    threshold = utils.int2frac(threshold)
+    for file_path in utils.iter_files(root, recursive=False, sort=True):
+        file_root, file_base = os.path.split(file_path)
+
+        image = cv2.imread(file_path)
+        downscaled, ssim = recover.cv3.image_downscale(
+            image, min_width, min_height, threshold)
+
+        if downscaled is None or ssim == 1.0:
+            if verbose:
+                logger.info('%s: downscale failed', file_base)
+            continue
+
+        file_name, ext = file_base.rsplit('.', 1)
+        file_name = os.path.join(file_root, '{}-downscaled.{}'.format(file_name, ext))
+        scale = downscaled.shape[0] / image.shape[0] * 100
+        logger.info(
+            '%s: downscaled %.2f%% %d*%d, SSIM=%.3f',
+            file_base,
+            scale,
+            downscaled.shape[1],
+            downscaled.shape[0],
+            ssim)
+        if commit:
+            cv2.imwrite(file_name, downscaled)
