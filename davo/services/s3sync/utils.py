@@ -301,7 +301,7 @@ def connect_bucket(name=None, regions=None):
 def _connect_bucket(name, region_host):
     conn = connect_host(region_host)
     if conn is None:
-        return None
+        raise davo.errors.UserError('Connection failed')
 
     return conn.lookup(name, validate=True)
 

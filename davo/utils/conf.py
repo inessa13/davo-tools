@@ -12,7 +12,7 @@ from davo import errors, settings
 
 logger = logging.getLogger(__name__)
 
-_P_KP_STR = r'kp:(?P<key>[0-9a-zA-Z /]+)(:(?P<attr>username|password|url))?$'
+_P_KP_STR = r'kp:(?P<key>.*):(?P<attr>username|password|url)$'
 _P_KR_STR = r'kr:((?P<service>.+):)?(?P<key>.+)$'
 
 
