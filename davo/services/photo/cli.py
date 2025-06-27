@@ -270,6 +270,10 @@ def init_parser(parser=None, subparsers=None, commands=()):
             help='SSIM threshold in %%, default %(default)s%%'
         )
         cmd.add_argument(
+            '-s', '--speed', action='store', type=int, default=5,
+            help='downscale speed in %%, default %(default)s%%'
+        )
+        cmd.add_argument(
             '-w', '--min-width', action='store', type=int, default=1024,
         )
         cmd.add_argument(
@@ -277,9 +281,10 @@ def init_parser(parser=None, subparsers=None, commands=()):
         )
         cmd.set_defaults(func=lambda namespace: helpers.command_downscale(  # noqa
             root=namespace.path,
-            threshold=namespace.threshold,
             min_width=namespace.min_width,
             min_height=namespace.min_height,
+            speed=namespace.speed,
+            threshold=namespace.threshold,
             verbose=namespace.verbose,
             commit=namespace.commit,
         ))

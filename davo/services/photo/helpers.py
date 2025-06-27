@@ -468,19 +468,20 @@ def command_recover(
 
 def command_downscale(
         root,
-        threshold: int = None,
         min_width: int = None,
         min_height: int = None,
+        speed: int = None,
+        threshold: int = None,
         verbose: bool = False,
         commit: bool = False,
 ):
-    threshold = utils.int2frac(threshold)
+    threshold, speed = map(utils.int2frac, (threshold, speed))
     for file_path in utils.iter_files(root, recursive=False, sort=True):
         file_root, file_base = os.path.split(file_path)
 
         image = cv2.imread(file_path)
         downscaled, ssim = recover.cv3.image_downscale(
-            image, min_width, min_height, threshold)
+            image, min_width, min_height, speed, threshold)
 
         if downscaled is None or ssim == 1.0:
             if verbose:
