@@ -82,6 +82,21 @@ class Cache:
                 'etag': etag,
             }
 
+    def select_one(self, name):
+        cur = self.conn.cursor()
+
+        record = cur.execute(
+            QUERY_FILTER + ' WHERE name=?', (name,)).fetchone()
+        if not record:
+            return None
+        name, size, last_modified, etag = record
+        return {
+            'name': name,
+            'size': size,
+            'last_modified': last_modified,
+            'etag': etag,
+        }
+
     def delete(self, name):
         self._lock.acquire()
         try:
