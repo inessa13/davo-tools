@@ -260,6 +260,14 @@ def connect_host(region=boto.s3.connection.NoHostProvided):
     )
 
 
+def connect_host_bucket(region_host, bucket_name):
+    conn = connect_host(region_host)
+    if conn is None:
+        raise davo.errors.UserError('Connection failed')
+
+    return conn.lookup(bucket_name, validate=True)
+
+
 def connect_bucket(name=None, regions=None):
     if name is None:
         name = conf.get('BUCKET')
@@ -299,11 +307,7 @@ def connect_bucket(name=None, regions=None):
 
 
 def _connect_bucket(name, region_host):
-    conn = connect_host(region_host)
-    if conn is None:
-        raise davo.errors.UserError('Connection failed')
-
-    return conn.lookup(name, validate=True)
+    return connect_host_bucket(region_host, name)
 
 
 def output_finish(output, string):

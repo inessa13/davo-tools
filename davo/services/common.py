@@ -33,6 +33,7 @@ def command_compare_dirs(
     root1, root2, states='-+~<>r', show_all=False, show_equals=False,
     ignore_case=False, check_md5=False,
     recursive=False, exclude=(), verbose=True, sync_in=False, sync_out=False,
+    dest_path=None, this=False, other=False,
     force=False, commit=False,
 ):
     if sync_in and sync_out:
@@ -41,13 +42,17 @@ def command_compare_dirs(
 
     root = davo.utils.path.find_config_root(
         os.getcwd(), constants.LOCAL_CONF_PATH)
-    if not root:
+    if root:
+        root = os.path.join(root, '')
+        config = davo.utils.conf.load_yaml_config(
+            os.path.join(root, constants.LOCAL_CONF_PATH))
+        if verbose:
+            print('config root: {}'.format(root))
+    elif dest_path:
+        root = os.getcwd()
+        config = {'dest_path': dest_path}
+    else:
         raise davo.errors.UserError('No config root found')
-    root = os.path.join(root, '')
-    config = davo.utils.conf.load_yaml_config(
-        os.path.join(root, constants.LOCAL_CONF_PATH))
-    if verbose:
-        print('config root: {}'.format(root))
 
     if root1 == '.':
         root1 = os.getcwd()
@@ -70,6 +75,10 @@ def command_compare_dirs(
 
     if show_all:
         states = '-+~<>r=?'
+    elif this:
+        states = '+~r<>='
+    elif other:
+        states = '-~r<>='
     else:
         if show_equals and '=' not in states:
             states += '='
@@ -188,6 +197,8 @@ def init_parser(parser=None, subparsers=None, commands=()):
         cmd.add_argument('root2', nargs='?', default='')
         cmd.add_argument(
             '-t', '--states', action='store', default='-+~<>r')
+        cmd.add_argument('--this', action='store_true', help='alias for -t="+~r<>"')
+        cmd.add_argument('--other', action='store_true', help='alias for -t="-~r<>"')
         cmd.add_argument('-i', '--ignore-case', action='store_true')
         cmd.add_argument('-5', '--check-md5', action='store_true')
         cmd.add_argument('-r', '--recursive', action='store_true')
@@ -197,6 +208,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
         cmd.add_argument('-x', '--exclude', action='append')
         cmd.add_argument('--sync-in', action='store_true')
         cmd.add_argument('--sync-out', action='store_true')
+        cmd.add_argument('-D', '--dest-path', action='store')
         cmd.add_argument(
             '--force',
             action='store_true',
@@ -216,6 +228,9 @@ def init_parser(parser=None, subparsers=None, commands=()):
             verbose=namespace.verbose,
             sync_in=namespace.sync_in,
             sync_out=namespace.sync_out,
+            dest_path=namespace.dest_path,
+            this=namespace.this,
+            other=namespace.other,
             force=namespace.force,
             commit=namespace.commit,
         ))

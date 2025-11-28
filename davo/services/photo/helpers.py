@@ -4,13 +4,20 @@ import os
 import re
 import shutil
 
-import cv2
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 from PIL import Image
 
 import davo.utils
 from davo import errors
 
-from . import recover, replace_classes, utils
+try:
+    from . import recover
+except ImportError:
+    pass
+from . import replace_classes, utils
 
 logger = logging.getLogger(__name__)
 

@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 PREFIXES = (
     'IMG_',
+    'VID_',
     'DSCN',
     'DSC_',
     'DSC0',
@@ -30,6 +31,7 @@ PREFIXES = (
 PREFIXES_P = '|'.join(PREFIXES)
 
 P_SOURCE_CODE = r'.*(?P<source_prefix>' + PREFIXES_P + ')(?P<source_num>\d{3,6})\D*.*$'
+P_SOURCE_CODE2 = r'.*(?P<source_prefix>' + PREFIXES_P + ')(?P<source_code>[0-9_]+)\D*.*$'
 
 
 def _mtime_(filename, context):
@@ -528,6 +530,11 @@ PATTERNS = {
         'replace': 'IMG_[dto:datetime] [source:source_prefix][source:source_num].[Ext]',
         'help': 'for most cases',
     },
+    'tree': {
+        'pattern': P_SOURCE_CODE2,
+        'replace': '[year]/[month]/[day]/[source:name].[Ext]',
+        'help': 'put files in subfolders based on date',
+    },
     'base_nc': {
         'pattern': r'.*',
         'replace': 'IMG_[datetime_oldest] [source:name].[Ext]',
@@ -563,6 +570,11 @@ PATTERNS = {
         'replace': '[source:source_prefix][source:source_num].[Ext]',
         'help': 'strip to original if enough data',
     },
+    # 'strip_dcim': {
+    #     'pattern': r'.*(?P<source_prefix>' + PREFIXES_P + ')(?P<source_name>[0-9_]+)\D*.*$',
+    #     'replace': '[source:source_prefix][source:source_name].[Ext]',
+    #     'help': 'strip to original if enough data',
+    # },
     'model': {
         'pattern': r'.*',
         'replace': '[source:name] [exif:make] [exif:model].[Ext]',

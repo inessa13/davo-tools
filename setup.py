@@ -26,6 +26,7 @@ setup(
         'onnxruntime',
         'numpy',
         'scikit-image',
+        'opencv-python',
     ],
     entry_points={'console_scripts': [
         'davo = davo.cli:main',
