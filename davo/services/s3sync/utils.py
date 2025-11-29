@@ -124,6 +124,9 @@ class S3KeyCached:
     def set_contents_from_file(self, *args, **kwargs):
         return self._key().set_contents_from_file(*args, **kwargs)
 
+    def url(self, ttl=3600):
+        return self._key().generate_url(expires_in=ttl)
+
 
 def _iter_remote_cache(bucket, prefix=None, delimiter=None):
     for data in cache.cache.select(prefix=prefix, delimiter=delimiter):
