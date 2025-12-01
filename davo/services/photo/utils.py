@@ -80,7 +80,7 @@ def get_known_pattern(pattern):
 def image_load_pil(path):
     try:
         return Image.open(path)
-    except IOError as exc:
+    except (IOError, ValueError) as exc:
         logger.warning('image load error: %s', exc)
         return None
 

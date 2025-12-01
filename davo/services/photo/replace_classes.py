@@ -346,7 +346,7 @@ def date_time_prioritized(filename, context, sep='_'):
         if value := exif_datetime(filename, context, sep=sep):
             return value
 
-    elif mime in ('video/quicktime', 'video/mp4'):
+    elif mime in ('video/quicktime', 'video/mp4', 'audio/mpeg'):
         if value := _date_time_fmt(
                 _datetime_for_video_(filename, context), sep):
             return value
