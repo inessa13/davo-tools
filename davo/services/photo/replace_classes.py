@@ -12,7 +12,9 @@ logger = logging.getLogger(__name__)
 
 PREFIXES = (
     'IMG_',
+    'IMG-',
     'VID_',
+    'VID-',
     'DSCN',
     'DSC_',
     'DSC0',
@@ -84,7 +86,10 @@ def source_datetime(filename, context):
     if m := re.match(prefixes + r'(\d{8})[_ -](\d{6}).*', name):
         return datetime.datetime.strptime('{} {}'.format(m.group(2), m.group(3)), '%Y%m%d %H%M%S')
     if m := re.match(prefixes + r'(\d{8})\D+.*', name):
-        return datetime.datetime.strptime('{} {}'.format(m.group(2)), '%Y%m%d')
+        d = datetime.datetime.strptime(m.group(2), '%Y%m%d')
+        if d:
+            return m.group(2)
+        # return datetime.datetime.strptime('{} {}'.format(m.group(2)), '%Y%m%d')
     return None
 
 
@@ -365,7 +370,7 @@ def dt_optimal(filename, context, priority=False):
 
     # datetime from filename
     if ds := source_datetime(filename, context):
-        values.append(ds)
+        values.append(datetime.datetime.strptime(ds, '%Y%m%d'))
 
     mime = guess_mime(filename, context)
     if mime in ('image/jpeg',):
@@ -535,6 +540,11 @@ PATTERNS = {
         'replace': '[year]/[month]/[day]/[source:name].[Ext]',
         'help': 'put files in subfolders based on date',
     },
+    'flat': {
+        'pattern': r'.*',
+        'replace': '[source:name].[Ext]',
+        'help': 'put files in flat list',
+    },
     'base_nc': {
         'pattern': r'.*',
         'replace': 'IMG_[datetime_oldest] [source:name].[Ext]',
@@ -589,6 +599,11 @@ PATTERNS = {
         'pattern': r'IMG_(?P<source>\d+)\..*$',
         'replace': 'IMG_[mdate]_[mtime] (IMG_[source]).[Ext]',
         'help': '(deprecated) use base instead',
+    },
+    'wa': {
+        'pattern': r'(?P<prefix>(IMG|VID))-(?P<source_name>\d+)-(?P<source_num>WA\d+)\..*$',
+        'replace': '[source:prefix]_[source:datetime] [source:source_num].[Ext]',
+        'help': 'base for whatsapp images',
     },
     'temp': {
         'pattern': r'\d+ (?P<source>.*).*\..*',

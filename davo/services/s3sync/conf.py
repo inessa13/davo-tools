@@ -31,6 +31,7 @@ _CONFIG = {
     'CACHE_FILE_NAME': '.s3cache.db',
     'IGNORE': (),
     'LOAD_SECRETS': None,
+    'GLOBAL_CONFIG': '~/Dropbox/etc/s3sync.yaml'
 }
 
 
@@ -106,6 +107,8 @@ def load_config_tree(local_root, global_root, **kwargs):
         load_secrets=None,
         **kwargs)
     global_root = config_l.get('GLOBAL_CONFIG', global_root)
+    if '~' in global_root:
+        global_root = os.path.expanduser(global_root)
     if os.path.exists(global_root):
         config_g = load_config(
             global_root,
