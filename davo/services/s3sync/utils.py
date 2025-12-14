@@ -62,8 +62,12 @@ def file_path(path):
     return file_path_info(path)[0]
 
 
-def iter_local_path(path, recursive=False):
-    yield from utils.path.iter_files(path, recursive=recursive)
+def iter_local_path(path, recursive=False, exclude=()):
+    yield from utils.path.iter_files(
+        path,
+        recursive=recursive,
+        exclude=exclude,
+    )
 
 
 def iter_remote_path(

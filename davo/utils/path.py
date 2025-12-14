@@ -303,7 +303,7 @@ def split3(filename):
     root, basename = os.path.split(filename)
 
     if '.' not in basename:
-        return '', basename
+        return root, '', basename
 
     return root, *basename.rsplit('.', 1)
 

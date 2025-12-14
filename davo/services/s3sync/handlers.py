@@ -24,11 +24,16 @@ def on_config(namespace):
             raise errors.UserError('Local config not found')
         config_path = os.path.join(
             local_root, settings.CONFIG_PATH_S3SYNC_LOCAL)
+        print('{}:'.format(config_path))
+        config = conf.load_config(config_path, load_secrets=None, mask=True)
     else:
-        config_path = settings.CONFIG_PATH_S3SYNC
+        local_root = utils.find_project_root()
+        config = conf.load_config_tree(
+            local_root,
+            settings.CONFIG_PATH_S3SYNC,
+            mask=True,
+        )
 
-    print('{}:'.format(config_path))
-    config = conf.load_config(config_path, load_secrets=True, mask=True)
     if config:
         pprint.pprint(config)
 
@@ -79,8 +84,8 @@ def on_diff(namespace, print_details=True):
     path = os.path.abspath(namespace.path)
 
     src_files = []
-    for file_path in utils.iter_local_path(
-            path, namespace.recursive):
+    it = utils.iter_local_path(path, namespace.recursive, conf.get('IGNORE'))
+    for file_path in it:
         if not os.path.isfile(file_path):
             continue
 

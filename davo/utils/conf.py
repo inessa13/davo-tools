@@ -68,6 +68,23 @@ def fix_config_paths(conf, root=None):
     return conf
 
 
+def mask_config_secrets(conf, key=None):
+    if isinstance(conf, dict):
+        return {
+            key_: mask_config_secrets(value, key=key_)
+            for key_, value in conf.items()
+        }
+
+    if isinstance(conf, list):
+        return [mask_config_secrets(value, key=key) for value in conf]
+
+    if isinstance(conf, str):
+        if key in ('ACCESS_KEY', 'SECRET_KEY'):
+            return '{}***{}'.format(conf[0], conf[-1])
+
+    return conf
+
+
 def fix_config_secrets(kp, conf, mask=True):
     """
     Fix/load secret values.
