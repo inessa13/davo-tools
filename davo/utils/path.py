@@ -59,7 +59,7 @@ def ensure(path, commit=False):
     """
     Ensure path exists.
 
-    :param str path:
+    :param Union[str] path:
     :param bool commit:
     """
     if '/' not in path:

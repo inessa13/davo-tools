@@ -33,10 +33,15 @@ def init_parser(parser=None, subparsers=None, commands=()):
     p_verbose = argparse.ArgumentParser(add_help=False)
     p_verbose.add_argument('-v', '--verbose', action='store_true')
 
+    p_silent = argparse.ArgumentParser(add_help=False)
+    p_silent.add_argument('-s', '--silent', action='store_true')
+
     p_root = argparse.ArgumentParser(add_help=False)
     p_root.add_argument('path', nargs='?', default=os.getcwd())
 
-    p_common = [p_root, p_recursive, p_commit]
+    p_common = [p_root, p_recursive, p_commit, p_silent]
+    p_PRCV = [p_root, p_recursive, p_commit, p_verbose]
+    p_prcvs = [p_root, p_recursive, p_commit, p_verbose, p_silent]
 
     if subparsers is None:
         subparsers = parser.add_subparsers(title='list of commands')
@@ -135,7 +140,9 @@ def init_parser(parser=None, subparsers=None, commands=()):
 
     if not commands or 'convert' in commands:
         cmd = subparsers.add_parser(
-            'convert', parents=p_common, help='convert images')
+            'convert',
+            parents=p_common,
+            help='convert images (PIL)')
         cmd.add_argument('-R', '--replace-pattern', default='[source].[Ext]')
         cmd.add_argument(
             '-D', '--delete-source', action='store_true',
@@ -188,9 +195,75 @@ def init_parser(parser=None, subparsers=None, commands=()):
             commit=True,
         ))
 
+    if not commands or 'clips' in commands:
+        cmd = subparsers.add_parser(
+            'clips-convert',
+            parents=p_PRCV,
+            help='convert video (ffmpeg)')
+        cmd.add_argument('-R', '--replace-pattern', default='[source].[Ext]')
+        cmd.add_argument('-t', '--thumbnail', type=int)
+        cmd.set_defaults(func=lambda namespace: helpers.command_convert_video(
+            root=namespace.path,
+            replace=namespace.replace_pattern,
+            recursive=namespace.recursive,
+            thumbnail=namespace.thumbnail,
+            verbose=namespace.verbose,
+            commit=namespace.commit,
+        ))
+
+        cmd = subparsers.add_parser(
+            'clips-split',
+            parents=[p_commit],
+            help='split video to clips (ffmpeg)')
+        cmd.add_argument('path')
+        cmd.add_argument('-e', '--ext', action='store')
+        cmd.add_argument('points', nargs='+')
+        cmd.set_defaults(func=lambda namespace: helpers.command_clips(
+            path=namespace.path,
+            points=namespace.points,
+            ext=namespace.ext,
+            commit=namespace.commit,
+        ))
+
+        cmd = subparsers.add_parser(
+            'clips-trim',
+            parents=p_prcvs,
+            help='trim video (ffmpeg)')
+        cmd.add_argument('--ss', action='store')
+        cmd.add_argument('--to', action='store')
+        cmd.set_defaults(func=lambda namespace: helpers.command_clips_trim(
+            root=namespace.path,
+            recursive=namespace.recursive,
+            ss=namespace.ss,
+            to=namespace.to,
+            commit=namespace.commit,
+        ))
+
+        cmd = subparsers.add_parser(
+            'clips-web',
+            parents=p_prcvs,
+            help='encode +faststart (ffmpeg)')
+        cmd.set_defaults(func=lambda namespace: helpers.command_clips_web(
+            root=namespace.path,
+            recursive=namespace.recursive,
+            verbose=namespace.verbose,
+            silent=namespace.silent,
+            commit=namespace.commit,
+        ))
+
+        cmd = subparsers.add_parser(
+            'clips-isweb',
+            parents=[p_root, p_recursive, p_silent],
+            help='check is video encoded with +faststart (ffmpeg)')
+        cmd.set_defaults(func=lambda namespace: helpers.command_clips_check_web(
+            root=namespace.path,
+            recursive=namespace.recursive,
+        ))
+
     if not commands or 'iphone-clean-live' in commands:
         cmd = subparsers.add_parser(
-            'iphone-clean-live', parents=p_common,
+            'iphone-clean-live',
+            parents=p_common,
             help='clean iphone live photo .mov files')
         cmd.set_defaults(func=lambda namespace: helpers.command_live(
             root=namespace.path,
@@ -228,7 +301,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
                 p_verbose,
                 p_commit,
             ],
-            help='recover')
+            help='recover (opencv)')
         cmd.add_argument('-a', '--algo', action='store')
         cmd.add_argument(
             '-s', '--scale', action='store', type=int, default=25,
@@ -264,7 +337,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
                 p_verbose,
                 p_commit,
             ],
-            help='downscale with SSIM threshold')
+            help='downscale with SSIM threshold (opencv)')
         cmd.add_argument(
             '-t', '--threshold', action='store', type=int, default=95,
             help='SSIM threshold in %%, default %(default)s%%'

@@ -1,5 +1,6 @@
 import functools
 import logging
+import time
 
 import argcomplete
 
@@ -11,7 +12,7 @@ _PROGRESS = (
     '[{progress}{arrow}{left}]'
     ' {progress_percent:3.0f}%'
     ' {ready}/{total}'
-    '{elapsed}'
+    '{notes}'
 )
 
 
@@ -46,17 +47,21 @@ def run_parser(parser, use_completion=True):
         parser.print_help()
 
 
-def progress_line(
+def progress_bar(
     ready, total, char_fill='=', char_arrow='>', char_pad=' ', len_full=40,
-    elapsed=None,
+    elapsed=None, elt='', extra='',
 ):
     percent = ready / total
     progress = round(percent, 2) * 100
     progress_len = int(progress) * len_full // 100
+
     if elapsed is None:
         elapsed = ''
     else:
         elapsed = ' Elapsed: {:.2f}s'.format(elapsed)
+
+    if isinstance(elt, float):
+        elt = ' Elapsed: {:.2f}s'.format(time.time() - elt)
 
     return _PROGRESS.format(
         progress=char_fill * progress_len,
@@ -65,7 +70,7 @@ def progress_line(
         progress_percent=progress,
         ready=ready,
         total=total,
-        elapsed=elapsed,
+        notes=elapsed + extra + elt,
     )
 
 

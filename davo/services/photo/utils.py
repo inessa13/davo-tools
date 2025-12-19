@@ -1,10 +1,13 @@
 import datetime
+import functools
 import logging
 import os
 import re
+import time
 
 import exif
 import pymediainfo
+import reprint
 from PIL import Image
 
 import davo.utils
@@ -201,3 +204,51 @@ def int2frac(value):
     if not isinstance(value, (int, float)):
         return 0
     return max(1, min(100, value)) / 100
+
+
+def each_file(elt=False, cycled=10):
+    def deco(func):
+        @functools.wraps(func)
+        def wrap(root, recursive=False, **kwargs):
+            it = iter_files(root, recursive=recursive, sort=True)
+            size = len(it)
+            _t = time.time()
+            use_elt = elt
+            with reprint.output(initial_len=1) as output:
+                if kwargs.get('silent'):
+                    output = None
+                    use_elt = False
+
+                for i, inf in enumerate(it):
+                    if output is not None:
+                        output[0] = davo.utils.cli.progress_bar(i, size, elt=_t)
+
+                    if use_elt:
+                        davo.utils.format.reprint_cycled(
+                            '{}:'.format(inf.replace(root, '.')),
+                            output,
+                            max_lines=cycled,
+                        )
+
+                    _t2 = time.time()
+                    status = func(inf, output, root=root, **kwargs)
+                    if status is None:
+                        continue
+
+                    if use_elt:
+                        davo.utils.format.reprint_cycled(
+                            '    {} {:.2f}s'.format(status, time.time() - _t2),
+                            output,
+                            max_lines=cycled,
+                        )
+                    else:
+                        davo.utils.format.reprint_cycled(
+                            '{}: {}'.format(inf.replace(root, '.'), status),
+                            output,
+                            max_lines=cycled,
+                        )
+
+                if output is not None:
+                    output[0] = davo.utils.cli.progress_bar(size, size, elt=_t)
+        return wrap
+    return deco

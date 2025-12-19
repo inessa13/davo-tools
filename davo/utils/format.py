@@ -1,3 +1,6 @@
+import datetime
+import math
+
 LEVELS_SIZE = {
     'T': 1024 ** 4,
     'G': 1024 ** 3,
@@ -33,3 +36,19 @@ def humanize_bytes(value, format_=FORMAT_DEFAULT):
 
 def humanize_speed(value, format_=FORMAT_DEFAULT):
     return humanize_number_sizes(value, LEVELS_SPEED.items(), format_=format_)
+
+
+def elapsed(seconds):
+    return 'Elapse: {}'.format(datetime.timedelta(seconds=int(seconds)))
+
+
+def reprint_cycled(string, output, prefix=1, max_lines=10):
+    if output is None:
+        print(string)
+        return
+
+    total = prefix + max_lines
+    if len(output) >= total:
+        output[prefix:total] = output[prefix + 1:total] + [string]
+    else:
+        output.append(string)

@@ -30,6 +30,7 @@ def init_parser():
         'search-duplicates',
         'recover',
         'downscale',
+        'clips',
     ))
     services.common.init_parser(cmd, _sub, commands=('compare',))
 
