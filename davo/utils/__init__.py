@@ -1,4 +1,4 @@
-from . import cli, concur, conf, format, path
+from . import cli, concur, conf, format, path, prnt
 
 __all__ = (
     'cli',
@@ -6,4 +6,5 @@ __all__ = (
     'conf',
     'format',
     'path',
+    'prnt',
 )

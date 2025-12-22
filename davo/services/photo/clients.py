@@ -1,39 +1,8 @@
 import os
 import re
 
+from davo import errors
 from davo.utils import concur
-
-
-def convert_ffmpeg(
-    path_source, path_dest, thumbnail=None, timeout=1 * 60 * 60, commit=False,
-):
-    """
-    :param str path_source:
-    :param Union[str] path_dest:
-    :param int thumbnail:
-    :param int timeout:
-    :param bool commit:
-    """
-    if not os.path.isfile(path_source):
-        return False, 'missing'
-
-    if thumbnail:
-        file_name, ext = os.path.splitext(path_dest)
-        path_dest = file_name + '.jpg'
-
-    if path_source == path_dest:
-        return False, 'same name'
-
-    if os.path.exists(path_dest):
-        return False, 'exists'
-
-    status = True
-    if commit:
-        status = run_ffmpeg_pref(path_source, path_dest, timeout=timeout)
-        if not status:
-            path_dest = 'failed'
-
-    return status, path_dest
 
 
 def run_ffmpeg(
@@ -57,6 +26,7 @@ def run_ffmpeg(
     :param str to:
     :param bool faststart:
     :param bool copy:
+    :param bool copy_antz:
     :param bool quiet:
     :param bool save_mtime:
     :param int timeout:
@@ -78,7 +48,10 @@ def run_ffmpeg(
     chain.append(out)
 
     if commit:
-        concur.run_subproc(chain, quiet=quiet, timeout_sec=timeout)
+        try:
+            concur.run_subproc(chain, quiet=quiet, timeout_sec=timeout)
+        except errors.Error:
+            return False
     else:
         return ' '.join(chain)
 

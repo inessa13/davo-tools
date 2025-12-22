@@ -198,7 +198,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
     if not commands or 'clips' in commands:
         cmd = subparsers.add_parser(
             'clips-convert',
-            parents=p_PRCV,
+            parents=p_prcvs,
             help='convert video (ffmpeg)')
         cmd.add_argument('-R', '--replace-pattern', default='[source].[Ext]')
         cmd.add_argument('-t', '--thumbnail', type=int)
@@ -208,20 +208,23 @@ def init_parser(parser=None, subparsers=None, commands=()):
             recursive=namespace.recursive,
             thumbnail=namespace.thumbnail,
             verbose=namespace.verbose,
+            silent=namespace.silent,
             commit=namespace.commit,
         ))
 
         cmd = subparsers.add_parser(
             'clips-split',
-            parents=[p_commit],
+            parents=[p_commit, p_silent, p_verbose],
             help='split video to clips (ffmpeg)')
         cmd.add_argument('path')
         cmd.add_argument('-e', '--ext', action='store')
         cmd.add_argument('points', nargs='+')
-        cmd.set_defaults(func=lambda namespace: helpers.command_clips(
-            path=namespace.path,
+        cmd.set_defaults(func=lambda namespace: helpers.command_clips_split(
+            root=namespace.path,
             points=namespace.points,
             ext=namespace.ext,
+            verbose=namespace.verbose,
+            silent=namespace.silent,
             commit=namespace.commit,
         ))
 
@@ -236,6 +239,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
             recursive=namespace.recursive,
             ss=namespace.ss,
             to=namespace.to,
+            verbose=namespace.verbose,
             commit=namespace.commit,
         ))
 

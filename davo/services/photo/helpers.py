@@ -6,8 +6,6 @@ import re
 import shutil
 import time
 
-import reprint
-
 try:
     import cv2
 except ImportError:
@@ -21,7 +19,6 @@ try:
     from . import recover
 except ImportError:
     pass
-from davo.utils import cli, concur, format
 
 from . import clients, replace_classes, utils
 
@@ -251,66 +248,47 @@ def command_thumbnail(root, size, recursive, type_, commit=False):
             image.save(os.path.join(thumbnails_root, file_dest))
 
 
-def command_clips(path, points, ext=None, commit=False):
-    if path and path[0] != '/':
-        path = os.path.join(os.getcwd(), path)
-    if not os.path.isfile(path):
-        raise errors.UserError('missing file: {}'.format(path))
-    root = os.path.join(os.path.dirname(path), '1')[:-1]
+@utils.each_file(elt=True)
+def command_clips_split(inf, output, points, ext=None, commit=False, verbose=False, **kwargs):
+    if not os.path.isfile(inf):
+        return utils.ef_stop('missing', verbose)
 
     segments = []
     for i, point in enumerate(points):
-        if not re.match(r'(\d{2}:)?\d{2}:\d{2}$', point):
+        if not re.match(r'(\d{1,2}:)?\d{1,2}:\d{2}(\.\d+)?$', point):
             raise errors.UserError('invalid time: {}'.format(point))
         if not i:
             segments.append([None, point])
         else:
             segments.append([points[i - 1], point])
     segments.append([points[-1], None])
-    size = len(segments)
 
-    file_name, file_ext = os.path.splitext(path)
+    file_name, file_ext = os.path.splitext(inf)
+    file_ext = '.' + ext if ext else file_ext
 
-    _t = time.time()
-    with reprint.output(initial_len=1) as output:
-        for i, (start, end) in enumerate(segments):
-            output[0] = cli.progress_bar(i, size, elt=_t)
-            format.reprint_cycled('#{} {}-{}'.format(i, start or '', end or ''), output)
-            _t2 = time.time()
-            dest = '{} #{}{}'.format(file_name, i, ext or file_ext)
-            status = clients.run_ffmpeg_pref(
-                path, dest, seek=start, to=end, commit=commit)
-            if commit:
-                status = 'succeed' if status else 'failed'
-            else:
-                format.reprint_cycled(status.replace(root, ''), output)
-                status = 'dry-run'
-
-            format.reprint_cycled(
-                '    {} {} {:.2f}s'.format(
-                    dest.replace(root, ''),
-                    status,
-                    time.time() - _t2,
-                ), output)
-
-        output[0] = cli.progress_bar(size, size, elt=_t)
+    file_status = True
+    for i, (start, end) in enumerate(segments):
+        utils.ef_log_task_start(output, '  #{} {}-{}'.format(i, start or '', end or ''), **kwargs)
+        dest = '{} #{}{}'.format(file_name, i, file_ext)
+        _t = time.time()
+        status = clients.run_ffmpeg_pref(
+            inf, dest, seek=start, to=end, commit=commit)
+        if not status:
+            file_status = False
+        status = utils.ef_status(status, output, **kwargs)
+        utils.ef_log_task_end(output, inf, status, _t, **kwargs)
+    return utils.ef_status(file_status, output, **kwargs)
 
 
 @utils.each_file(elt=True)
-def command_clips_trim(inf, output, ss=None, to=None, commit=False, **_kwargs):
+def command_clips_trim(inf, output, ss=None, to=None, commit=False, **kwargs):
     out = '{}-trimmed{}'.format(*os.path.splitext(inf))
     if os.path.exists(out):
         return 'exists'
 
     status = clients.run_ffmpeg_pref(
         inf, out, seek=ss, to=to, copy=False, commit=commit)
-    if commit:
-        status = 'succeed' if status else 'failed'
-    else:
-        # print command
-        format.reprint_cycled(status, output)
-        status = 'dry-run'
-
+    status = utils.ef_status(status, output, commit=commit, **kwargs)
     return status
 
 
@@ -321,24 +299,16 @@ def command_clips_check_web(inf, _output, **_kwargs):
 
 
 @utils.each_file(elt=True)
-def command_clips_web(inf, output, commit=False, **kwargs):
+def command_clips_web(inf, output, verbose=False, commit=False, **kwargs):
     out = '{}-web{}'.format(*os.path.splitext(inf))
     if os.path.exists(out):
-        if kwargs.get('verbose', False):
-            return 'exists'
-        return None
+        return utils.ef_stop('exists', verbose)
 
     if clients.check_ffmpeg_faststart(inf):
-        if kwargs.get('verbose', False):
-            return 'already'
-        return None
+        return utils.ef_stop('already', verbose)
 
     status = clients.run_ffmpeg_pref(inf, out, copy=True, commit=commit)
-    if commit:
-        status = 'succeed' if status else 'failed'
-    else:
-        format.reprint_cycled('    ' + status.replace(kwargs['root'], '.'), output)
-        status = 'dry-run'
+    status = utils.ef_status(status, output, verbose=verbose, commit=commit, **kwargs)
     return status
 
 
@@ -523,7 +493,7 @@ def command_convert(
 
 
 @utils.each_file(elt=True, cycled=30)
-def command_convert_video(inf, _output, replace='[source].[Ext]', thumbnail=False, verbose=False, commit=False, **kwargs):
+def command_convert_video(inf, output, replace='[source].[Ext]', thumbnail=False, verbose=False, commit=False, **kwargs):
     """
     Convert command for video using ffmpeg.
     """
@@ -534,20 +504,20 @@ def command_convert_video(inf, _output, replace='[source].[Ext]', thumbnail=Fals
     new_name = utils.replace_file_params(
         file_base, '.*', replace, index=converted)
     out = os.path.join(file_root, new_name)
+    if thumbnail:
+        out = os.path.splitext(out)[0] + '.jpg'
     if out == inf and not thumbnail:
-        if verbose:
-            return 'skipped (same name/ext)'
-        return None
-
+        return utils.ef_stop('skipped (same name/ext)', verbose)
     davo.utils.path.ensure(out, commit=commit)
-    status, comment = clients.convert_ffmpeg(
-        path_source=inf,
-        path_dest=out,
-        thumbnail=thumbnail,
-        timeout=4 * 60 * 60,
-        commit=commit,
-    )
-    if status:
+    if os.path.exists(out):
+        return utils.ef_stop('exists', verbose)
+    if not os.path.exists(inf):
+        return utils.ef_stop('not found', verbose)
+
+    status = clients.run_ffmpeg_pref(inf, out, timeout=14400, commit=commit)
+    status = utils.ef_status(status, output, verbose=verbose, **kwargs)
+
+    if status == 'succeed':
         converted += 1
     return status
 
