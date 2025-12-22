@@ -24,7 +24,10 @@ def run_subproc(cmd, quiet=True, pipe=False, timeout_sec=1 * 60 * 60):
         try:
             timer.start()
             stdout, stderr = proc.communicate()
-            full_output = stdout + stderr
+            if stderr and stdout:
+                full_output = stdout + stderr
+            else:
+                full_output = None
         except FileNotFoundError:
             raise errors.Error('executable not found')
         except Exception as exc:

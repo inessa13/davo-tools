@@ -262,6 +262,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
         cmd.set_defaults(func=lambda namespace: helpers.command_clips_check_web(
             root=namespace.path,
             recursive=namespace.recursive,
+            silent=namespace.silent,
         ))
 
     if not commands or 'iphone-clean-live' in commands:

@@ -10,13 +10,14 @@ from davo import constants, errors
 logger = logging.getLogger(__name__)
 
 
-def iter_files(root_path, recursive=False, exclude=()):
+def iter_files(root_path, recursive=False, exclude=(), depth=None):
     """
     Iterate file in path.
 
     :param str root_path:
     :param bool recursive:
     :param tuple exclude:
+    :param int depth:
 
     :rtype: Iterator
     """
@@ -35,7 +36,13 @@ def iter_files(root_path, recursive=False, exclude=()):
 
     if os.path.isdir(root_path):
         if recursive:
-            for dir_path, __, file_names in os.walk(root_path):
+            for dir_path, dirs, file_names in os.walk(root_path):
+                if depth is not None:
+                    depth_ = dir_path.count(os.sep) - root_path.count(os.sep) + 1
+                    if depth < depth_:
+                        dirs.clear()
+                        continue
+
                 for file in file_names:
                     path = _check(dir_path, file)
                     if path is None:

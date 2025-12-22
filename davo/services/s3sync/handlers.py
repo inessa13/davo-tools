@@ -84,7 +84,12 @@ def on_diff(namespace, print_details=True):
     path = os.path.abspath(namespace.path)
 
     src_files = []
-    it = utils.iter_local_path(path, namespace.recursive, conf.get('IGNORE'))
+    it = utils.iter_local_path(
+        path=path,
+        recursive=namespace.recursive,
+        exclude=conf.get('IGNORE'),
+        depth=namespace.depth,
+    )
     for file_path in it:
         if not os.path.isfile(file_path):
             continue
@@ -114,7 +119,9 @@ def on_diff(namespace, print_details=True):
     ls_remote = utils.iter_remote_path(
         bucket, path,
         recursive=namespace.recursive,
-        cached=not namespace.no_cache)
+        cached=not namespace.no_cache,
+        depth=namespace.depth,
+    )
 
     for file_ in ls_remote:
         if not utils.check_file_type(file_.name, namespace.file_types):

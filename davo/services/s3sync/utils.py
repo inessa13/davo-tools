@@ -62,16 +62,17 @@ def file_path(path):
     return file_path_info(path)[0]
 
 
-def iter_local_path(path, recursive=False, exclude=()):
+def iter_local_path(path, recursive=False, exclude=(), depth=None):
     yield from utils.path.iter_files(
         path,
         recursive=recursive,
         exclude=exclude,
+        depth=depth,
     )
 
 
 def iter_remote_path(
-    bucket, path, current_root=None, recursive=False, cached=False,
+    bucket, path, current_root=None, recursive=False, cached=False, depth=None,
 ):
     local_path, key = file_path_info(
         path,
@@ -82,6 +83,8 @@ def iter_remote_path(
         key += '/'
 
     params = {}
+    if depth is not None:
+        params['depth'] = depth
     if not recursive:
         params['delimiter'] = '/'
 
@@ -132,15 +135,17 @@ class S3KeyCached:
         return self._key().generate_url(expires_in=ttl)
 
 
-def _iter_remote_cache(bucket, prefix=None, delimiter=None):
-    for data in cache.cache.select(prefix=prefix, delimiter=delimiter):
+def _iter_remote_cache(bucket, prefix=None, delimiter=None, depth=None):
+    for data in cache.cache.select(prefix=prefix, delimiter=delimiter, depth=depth):
         yield S3KeyCached(bucket=bucket, **data)
 
 
-def _iter_remote(bucket, **params):
+def _iter_remote(bucket, depth=None, **params):
     for key in bucket.list(**params):
         if (not isinstance(key, boto.s3.key.Key)
                 or key.name[-1] == '/'):
+            continue
+        if depth and depth < key.name.count('/'):
             continue
         yield key
 

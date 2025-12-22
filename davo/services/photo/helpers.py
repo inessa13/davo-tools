@@ -277,7 +277,7 @@ def command_clips_split(inf, output, points, ext=None, commit=False, verbose=Fal
             file_status = False
         status = utils.ef_status(status, output, **kwargs)
         utils.ef_log_task_end(output, inf, status, _t, **kwargs)
-    return utils.ef_status(file_status, output, **kwargs)
+    return utils.ef_status(file_status, output, commit=commit, verbose=verbose, **kwargs)
 
 
 @utils.each_file(elt=True)

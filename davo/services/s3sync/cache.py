@@ -59,7 +59,7 @@ class Cache:
         finally:
             self._lock.release()
 
-    def select(self, prefix=None, delimiter=None):
+    def select(self, prefix=None, delimiter=None, depth=None):
         cur = self.conn.cursor()
 
         query = ' WHERE 1=1'
@@ -75,6 +75,8 @@ class Cache:
 
         for line in cur.execute(QUERY_FILTER + query).fetchall():
             name, size, last_modified, etag = line
+            if depth and depth < name.count('/'):
+                continue
             yield {
                 'name': name,
                 'size': size,
