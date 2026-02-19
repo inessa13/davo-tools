@@ -367,7 +367,96 @@ def init_parser(parser=None, subparsers=None, commands=()):
             commit=namespace.commit,
         ))
 
+    if not commands or 'pdf' in commands:
+        init_parser_pdf(parser, subparsers, prefix='pdf-', commands=(
+            'merge',
+            'rotate',
+            'delete',
+        ))
+
     return parser, subparsers
+
+
+def init_parser_pdf(parser=None, subparsers=None, prefix='', commands=()):
+    if subparsers is None:
+        if parser is None:
+            parser = argparse.ArgumentParser()
+            parser.add_argument(
+                '-V', '--version',
+                action='version',
+                version='%(prog)s ' + davo.version.__version__,
+                help='show version and exit')
+        subparsers = parser.add_subparsers(title='list of commands')
+
+    p_root = argparse.ArgumentParser(add_help=False)
+    p_root.add_argument('path', nargs='?', default=os.getcwd())
+    p_verbose = argparse.ArgumentParser(add_help=False)
+    p_verbose.add_argument('-v', '--verbose', action='store_true')
+    p_RV = [p_root, p_verbose]
+
+    if not commands or 'merge' in commands:
+        cmd = subparsers.add_parser(
+            '{}merge'.format(prefix),
+            parents=p_RV,
+            help='merge pdf files (PyMuPDF)')
+        cmd.add_argument('-o', '--out', action='store')
+        cmd.add_argument('-i', '--inf', nargs='+')
+        cmd.set_defaults(func=lambda namespace: helpers.command_pdf_merge(  # noqa
+            root=namespace.path,
+            out=namespace.out,
+            inf=namespace.inf,
+            verbose=namespace.verbose,
+        ))
+
+    if not commands or 'rotate' in commands:
+        cmd = subparsers.add_parser(
+            '{}rotate'.format(prefix),
+            parents=p_RV,
+            help='pdf: rotate pages (PyMuPDF)')
+        cmd.add_argument('-o', '--out', action='store')
+        cmd.add_argument('-i', '--inf', action='store')
+        cmd.add_argument(
+            '-d', '--dir', action='store', choices=('left', 'right'),
+            default='right')
+        cmd.set_defaults(func=lambda namespace: helpers.command_pdf_rotate(  # noqa
+            root=namespace.path,
+            out=namespace.out,
+            inf=namespace.inf,
+            direction=namespace.dir,
+            verbose=namespace.verbose,
+        ))
+
+    if not commands or 'delete' in commands:
+        cmd = subparsers.add_parser(
+            '{}delete'.format(prefix), parents=p_RV, help='pdf: delete pages (PyMuPDF)')
+        cmd.add_argument('-o', '--out', action='store')
+        cmd.add_argument('-i', '--inf', action='store')
+        cmd.add_argument(
+            '-p', '--pages', nargs='+', type=int,
+            help='pages to delete, 1-based')
+        cmd.set_defaults(func=lambda namespace: helpers.command_pdf_delete(  # noqa
+            root=namespace.path,
+            out=namespace.out,
+            inf=namespace.inf,
+            pages=namespace.pages,
+            verbose=namespace.verbose,
+        ))
+
+    if not commands or 'split' in commands:
+        cmd = subparsers.add_parser(
+            '{}split'.format(prefix), parents=p_RV, help='pdf: delete pages (PyMuPDF)')
+        cmd.add_argument('-o', '--out', action='store')
+        cmd.add_argument('-i', '--inf', action='store')
+        cmd.add_argument(
+            '-p', '--pages', nargs='+', type=int,
+            help='pages to split, 1-based, first page of block to split')
+        cmd.set_defaults(func=lambda namespace: helpers.command_pdf_split(  # noqa
+            root=namespace.path,
+            out=namespace.out,
+            inf=namespace.inf,
+            pages=namespace.pages,
+            verbose=namespace.verbose,
+        ))
 
 
 def main():

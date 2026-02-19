@@ -31,8 +31,12 @@ def init_parser():
         'recover',
         'downscale',
         'clips',
+        'pdf',
     ))
     services.common.init_parser(cmd, _sub, commands=('compare',))
+
+    cmd = subparsers.add_parser('pdf', help='pdf tools')
+    services.photo.cli.init_parser_pdf(cmd)
 
     cmd = subparsers.add_parser('vpn', help='connect vpn')
     cmd.add_argument('account', nargs='?', action='store')

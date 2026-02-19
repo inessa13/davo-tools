@@ -20,7 +20,7 @@ try:
 except ImportError:
     pass
 
-from . import clients, replace_classes, utils
+from . import clients, pdf, replace_classes, utils
 
 logger = logging.getLogger(__name__)
 
@@ -604,3 +604,65 @@ def command_downscale(
             ssim)
         if commit:
             cv2.imwrite(file_name, downscaled)
+
+
+def command_pdf_merge(
+        root,
+        out: str,
+        inf: list,
+        verbose: bool = False,
+):
+    status = pdf.merge_files(
+        [os.path.join(root, f) for f in inf],
+        os.path.join(root, out),
+        verbose=verbose)
+    status_h = 'prepared' if status else 'failed'
+    logger.info('pdf %s: %s', status_h, out)
+
+
+def command_pdf_rotate(
+        root,
+        out: str,
+        inf: str,
+        direction: str,
+        verbose: bool = False,
+):
+    status = pdf.rotate_pages(
+        os.path.join(root, inf),
+        os.path.join(root, out),
+        direction,
+        verbose=verbose)
+    status_h = 'prepared' if status else 'failed'
+    logger.info('pdf %s: %s', status_h, out)
+
+
+def command_pdf_delete(
+        root,
+        out: str,
+        inf: str,
+        pages: list,
+        verbose: bool = False,
+):
+    status = pdf.delete_pages(
+        os.path.join(root, inf),
+        os.path.join(root, out),
+        pages,
+        verbose=verbose)
+    status_h = 'prepared' if status else 'failed'
+    logger.info('pdf %s: %s', status_h, out)
+
+
+def command_pdf_split(
+        root,
+        out: str,
+        inf: str,
+        pages: list,
+        verbose: bool = False,
+):
+    status = pdf.split_pages(
+        os.path.join(root, inf),
+        os.path.join(root, out),
+        pages,
+        verbose=verbose)
+    status_h = 'prepared' if status else 'failed'
+    logger.info('pdf %s: %s', status_h, out)
