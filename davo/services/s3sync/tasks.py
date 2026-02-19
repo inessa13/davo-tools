@@ -104,9 +104,15 @@ def _upload(key, callback, local_path, cb_num, replace=False):
             rewind=True,
         )
 
+    if replace:
+        stat = os.stat(local_file_path)
+        size = stat.st_size
+    else:
+        size = key.size
+
     cache.cache.update(key.name, {
         'name': key.name,
-        'size': key.size,
+        'size': size,
         'last_modified': datetime.datetime.utcnow().strftime(
             '%Y-%m-%dT%H:%M:%S.000Z'),
         'etag': key.etag,

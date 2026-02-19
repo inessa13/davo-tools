@@ -12,7 +12,7 @@ from davo import errors, settings
 
 logger = logging.getLogger(__name__)
 
-_P_KP_STR = r'kp:(?P<key>[0-9a-zA-Z /]+)(:(?P<attr>username|password|url))?$'
+_P_KP_STR = r'kp:(?P<key>.*):(?P<attr>username|password|url)$'
 _P_KR_STR = r'kr:((?P<service>.+):)?(?P<key>.+)$'
 
 
@@ -30,7 +30,7 @@ def load_yaml_config(conf_path):
     conf_root = os.path.dirname(conf_path)
 
     if not conf_path or not os.path.exists(conf_path):
-        raise errors.Error('Missing vpn config: {}'.format(conf_path))
+        raise errors.Error('Missing config: {}'.format(conf_path))
 
     with open(conf_path, 'rt') as file:
         conf = yaml.safe_load(file)
@@ -64,6 +64,23 @@ def fix_config_paths(conf, root=None):
     if isinstance(conf, str):
         if conf.startswith('./'):
             return os.path.join(root['root'], conf[2:])
+
+    return conf
+
+
+def mask_config_secrets(conf, key=None):
+    if isinstance(conf, dict):
+        return {
+            key_: mask_config_secrets(value, key=key_)
+            for key_, value in conf.items()
+        }
+
+    if isinstance(conf, list):
+        return [mask_config_secrets(value, key=key) for value in conf]
+
+    if isinstance(conf, str):
+        if key in ('ACCESS_KEY', 'SECRET_KEY'):
+            return '{}***{}'.format(conf[0], conf[-1])
 
     return conf
 

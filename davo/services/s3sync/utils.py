@@ -62,12 +62,17 @@ def file_path(path):
     return file_path_info(path)[0]
 
 
-def iter_local_path(path, recursive=False):
-    yield from utils.path.iter_files(path, recursive=recursive)
+def iter_local_path(path, recursive=False, exclude=(), depth=None):
+    yield from utils.path.iter_files(
+        path,
+        recursive=recursive,
+        exclude=exclude,
+        depth=depth,
+    )
 
 
 def iter_remote_path(
-    bucket, path, current_root=None, recursive=False, cached=False,
+    bucket, path, current_root=None, recursive=False, cached=False, depth=None,
 ):
     local_path, key = file_path_info(
         path,
@@ -78,6 +83,8 @@ def iter_remote_path(
         key += '/'
 
     params = {}
+    if depth is not None:
+        params['depth'] = depth
     if not recursive:
         params['delimiter'] = '/'
 
@@ -124,16 +131,21 @@ class S3KeyCached:
     def set_contents_from_file(self, *args, **kwargs):
         return self._key().set_contents_from_file(*args, **kwargs)
 
+    def url(self, ttl=3600):
+        return self._key().generate_url(expires_in=ttl)
 
-def _iter_remote_cache(bucket, prefix=None, delimiter=None):
-    for data in cache.cache.select(prefix=prefix, delimiter=delimiter):
+
+def _iter_remote_cache(bucket, prefix=None, delimiter=None, depth=None):
+    for data in cache.cache.select(prefix=prefix, delimiter=delimiter, depth=depth):
         yield S3KeyCached(bucket=bucket, **data)
 
 
-def _iter_remote(bucket, **params):
+def _iter_remote(bucket, depth=None, **params):
     for key in bucket.list(**params):
         if (not isinstance(key, boto.s3.key.Key)
                 or key.name[-1] == '/'):
+            continue
+        if depth and depth < key.name.count('/'):
             continue
         yield key
 
@@ -207,18 +219,8 @@ def memoize(func):
 
 @memoize
 def find_project_root():
-    root = get_cwd()
-    while root:
-        path = os.path.join(root, settings.CONFIG_PATH_S3SYNC_LOCAL)
-        if os.path.exists(path):
-            return root
-
-        # TODO: fix for windows
-        if root == '/':
-            return None
-
-        root = os.path.dirname(root)
-    return None
+    return davo.utils.path.find_config_root(
+        get_cwd(), settings.CONFIG_PATH_S3SYNC_LOCAL)
 
 
 @memoize
@@ -270,6 +272,14 @@ def connect_host(region=boto.s3.connection.NoHostProvided):
     )
 
 
+def connect_host_bucket(region_host, bucket_name):
+    conn = connect_host(region_host)
+    if conn is None:
+        raise davo.errors.UserError('Connection failed')
+
+    return conn.lookup(bucket_name, validate=True)
+
+
 def connect_bucket(name=None, regions=None):
     if name is None:
         name = conf.get('BUCKET')
@@ -309,11 +319,7 @@ def connect_bucket(name=None, regions=None):
 
 
 def _connect_bucket(name, region_host):
-    conn = connect_host(region_host)
-    if conn is None:
-        return None
-
-    return conn.lookup(name, validate=True)
+    return connect_host_bucket(region_host, name)
 
 
 def output_finish(output, string):

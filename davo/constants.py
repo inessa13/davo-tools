@@ -38,3 +38,5 @@ STATE_CHOICES = (
     (STATE_MARK_DELETE, 'marked for delete (internal)'),
 )
 STATE_CHOICES_DICT = dict(STATE_CHOICES)
+
+LOCAL_CONF_PATH = '.dtconf'

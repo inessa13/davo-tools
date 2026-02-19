@@ -1,9 +1,12 @@
+import logging
 import os
 
 import davo.utils
 from davo import settings
 
 from . import utils
+
+logger = logging.getLogger(__name__)
 
 _CONFIG = {
     'KEY_PATTERN': '{name} {storage} {size} {modified} {owner} {md5}',
@@ -26,6 +29,9 @@ _CONFIG = {
     'LOCAL_CONFIG': None,
     'ALLOWED_EXTENSIONS': (),
     'CACHE_FILE_NAME': '.s3cache.db',
+    'IGNORE': (),
+    'LOAD_SECRETS': None,
+    'GLOBAL_CONFIG': '~/Dropbox/etc/s3sync.yaml'
 }
 
 
@@ -50,22 +56,10 @@ def init(
 
     mark_init()
 
-    config = load_config(
-        global_root,
-        load_secrets=True,
-        mask=False,
-        keepass_path=keepass_path,
-        keepass_pwd=keepass_pwd,
-    )
-    update(config)
-
     if local_root or (local_root := utils.find_project_root()):
-        _CONFIG['PROJECT_ROOT'] = local_root
-        _CONFIG['LOCAL_CONFIG'] = os.path.join(
-            _CONFIG['PROJECT_ROOT'], settings.CONFIG_PATH_S3SYNC_LOCAL)
-        config = load_config(
-            _CONFIG['LOCAL_CONFIG'],
-            load_secrets=True,
+        config = load_config_tree(
+            local_root,
+            global_root,
             mask=False,
             keepass_path=keepass_path,
             keepass_pwd=keepass_pwd,
@@ -86,12 +80,43 @@ def get(key, default=None):
 
 
 def load_config(
-    conf_path, load_secrets=False, mask=True, keepass_path=None,
+    conf_path, load_secrets=None, mask=True, keepass_path=None,
     keepass_pwd=None,
 ):
     config = davo.utils.conf.load_yaml_config(conf_path)
     config = {key: value for key, value in config.items() if key in _CONFIG}
+    if load_secrets is None:
+        load_secrets = config.get('LOAD_SECRETS', True)
     if load_secrets:
         kp = davo.utils.conf.load_kp(path=keepass_path, password=keepass_pwd)
         config = davo.utils.conf.fix_config_secrets(kp, config, mask=mask)
+    elif mask:
+        config = davo.utils.conf.mask_config_secrets(config)
+    return config
+
+
+def load_config_tree(local_root, global_root, **kwargs):
+    config = {
+        'PROJECT_ROOT': local_root,
+        'LOCAL_CONFIG': os.path.join(
+            local_root, settings.CONFIG_PATH_S3SYNC_LOCAL),
+    }
+
+    config_l = load_config(
+        config['LOCAL_CONFIG'],
+        load_secrets=None,
+        **kwargs)
+    global_root = config_l.get('GLOBAL_CONFIG', global_root)
+    if '~' in global_root:
+        global_root = os.path.expanduser(global_root)
+    if os.path.exists(global_root):
+        config_g = load_config(
+            global_root,
+            load_secrets=config_l.get('LOAD_SECRETS', True),
+            **kwargs)
+        config.update(config_g)
+    else:
+        logger.warning('Global config `%s` is missing', global_root)
+
+    config.update(config_l)
     return config

@@ -79,6 +79,8 @@ def init_parser(parser=None, subparsers=None, commands=()):
     common_diff.add_argument(
         '-b', '--brief', action='store_true', help='brief diff')
     common_diff.add_argument(
+        '-d', '--depth', action='store', type=int, help='lookup depth')
+    common_diff.add_argument(
         '-i', '--ignore-case',
         action='store_true', help='ignore file path case')
     common_diff.add_argument(

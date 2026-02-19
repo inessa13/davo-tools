@@ -3,19 +3,21 @@ import hashlib
 import logging
 import os
 import re
+import shutil
 
 from davo import constants, errors
 
 logger = logging.getLogger(__name__)
 
 
-def iter_files(root_path, recursive=False, exclude=()):
+def iter_files(root_path, recursive=False, exclude=(), depth=None):
     """
     Iterate file in path.
 
     :param str root_path:
     :param bool recursive:
     :param tuple exclude:
+    :param int depth:
 
     :rtype: Iterator
     """
@@ -34,7 +36,13 @@ def iter_files(root_path, recursive=False, exclude=()):
 
     if os.path.isdir(root_path):
         if recursive:
-            for dir_path, __, file_names in os.walk(root_path):
+            for dir_path, dirs, file_names in os.walk(root_path):
+                if depth is not None:
+                    depth_ = dir_path.count(os.sep) - root_path.count(os.sep) + 1
+                    if depth < depth_:
+                        dirs.clear()
+                        continue
+
                 for file in file_names:
                     path = _check(dir_path, file)
                     if path is None:
@@ -58,7 +66,7 @@ def ensure(path, commit=False):
     """
     Ensure path exists.
 
-    :param str path:
+    :param Union[str] path:
     :param bool commit:
     """
     if '/' not in path:
@@ -145,7 +153,7 @@ def compare_dirs(
 
     files_dest = dict()
     for options in iter_file_options(
-            root2, recursive, ignore_case, check_size):
+            root2, recursive, ignore_case, check_size, exclude):
         options['state'] = constants.STATE_LOCAL_MISSING
         files_dest[options['key']] = options
 
@@ -190,6 +198,7 @@ def compare(
         if key_src in files_dest:
             equal = True
             dest = files_dest[key_src]
+            dest['path_source'] = source['path']
 
             if check_size:
                 if source['size'] != dest['size']:
@@ -215,11 +224,13 @@ def compare(
 
         elif (constants.STATE_LOCAL_NEW in states
               or constants.STATE_RENAMED in states):
-            files_dest[key_src] = source
+            files_dest[key_src] = dest = dict(source.items())
+            dest['path_source'] = dest.pop('path')
 
     for key, dest in files_dest.items():
         if not dest.get('state'):
             dest['state'] = constants.STATE_LOCAL_NEW
+            dest.setdefault('path_source', '')
 
     # find renames
     if constants.STATE_RENAMED in states:
@@ -243,7 +254,8 @@ def compare(
                 data_missing.update({
                     'state': constants.STATE_RENAMED,
                     'new_options': data_new,
-                    'comment': 'new key: {}'.format(data_new['key'])
+                    'comment': 'new key: {}'.format(data_new['key']),
+                    'path_source': data_new.get('path_source'),
                 })
                 # mark for remove from result
                 data_new['state'] = constants.STATE_MARK_DELETE
@@ -268,7 +280,10 @@ def count_diff(files, verbose=False):
     """
     if not files:
         if verbose:
-            logger.info('%d differences', len(files))
+            if files:
+                logger.info('%d differences', len(files))
+            else:
+                logger.info('no differences')
         return ''
 
     counter = collections.Counter()
@@ -295,7 +310,7 @@ def split3(filename):
     root, basename = os.path.split(filename)
 
     if '.' not in basename:
-        return '', basename
+        return root, '', basename
 
     return root, *basename.rsplit('.', 1)
 
@@ -319,3 +334,106 @@ def get_filename_no_extension(filename, lower=False):
         value = value.lower()
 
     return value
+
+
+def sync_file(path_dest, root_source, root_dest, safe, commit):
+    """
+    Sync file between paths.
+
+    :param str path_dest:
+    :param str root_source:
+    :param str root_dest:
+    :param bool safe: safe == without deleting
+    :param bool commit: false = dry run
+    """
+    source = path_dest.replace(root_dest, root_source)
+    source_dir = os.path.dirname(source)
+    if commit:
+        if not os.path.exists(source_dir):
+            os.makedirs(source_dir)
+
+        if os.path.exists(source):
+            # protect from overwriting
+            if safe:
+                return 0
+            else:
+                try:
+                    os.remove(source)
+                except OSError:
+                    return 0
+        try:
+            shutil.copy2(path_dest, source, follow_symlinks=False)
+            return 1
+        except OSError:
+            return 0
+    else:
+        if not os.path.exists(source_dir):
+            print('mkdir -p {}'.format(source_dir))
+
+        if os.path.exists(source):
+            if safe:
+                print('# (overriding will be skipped without --force) cp {} {}'.format(path_dest, source))
+            else:
+                print('rm {}'.format(source))
+                print('cp {} {}'.format(path_dest, source))
+        else:
+            print('cp {} {}'.format(path_dest, source))
+
+        return 0
+
+
+def sync_file_rename(path_dest, path_source, root_dest, root_source, commit):
+    """
+    Sync file between paths with renaming.
+
+    :param str path_dest:
+    :param str root_source:
+    :param str root_dest:
+    :param str path_source:
+    :param bool commit: false = dry run
+    """
+    dest = path_dest.replace(root_dest, root_source)
+    dest_dir = os.path.dirname(dest)
+    source = os.path.join(root_source, path_source)
+    if commit:
+        if not os.path.exists(dest_dir):
+            os.makedirs(dest_dir)
+        try:
+            os.rename(source, dest)
+            return 1
+        except OSError:
+            return 0
+    else:
+        if not os.path.exists(dest_dir):
+            print('mkdir -p {}'.format(dest_dir))
+        print('mv {} {}'.format(source, dest))
+        return 0
+
+
+def sync_file_remove(path_source, safe, commit):
+    if safe:
+        return 0
+
+    if commit:
+        try:
+            os.remove(path_source)
+            return 1
+        except OSError:
+            return 0
+    else:
+        print('rm {}'.format(path_source))
+        return 0
+
+
+def find_config_root(root, config_name):
+    while root:
+        path = os.path.join(root, config_name)
+        if os.path.exists(path):
+            return root
+
+        # TODO: fix for windows
+        if root == '/':
+            return None
+
+        root = os.path.dirname(root)
+    return None

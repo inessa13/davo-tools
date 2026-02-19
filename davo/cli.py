@@ -24,11 +24,19 @@ def init_parser():
     cmd = subparsers.add_parser('file', help='file tools')
     cmd, _sub = services.photo.cli.init_parser(cmd, commands=(
         'convert',
+        'thumbs',
         'rename',
         'iphone-clean-live',
         'search-duplicates',
+        'recover',
+        'downscale',
+        'clips',
+        'pdf',
     ))
     services.common.init_parser(cmd, _sub, commands=('compare',))
+
+    cmd = subparsers.add_parser('pdf', help='pdf tools')
+    services.photo.cli.init_parser_pdf(cmd)
 
     cmd = subparsers.add_parser('vpn', help='connect vpn')
     cmd.add_argument('account', nargs='?', action='store')
