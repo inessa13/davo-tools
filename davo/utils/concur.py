@@ -24,7 +24,7 @@ def run_subproc(cmd, quiet=True, pipe=False, timeout_sec=1 * 60 * 60):
         try:
             timer.start()
             stdout, stderr = proc.communicate()
-            if stderr and stdout:
+            if pipe:
                 full_output = stdout + stderr
             else:
                 full_output = None

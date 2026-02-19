@@ -73,10 +73,18 @@ def run_ffmpeg_pref(inf, out, **kwargs):
 
 
 def check_ffmpeg_faststart(path):
+    ext = os.path.splitext(path)[1]
+    if ext in {'.m4a', '.mp3', '.wav'}:
+        stream = 'a'
+    else:
+        stream = 'v'
+
     cmd = [
-        '/usr/bin/ffprobe', '-v', 'error', '-show_entries',
-        'format=start_time', '-select_streams', 'v', '-show_entries',
-        'packet=pos', '-read_intervals', '%+#1', path,
+        '/usr/bin/ffprobe', '-v', 'error',
+        '-show_entries', 'format=start_time',
+        '-select_streams', stream,
+        '-show_entries', 'packet=pos',
+        '-read_intervals', '%+#1', path,
     ]
     output = concur.run_subproc(cmd, quiet=False, pipe=True)
     if m := re.search(r'pos=(\d+)', output.decode()):
