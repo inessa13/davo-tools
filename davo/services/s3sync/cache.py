@@ -64,17 +64,24 @@ class Cache:
         cur = self.conn.cursor()
 
         query = " WHERE 1=1"
+        params = []
         if prefix:
+            is_dir_prefix = prefix.endswith("/")
             prefix = prefix.strip("/")
-            query += ' and name like "{}/%"'.format(prefix)
-            prefix_level = len(prefix.split("/")) + 1
+            query += " and (name=? or name like ?)"
+            params.extend((prefix, "{}/%".format(prefix)))
+
+            prefix_level = len(prefix.split("/"))
+            if is_dir_prefix:
+                prefix_level += 1
         else:
             prefix_level = 1
 
         if delimiter:
-            query += " and level={}".format(prefix_level)
+            query += " and (name=? or level=?)"
+            params.extend((prefix, prefix_level))
 
-        for line in cur.execute(QUERY_FILTER + query).fetchall():
+        for line in cur.execute(QUERY_FILTER + query, params).fetchall():
             name, size, last_modified, etag = line
             if depth and depth < name.count("/"):
                 continue

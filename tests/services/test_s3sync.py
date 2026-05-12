@@ -1,6 +1,6 @@
 import os
 
-from davo.services.s3sync import cli, conf, utils
+from davo.services.s3sync import cache, cli, conf, utils
 
 
 def test_cli_command_with_mapping():
@@ -105,3 +105,76 @@ def test_load_config_tree_without_global_file(monkeypatch):
     cfg = conf.load_config_tree(local_root, "/unused.yaml")
 
     assert cfg["BUCKET"] == "local"
+
+
+def test_cache_select_exact_file_prefix_with_delimiter(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        conf,
+        "_CONFIG",
+        {
+            **conf._CONFIG,
+            "PROJECT_ROOT": str(tmp_path),
+            "CACHE_FILE_NAME": ".s3cache-test.db",
+        },
+    )
+
+    db = cache.Cache()
+    db.init()
+    try:
+        db.update(
+            "AGENTS.md",
+            {
+                "name": "AGENTS.md",
+                "size": 1,
+                "last_modified": "2026-05-13T00:00:00.000Z",
+                "etag": "e1",
+            },
+        )
+        db.flush()
+
+        rows = list(db.select(prefix="AGENTS.md", delimiter="/"))
+    finally:
+        db.close()
+
+    assert [row["name"] for row in rows] == ["AGENTS.md"]
+
+
+def test_cache_select_directory_prefix_with_delimiter(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        conf,
+        "_CONFIG",
+        {
+            **conf._CONFIG,
+            "PROJECT_ROOT": str(tmp_path),
+            "CACHE_FILE_NAME": ".s3cache-test.db",
+        },
+    )
+
+    db = cache.Cache()
+    db.init()
+    try:
+        db.update(
+            "docs/one.md",
+            {
+                "name": "docs/one.md",
+                "size": 1,
+                "last_modified": "2026-05-13T00:00:00.000Z",
+                "etag": "e1",
+            },
+        )
+        db.update(
+            "docs/sub/two.md",
+            {
+                "name": "docs/sub/two.md",
+                "size": 1,
+                "last_modified": "2026-05-13T00:00:00.000Z",
+                "etag": "e2",
+            },
+        )
+        db.flush()
+
+        rows = list(db.select(prefix="docs/", delimiter="/"))
+    finally:
+        db.close()
+
+    assert [row["name"] for row in rows] == ["docs/one.md"]

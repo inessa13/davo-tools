@@ -4,6 +4,7 @@ Single index of **order and priority** for davo-tools. Process: [`docs/shared/do
 
 ## Now
 
+- [Bug: s3 single-file path remote scan returns zero objects](specs/20260513-bug-s3-file-path-remote-empty.md) — `davo/services/s3sync/`
 - [Bug: s3sync replace-upload cache not updating](specs/20260512-bug-replace-upload-cache.md) — `davo/services/s3sync/`
 
 ## Next
