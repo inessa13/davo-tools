@@ -6,5 +6,4 @@ Per-change specifications. Naming and front matter: [`docs/shared/docs/conventio
 
 | Spec | Status |
 | --- | --- |
-| [`20260513-bug-s3-file-path-remote-empty.md`](20260513-bug-s3-file-path-remote-empty.md) | draft |
 | [`20260512-bug-replace-upload-cache.md`](20260512-bug-replace-upload-cache.md) | draft |
