@@ -10,7 +10,7 @@ from . import cache, conf, utils
 
 
 class _Task:
-    done = 'finished'
+    done = "finished"
 
     def __init__(self):
         self.bucket = None
@@ -56,24 +56,24 @@ class _Task:
             speed_human = davo.utils.format.humanize_speed(speed_value)
         else:
             speed_value = 0
-            speed_human = 'n\\a'
+            speed_human = "n\\a"
 
         if self.show_estimate and speed_value and size:
             estimate_value = size * (100 - progress) / speed_value
             estimate = str(datetime.timedelta(seconds=estimate_value))
         else:
-            estimate = ''
+            estimate = ""
 
         self.worker.cb_queue.put((self.name, progress, uploaded))
 
-        line = conf.get('UPLOAD_FORMAT').format(
-            progress='=' * progress_len,
-            left=' ' * (len_full - progress_len),
+        line = conf.get("UPLOAD_FORMAT").format(
+            progress="=" * progress_len,
+            left=" " * (len_full - progress_len),
             progress_percent=progress,
             speed=speed_human,
             estimate=estimate,
-            elapsed='',
-            info='{} {}'.format(self, self.name)
+            elapsed="",
+            info="{} {}".format(self, self.name),
         )
         self.output_edit(line)
 
@@ -84,7 +84,7 @@ class _Task:
             print(line)
 
     def output_finish(self):
-        line = '{} {}'.format(self.done, self.name)
+        line = "{} {}".format(self.done, self.name)
         if not self.worker:
             print(line)
             return
@@ -95,7 +95,7 @@ class _Task:
 def _upload(key, callback, local_path, cb_num, replace=False):
     local_file_path = utils.file_path(local_path)
 
-    with open(local_file_path, 'rb') as local_file:
+    with open(local_file_path, "rb") as local_file:
         key.set_contents_from_file(
             local_file,
             replace=replace,
@@ -110,75 +110,80 @@ def _upload(key, callback, local_path, cb_num, replace=False):
     else:
         size = key.size
 
-    cache.cache.update(key.name, {
-        'name': key.name,
-        'size': size,
-        'last_modified': datetime.datetime.utcnow().strftime(
-            '%Y-%m-%dT%H:%M:%S.000Z'),
-        'etag': key.etag,
-    })
+    cache.cache.update(
+        key.name,
+        {
+            "name": key.name,
+            "size": size,
+            "last_modified": datetime.datetime.utcnow().strftime(
+                "%Y-%m-%dT%H:%M:%S.000Z"
+            ),
+            "etag": key.etag,
+        },
+    )
     cache.cache.flush()
 
 
 class Upload(_Task):
-    done = 'uploaded'
+    done = "uploaded"
 
     def __str__(self):
-        return 'upload'
+        return "upload"
 
     def size(self):
-        return self.data.get('local_size') or 0
+        return self.data.get("local_size") or 0
 
     def handler(self):
         _upload(
             boto.s3.key.Key(bucket=self.bucket, name=self.name),
             self.progress,
-            self.data['local_path'],
-            conf.get('UPLOAD_CB_NUM'),
+            self.data["local_path"],
+            conf.get("UPLOAD_CB_NUM"),
         )
-        self.data['comment'] = ['uploaded']
+        self.data["comment"] = ["uploaded"]
 
 
 class ReplaceUpload(_Task):
-    done = 'uploaded (replace)'
+    done = "uploaded (replace)"
 
     def __str__(self):
-        return 'upload_replace'
+        return "upload_replace"
 
     def size(self):
-        return self.data.get('local_size') or 0
+        return self.data.get("local_size") or 0
 
     def handler(self):
         _upload(
-            self.data['key'],
+            self.data["key"],
             self.progress,
-            self.data['local_path'],
-            conf.get('UPLOAD_CB_NUM'),
+            self.data["local_path"],
+            conf.get("UPLOAD_CB_NUM"),
             replace=True,
         )
-        self.data['comment'] = ['uploaded(replaced)']
+        self.data["comment"] = ["uploaded(replaced)"]
 
 
 class DeleteRemote(_Task):
-    done = 'deleted (remote)'
+    done = "deleted (remote)"
 
     def __str__(self):
-        return 'delete_remote'
+        return "delete_remote"
 
     def handler(self):
-        self.data['key'].delete()
-        self.data['comment'] = ['deleted from s3']
+        self.data["key"].delete()
+        self.data["comment"] = ["deleted from s3"]
 
 
 class RenameRemote(_Task):
-    done = 'renamed (remote)'
+    done = "renamed (remote)"
 
     def __str__(self):
-        return 'rename_remote'
+        return "rename_remote"
 
     def handler(self):
-        new_key = self.data['key'].copy(
-            conf.get('BUCKET'), self.data['local_name'],
+        new_key = self.data["key"].copy(
+            conf.get("BUCKET"),
+            self.data["local_name"],
             metadata=None,
             preserve_acl=True,
             encrypt_key=False,
@@ -186,44 +191,45 @@ class RenameRemote(_Task):
         )
 
         if new_key:
-            self.data['key'].delete()
-            self.data['comment'] = ['renamed']
+            self.data["key"].delete()
+            self.data["comment"] = ["renamed"]
         else:
-            raise Exception('s3 key copy failed')
+            raise Exception("s3 key copy failed")
 
 
 class RenameLocal(_Task):
-    done = 'renamed (local)'
+    done = "renamed (local)"
 
     def __str__(self):
-        return 'rename_local'
+        return "rename_local"
 
     def handler(self):
         dest_name = os.path.join(
-            conf.get('PROJECT_ROOT'), self.data['key'].name)
+            conf.get("PROJECT_ROOT"), self.data["key"].name
+        )
 
         davo.utils.path.ensure(dest_name, commit=True)
 
         os.rename(
-            os.path.join(conf.get('PROJECT_ROOT'), self.data['local_name']),
+            os.path.join(conf.get("PROJECT_ROOT"), self.data["local_name"]),
             dest_name,
         )
-        self.data['comment'] = ['renamed']
+        self.data["comment"] = ["renamed"]
 
 
 class Download(_Task):
-    done = 'downloaded'
+    done = "downloaded"
 
     def __str__(self):
-        return 'download'
+        return "download"
 
     def size(self):
-        return self.data.get('size') or 0
+        return self.data.get("size") or 0
 
     def handler(self):
-        file_path = self.data['local_path']
+        file_path = self.data["local_path"]
         davo.utils.path.ensure(file_path, commit=True)
-        self.data['key'].get_contents_to_filename(
+        self.data["key"].get_contents_to_filename(
             file_path,
             cb=self.progress,
             num_cb=20,
@@ -231,12 +237,12 @@ class Download(_Task):
 
 
 class DeleteLocal(_Task):
-    done = 'deleted (local)'
+    done = "deleted (local)"
 
     def __str__(self):
-        return 'delete_local'
+        return "delete_local"
 
     def handler(self):
         self.progress(0, 1)
-        os.remove(self.data['local_path'])
+        os.remove(self.data["local_path"])
         self.progress(1, 1)

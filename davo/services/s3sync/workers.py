@@ -36,7 +36,7 @@ class _Worker(threading.Thread):
             except Exception as exc:
                 utils.output_finish(
                     self.output,
-                    'Unhandled error {}: {}'.format(type(exc).__name__, exc),
+                    "Unhandled error {}: {}".format(type(exc).__name__, exc),
                 )
 
             finally:
@@ -45,14 +45,16 @@ class _Worker(threading.Thread):
     def speed(self, current):
         if not self.speed_list:
             return current
-        return (sum(
-            self.speed_list) + current) / float(len(self.speed_list) + 1)
+        return (sum(self.speed_list) + current) / float(
+            len(self.speed_list) + 1
+        )
 
 
 class _System(threading.Thread):
     """
     System thread. Collect result from workers and draw output.
     """
+
     def __init__(self, index, cb_queue, output, tasks_total, size_total):
         super().__init__()
         self.daemon = True
@@ -77,25 +79,30 @@ class _System(threading.Thread):
             except Exception as exc:
                 utils.output_finish(
                     self.output,
-                    'Unhandled error {}: {}'.format(type(exc).__name__, exc),
+                    "Unhandled error {}: {}".format(type(exc).__name__, exc),
                 )
             finally:
                 self.cb_queue.task_done()
 
     def handler_cb(self, name, progress, size):
-        if (progress == 100 and self.tasks_processed_d.get(
-                name, {}).get('progress') != 100):
+        if (
+            progress == 100
+            and self.tasks_processed_d.get(name, {}).get("progress") != 100
+        ):
             self.tasks_processed += 1
 
         self.tasks_processed_d[name] = {
-            'progress': progress,
-            'size': size,
+            "progress": progress,
+            "size": size,
         }
 
         progress = sum(
-            item['progress'] for item in self.tasks_processed_d.values())
+            item["progress"] for item in self.tasks_processed_d.values()
+        )
         progress = float(progress) / self.tasks_total
-        size_all = sum(item['size'] for item in self.tasks_processed_d.values())
+        size_all = sum(
+            item["size"] for item in self.tasks_processed_d.values()
+        )
 
         len_full = 40
         progress_len = int(progress) * len_full // 100
@@ -104,25 +111,29 @@ class _System(threading.Thread):
         if delta:
             speed = davo.utils.format.humanize_speed(size_all / delta)
         else:
-            speed = 'n\\a'
+            speed = "n\\a"
 
         if size_all:
-            estimate = 'Est: {}'.format(datetime.timedelta(
-                seconds=int(delta * (self.size_total - size_all) / size_all)),
+            estimate = "Est: {}".format(
+                datetime.timedelta(
+                    seconds=int(
+                        delta * (self.size_total - size_all) / size_all
+                    )
+                ),
             )
         else:
-            estimate = 'n\\a'
+            estimate = "n\\a"
 
-        elapsed = 'Elapse: {}'.format(datetime.timedelta(seconds=int(delta)))
+        elapsed = "Elapse: {}".format(datetime.timedelta(seconds=int(delta)))
 
-        self.output[self.index] = conf.get('UPLOAD_FORMAT').format(
-            progress='=' * progress_len,
-            left=' ' * (len_full - progress_len),
+        self.output[self.index] = conf.get("UPLOAD_FORMAT").format(
+            progress="=" * progress_len,
+            left=" " * (len_full - progress_len),
             progress_percent=progress,
             speed=speed,
             estimate=estimate,
             elapsed=elapsed,
-            info='{}/{}'.format(self.tasks_processed, self.tasks_total),
+            info="{}/{}".format(self.tasks_processed, self.tasks_total),
         )
 
 
@@ -154,7 +165,8 @@ class ThreadPool:
                 index=index,
                 task_queue=self.task_queue,
                 cb_queue=self.cb_queue,
-                output=output)
+                output=output,
+            )
             worker.start()
 
     def add_task(self, task):

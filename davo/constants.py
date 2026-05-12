@@ -1,13 +1,13 @@
-STATE_EQUAL = '='
-STATE_LOCAL_NEW = '+'
-STATE_LOCAL_MISSING = '-'
-STATE_LOCAL_NEWER = '>'
-STATE_LOCAL_OLDER = '<'
-STATE_DIFFERENT = '~'
-STATE_RENAMED = 'r'
+STATE_EQUAL = "="
+STATE_LOCAL_NEW = "+"
+STATE_LOCAL_MISSING = "-"
+STATE_LOCAL_NEWER = ">"
+STATE_LOCAL_OLDER = "<"
+STATE_DIFFERENT = "~"
+STATE_RENAMED = "r"
 
-STATE_INVALID_TYPE = 'T'
-STATE_MARK_DELETE = 'D'
+STATE_INVALID_TYPE = "T"
+STATE_MARK_DELETE = "D"
 
 STATES_ERROR = {
     STATE_INVALID_TYPE,
@@ -27,16 +27,16 @@ STATES_DIFF_ALL = STATES_ERROR | STATES_DIFF_VALID
 STATES_ALL = {STATE_EQUAL} | STATES_DIFF_ALL
 
 STATE_CHOICES = (
-    (STATE_EQUAL, 'equal'),
-    (STATE_LOCAL_NEW, 'local is new'),
-    (STATE_LOCAL_MISSING, 'local missing'),
-    (STATE_LOCAL_NEWER, 'local newer'),
-    (STATE_LOCAL_OLDER, 'local older'),
-    (STATE_DIFFERENT, 'different'),
-    (STATE_RENAMED, 'renamed'),
-    (STATE_INVALID_TYPE, 'type not allowed'),
-    (STATE_MARK_DELETE, 'marked for delete (internal)'),
+    (STATE_EQUAL, "equal"),
+    (STATE_LOCAL_NEW, "local is new"),
+    (STATE_LOCAL_MISSING, "local missing"),
+    (STATE_LOCAL_NEWER, "local newer"),
+    (STATE_LOCAL_OLDER, "local older"),
+    (STATE_DIFFERENT, "different"),
+    (STATE_RENAMED, "renamed"),
+    (STATE_INVALID_TYPE, "type not allowed"),
+    (STATE_MARK_DELETE, "marked for delete (internal)"),
 )
 STATE_CHOICES_DICT = dict(STATE_CHOICES)
 
-LOCAL_CONF_PATH = '.dtconf'
+LOCAL_CONF_PATH = ".dtconf"

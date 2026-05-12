@@ -8,13 +8,13 @@ fitz: Any = None
 try:
     import fitz
 except ImportError:
-    logger.warning('PyMuPDF is not installed')
+    logger.warning("PyMuPDF is not installed")
     fitz = None
 
 
 def merge_files(input_files, output_path, verbose=False):
     if fitz is None:
-        raise RuntimeError('PyMuPDF (fitz) is required for PDF rotation')
+        raise RuntimeError("PyMuPDF (fitz) is required for PDF rotation")
 
     # Создаем новый пустой PDF-документ
     result_pdf = fitz.open()
@@ -22,29 +22,30 @@ def merge_files(input_files, output_path, verbose=False):
     for file_path in input_files:
         if not os.path.exists(file_path):
             if verbose:
-                logger.warning('pdf: file not found: %s', file_path)
+                logger.warning("pdf: file not found: %s", file_path)
             continue
 
         ext = os.path.splitext(file_path)[1].lower()
 
-        if ext == '.pdf':
+        if ext == ".pdf":
             # Если это PDF, открываем и добавляем все его страницы
             with fitz.open(file_path) as doc:
                 result_pdf.insert_pdf(doc)
 
-        elif ext in ['.jpg', '.jpeg', '.png', '.bmp']:
-            # Если это картинка, конвертируем её в PDF-байтс и открываем как документ
+        elif ext in [".jpg", ".jpeg", ".png", ".bmp"]:
+            # Если это картинка, конвертируем её в PDF-байты
+            # и открываем как документ.
             img_doc = fitz.open(file_path)
             # Конвертируем в PDF в памяти
             pdf_bytes = img_doc.convert_to_pdf()
             # Открываем полученный PDF из байтов
-            with fitz.open('pdf', pdf_bytes) as temp_img_pdf:
+            with fitz.open("pdf", pdf_bytes) as temp_img_pdf:
                 result_pdf.insert_pdf(temp_img_pdf)
             img_doc.close()
 
         else:
             if verbose:
-                logger.warning('pdf: file not supported: %s', file_path)
+                logger.warning("pdf: file not supported: %s", file_path)
 
     # Сохраняем финальный файл
     success = False
@@ -57,19 +58,20 @@ def merge_files(input_files, output_path, verbose=False):
 
 
 def rotate_pages(
-        input_file: str,
-        output_path: str,
-        direction='clockwise',
-        pages=None,
-        inplace=False,
-        verbose=False,
+    input_file: str,
+    output_path: str,
+    direction="clockwise",
+    pages=None,
+    inplace=False,
+    verbose=False,
 ):
     """
     Rotate pages in a PDF file.
 
     Parameters
     - file_path: path to input PDF file (must exist and be a .pdf)
-    - direction: 'clockwise'|'ccw'|'counterclockwise'|'left'|'right' or an int angle
+    - direction: 'clockwise'|'ccw'|'counterclockwise'|'left'|'right'
+      or an int angle
     - pages: iterable of page indices to rotate. Accepts 0-based indices, but
       will also accept 1-based indices when numbers exceed page_count-1.
       If None, all pages are rotated.
@@ -83,24 +85,24 @@ def rotate_pages(
     """
     # Ensure dependency is available
     if fitz is None:
-        raise RuntimeError('PyMuPDF (fitz) is required for PDF rotation')
+        raise RuntimeError("PyMuPDF (fitz) is required for PDF rotation")
 
     # Basic checks
     if not os.path.exists(input_file):
         if verbose:
-            logger.warning('pdf.rotate: file not found: %s', input_file)
+            logger.warning("pdf.rotate: file not found: %s", input_file)
         return False
 
     ext = os.path.splitext(input_file)[1].lower()
-    if ext != '.pdf':
+    if ext != ".pdf":
         if verbose:
-            logger.warning('pdf.rotate: not a pdf: %s', input_file)
+            logger.warning("pdf.rotate: not a pdf: %s", input_file)
         return False
 
     try:
         doc = fitz.open(input_file)
-    except Exception as exc:  # pragma: no cover - environment dependent
-        logger.exception('pdf.rotate: failed to open pdf: %s', input_file)
+    except Exception:  # pragma: no cover - environment dependent
+        logger.exception("pdf.rotate: failed to open pdf: %s", input_file)
         raise
 
     try:
@@ -109,9 +111,9 @@ def rotate_pages(
             angle = direction % 360
         else:
             d = str(direction).lower()
-            if d in ('cw', 'clockwise', 'right'):
+            if d in ("cw", "clockwise", "right"):
                 angle = 90
-            elif d in ('ccw', 'counterclockwise', 'left'):
+            elif d in ("ccw", "counterclockwise", "left"):
                 angle = 270
             else:
                 # try to parse integer-like strings
@@ -119,7 +121,9 @@ def rotate_pages(
                     angle = int(d) % 360
                 except Exception:
                     doc.close()
-                    raise ValueError('unknown rotation direction: %r' % (direction,))
+                    raise ValueError(
+                        "unknown rotation direction: %r" % (direction,)
+                    )
 
         page_count = doc.page_count
 
@@ -131,7 +135,7 @@ def rotate_pages(
             normalized = []
             for p in pages:
                 if not isinstance(p, int):
-                    raise TypeError('pages must be integers')
+                    raise TypeError("pages must be integers")
                 if p < 0:
                     # allow negative indexing
                     idx = p
@@ -141,11 +145,13 @@ def rotate_pages(
                 else:
                     idx = p
                 if not (-page_count <= idx < page_count):
-                    raise IndexError('page index out of range: %r' % (p,))
+                    raise IndexError("page index out of range: %r" % (p,))
                 normalized.append(idx)
             # remove duplicates while preserving order
             seen = set()
-            page_indices = [x for x in normalized if not (x in seen or seen.add(x))]
+            page_indices = [
+                x for x in normalized if not (x in seen or seen.add(x))
+            ]
 
         # Rotate requested pages
         for idx in page_indices:
@@ -156,9 +162,9 @@ def rotate_pages(
                 page = doc[idx]
 
             # Try modern method name, fallback to older Variant
-            if hasattr(page, 'set_rotation'):
+            if hasattr(page, "set_rotation"):
                 page.set_rotation(angle)
-            elif hasattr(page, 'setRotation'):
+            elif hasattr(page, "setRotation"):
                 # older camelCase API
                 page.setRotation(angle)
             else:
@@ -166,7 +172,7 @@ def rotate_pages(
                 mat = fitz.Matrix(1, 1).pre_rotate(angle)
                 # create a pixmap and replace page contents with rotated image
                 pix = page.get_pixmap(matrix=mat)
-                img_pdf_bytes = fitz.open('pdf', pix.tobytes())
+                img_pdf_bytes = fitz.open("pdf", pix.tobytes())
                 # replace page with the single-page pdf of rotated image
                 doc.delete_page(idx)
                 doc.insert_pdf(img_pdf_bytes)
@@ -176,13 +182,14 @@ def rotate_pages(
             if inplace:
                 # write to temp and replace
                 import tempfile
-                fd, tmp_path = tempfile.mkstemp(suffix='.pdf')
+
+                fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
                 os.close(fd)
                 out_path = tmp_path
                 replace_when_done = True
             else:
                 base, _ = os.path.splitext(input_file)
-                out_path = base + '_rotated.pdf'
+                out_path = base + "_rotated.pdf"
                 replace_when_done = False
         else:
             out_path = output_path
@@ -204,10 +211,10 @@ def rotate_pages(
 
 
 def delete_pages(
-        input_file: str,
-        output_path: str,
-        pages=None,
-        verbose=False,
+    input_file: str,
+    output_path: str,
+    pages=None,
+    verbose=False,
 ):
     """
     Delete pages from a PDF file.
@@ -223,27 +230,27 @@ def delete_pages(
     """
     # Ensure dependency is available
     if fitz is None:
-        raise RuntimeError('PyMuPDF (fitz) is required for PDF page deletion')
+        raise RuntimeError("PyMuPDF (fitz) is required for PDF page deletion")
 
     if not os.path.exists(input_file):
         if verbose:
-            logger.warning('pdf.delete: file not found: %s', input_file)
+            logger.warning("pdf.delete: file not found: %s", input_file)
         return False
 
-    if os.path.splitext(input_file)[1].lower() != '.pdf':
+    if os.path.splitext(input_file)[1].lower() != ".pdf":
         if verbose:
-            logger.warning('pdf.delete: not a pdf: %s', input_file)
+            logger.warning("pdf.delete: not a pdf: %s", input_file)
         return False
 
     if not pages:
         if verbose:
-            logger.warning('pdf.delete: no pages provided')
+            logger.warning("pdf.delete: no pages provided")
         return False
 
     try:
         doc = fitz.open(input_file)
     except Exception:  # pragma: no cover - environment dependent
-        logger.exception('pdf.delete: failed to open pdf: %s', input_file)
+        logger.exception("pdf.delete: failed to open pdf: %s", input_file)
         raise
 
     page_count = doc.page_count
@@ -253,10 +260,10 @@ def delete_pages(
         for p in pages:
             if not isinstance(p, int):
                 doc.close()
-                raise TypeError('pages must be integers (1-based)')
+                raise TypeError("pages must be integers (1-based)")
             if p < 1 or p > page_count:
                 doc.close()
-                raise IndexError('page number out of range: %r' % (p,))
+                raise IndexError("page number out of range: %r" % (p,))
             indices.append(p - 1)
 
         # Remove duplicates and sort descending to avoid shifting indices
@@ -268,7 +275,7 @@ def delete_pages(
         # Decide output path
         if output_path is None:
             base, _ = os.path.splitext(input_file)
-            out_path = base + '_deleted.pdf'
+            out_path = base + "_deleted.pdf"
         else:
             out_path = output_path
 
@@ -284,10 +291,10 @@ def delete_pages(
 
 
 def split_pages(
-        input_file: str,
-        output_path: str,
-        pages=None,
-        verbose=False,
+    input_file: str,
+    output_path: str,
+    pages=None,
+    verbose=False,
 ):
     """
     Split `input_file` PDF into multiple PDFs.
@@ -305,38 +312,38 @@ def split_pages(
     """
     # Ensure dependency is available
     if fitz is None:
-        raise RuntimeError('PyMuPDF (fitz) is required for PDF splitting')
+        raise RuntimeError("PyMuPDF (fitz) is required for PDF splitting")
 
     if not os.path.exists(input_file):
         if verbose:
-            logger.warning('pdf.split: file not found: %s', input_file)
+            logger.warning("pdf.split: file not found: %s", input_file)
         return False
 
-    if os.path.splitext(input_file)[1].lower() != '.pdf':
+    if os.path.splitext(input_file)[1].lower() != ".pdf":
         if verbose:
-            logger.warning('pdf.split: not a pdf: %s', input_file)
+            logger.warning("pdf.split: not a pdf: %s", input_file)
         return False
 
     if not pages:
         if verbose:
-            logger.warning('pdf.split: no pages provided')
+            logger.warning("pdf.split: no pages provided")
         return False
 
     # Normalize and validate pages (1-based)
     try:
         starts = sorted(set(int(p) for p in pages))
     except Exception:
-        raise TypeError('pages must be iterable of integers (1-based)')
+        raise TypeError("pages must be iterable of integers (1-based)")
 
     # pages must include 1 as the first block start
     if starts[0] != 1:
-        raise ValueError('pages must include 1 as the first block start')
+        raise ValueError("pages must include 1 as the first block start")
 
     # Open source doc
     try:
         src = fitz.open(input_file)
     except Exception:  # pragma: no cover - environment dependent
-        logger.exception('pdf.split: failed to open pdf: %s', input_file)
+        logger.exception("pdf.split: failed to open pdf: %s", input_file)
         raise
 
     page_count = src.page_count
@@ -345,7 +352,7 @@ def split_pages(
     for p in starts:
         if p < 1 or p > page_count:
             src.close()
-            raise IndexError('page number out of range: %r' % (p,))
+            raise IndexError("page number out of range: %r" % (p,))
 
     # Compute block ranges (0-based inclusive)
     ranges = []
@@ -361,7 +368,7 @@ def split_pages(
     if not ranges:
         src.close()
         if verbose:
-            logger.warning('pdf.split: no valid ranges computed')
+            logger.warning("pdf.split: no valid ranges computed")
         return False
 
     # Prepare output filenames and check collisions
@@ -371,7 +378,7 @@ def split_pages(
         base, ext = os.path.splitext(input_file)
 
     if not ext:
-        ext = '.pdf'
+        ext = ".pdf"
 
     targets = [f"{base}_{i + 1}{ext}" for i in range(len(ranges))]
 
@@ -379,7 +386,9 @@ def split_pages(
     collisions = [p for p in targets if os.path.exists(p)]
     if collisions:
         if verbose:
-            logger.warning('pdf.split: target files exist, aborting: %s', collisions)
+            logger.warning(
+                "pdf.split: target files exist, aborting: %s", collisions
+            )
         src.close()
         return False
 
@@ -411,35 +420,36 @@ def split_pages(
 
 
 def clean_file(
-        input_file: str,
-        output_path: str,
-        verbose=False,
+    input_file: str,
+    output_path: str,
+    verbose=False,
 ):
     # Ensure dependency is available
     if fitz is None:
-        raise RuntimeError('PyMuPDF (fitz) is required for PDF splitting')
+        raise RuntimeError("PyMuPDF (fitz) is required for PDF splitting")
 
     if not os.path.exists(input_file):
         if verbose:
-            logger.warning('pdf.split: file not found: %s', input_file)
+            logger.warning("pdf.split: file not found: %s", input_file)
         return False
 
-    if os.path.splitext(input_file)[1].lower() != '.pdf':
+    if os.path.splitext(input_file)[1].lower() != ".pdf":
         if verbose:
-            logger.warning('pdf.split: not a pdf: %s', input_file)
+            logger.warning("pdf.split: not a pdf: %s", input_file)
         return False
 
     try:
         doc = fitz.open(input_file)
     except Exception as exc:
-        logger.exception('pdf.split: failed to open pdf: %s', str(exc))
+        logger.exception("pdf.split: failed to open pdf: %s", str(exc))
         return False
 
     try:
-        # Опция garbage=3 удаляет лишние объекты, а clean=True пытается восстановить структуру
+        # Опция garbage=3 удаляет лишние объекты.
+        # clean=True пытается восстановить структуру.
         doc.save(output_path, garbage=3, deflate=True, clean=True)
         doc.close()
         return True
     except Exception as exc:
-        logger.error('pdf.split: failed to process pdf %s', str(exc))
+        logger.error("pdf.split: failed to process pdf %s", str(exc))
         return False

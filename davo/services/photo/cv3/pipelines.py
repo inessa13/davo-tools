@@ -49,15 +49,24 @@ def get_pipelines(verbose):
         _sobel_hough_extend,
     ]
     if verbose:
-        print('Detection started with {} threshold and {} detection algos'.format(len(alogs_thresh), len(algos_edges)))
+        message = "Detection started with {} threshold and {} detection algos"
+        print(
+            message.format(
+                len(alogs_thresh),
+                len(algos_edges),
+            )
+        )
 
     pipelines = {}
     for args in alogs_thresh:
         prep = args[0]
         args = args[1:]
         for detector in algos_edges:
-            name = '{}{}-{}'.format(prep.__name__.strip('_'), '-'.join(map(str, args)), detector.__name__.strip('_'))
-            # pipelines[name] = lambda image, context: detector(prep(image, *args, algo=name, **context), **context)
+            name = "{}{}-{}".format(
+                prep.__name__.strip("_"),
+                "-".join(map(str, args)),
+                detector.__name__.strip("_"),
+            )
             pipelines[name] = pipeline(prep, detector, args, name)
     return pipelines
 
@@ -67,10 +76,13 @@ def pipeline(thresh, edge, args, name):
         i1 = thresh(image, *args, algo=name, **context)
         debug_write(i1, context, name)
         return edge(image, **context)
+
     return _wrap
 
 
-def _thresh_adap(image, blur=False, max_val=255, block_size=5, c=2, rev=False, **context):
+def _thresh_adap(
+    image, blur=False, max_val=255, block_size=5, c=2, rev=False, **context
+):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     if blur:
         gray = cv2.GaussianBlur(gray, (9, 9), 0)
@@ -80,7 +92,7 @@ def _thresh_adap(image, blur=False, max_val=255, block_size=5, c=2, rev=False, *
         cv2.ADAPTIVE_THRESH_MEAN_C,
         cv2.THRESH_BINARY,
         block_size,
-        c
+        c,
     )
     if rev:
         result = cv2.bitwise_not(result)
@@ -119,7 +131,8 @@ def _thresh_norm(image, thresh=0, max_val=255, block_size=5, **context):
 def _low_contrast(image, alpha=100, beta=200, **context):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     result = cv2.normalize(
-        gray, None, alpha=alpha, beta=beta, norm_type=cv2.NORM_MINMAX)
+        gray, None, alpha=alpha, beta=beta, norm_type=cv2.NORM_MINMAX
+    )
     # result = cv2.GaussianBlur(result, (5, 5), 0)
     # debug_write(result, context, '2_low_contrast')
     return result
@@ -127,10 +140,10 @@ def _low_contrast(image, alpha=100, beta=200, **context):
 
 def _algo_clahe(image, clip_limit=3.0, inv=False, **context):
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
+    lightness, a, b = cv2.split(lab)
     clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8, 8))
-    l = clahe.apply(l)
-    lab = cv2.merge((l, a, b))
+    lightness = clahe.apply(lightness)
+    lab = cv2.merge((lightness, a, b))
     gray = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
     gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
     if inv:
@@ -138,8 +151,8 @@ def _algo_clahe(image, clip_limit=3.0, inv=False, **context):
     else:
         tt = cv2.THRESH_BINARY
     return cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        tt, 11, 2)
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, tt, 11, 2
+    )
 
 
 def _canny(thresh, **context):
@@ -189,8 +202,7 @@ def _sobel_morph(thresh, **context):
 
 def _sobel_hough_(thresh, dilate=False, extend=False):
     if dilate:
-        kernel = cv2.getStructuringElement(
-            cv2.MORPH_RECT, (3, 3))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         thresh = cv2.dilate(thresh, kernel, iterations=1)
 
     if thresh.dtype != np.uint8 or len(thresh.shape) != 2:
@@ -203,7 +215,8 @@ def _sobel_hough_(thresh, dilate=False, extend=False):
         theta=np.pi / 180,  # точность по углу (радианы)
         threshold=100,  # минимальное число пересечений
         minLineLength=300,  # минимальная длина линии
-        maxLineGap=50)  # максимальный разрыв между сегментами
+        maxLineGap=50,
+    )  # максимальный разрыв между сегментами
 
     line_img = thresh.copy()
     if lines is not None:
@@ -211,7 +224,9 @@ def _sobel_hough_(thresh, dilate=False, extend=False):
             x1, y1, x2, y2 = line[0]
             if extend:
                 height, width = thresh.shape[:2]
-                x1, y1, x2, y2 = _extend_hough_line(x1, y1, x2, y2, width, height)
+                x1, y1, x2, y2 = _extend_hough_line(
+                    x1, y1, x2, y2, width, height
+                )
             cv2.line(line_img, (x1, y1), (x2, y2), (255, 255, 255), 3)
     return line_img
 
@@ -270,10 +285,14 @@ def _sobel_hough_extend(thresh, **context):
 # TODO:
 # Пайплайн для чеков (высокий контраст, но много шума)
 # gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-# binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)[1]
+# binary = cv2.threshold(
+#     gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE
+# )[1]
 # kernel = np.ones((3, 3), np.uint8)
 # opened = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=2)
-# contours, _ = cv2.findContours(opened, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+# contours, _ = cv2.findContours(
+#     opened, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+# )
 # Вариации:
 # - Использовать MORPH_CLOSE если есть разрывы в границах.
 # - Применить dilate перед findContours.

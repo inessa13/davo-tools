@@ -1,8 +1,8 @@
 __all__ = (
-    'BaseError',
-    'UserError',
-    'Error',
-    'NotImpl',
+    "BaseError",
+    "UserError",
+    "Error",
+    "NotImpl",
 )
 
 

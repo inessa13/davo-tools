@@ -1,16 +1,17 @@
-import cv2
 import logging
-from skimage.metrics import structural_similarity as ssim
 
+import cv2
+from skimage.metrics import structural_similarity as ssim
 
 logger = logging.getLogger(__name__)
 
+
 def image_downscale(
-        image,
-        min_width: int,
-        min_height: int,
-        speed: float,
-        ssim_threshold: float,
+    image,
+    min_width: int,
+    min_height: int,
+    speed: float,
+    ssim_threshold: float,
 ):
     """
     :param image:
@@ -40,10 +41,12 @@ def image_downscale(
             break
 
         resized = cv2.resize(
-            image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            image, (new_w, new_h), interpolation=cv2.INTER_AREA
+        )
         gray_resized = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
         gray_upscaled = cv2.resize(
-            gray_resized, (w, h), interpolation=cv2.INTER_LINEAR)
+            gray_resized, (w, h), interpolation=cv2.INTER_LINEAR
+        )
 
         ssim_val = ssim(gray_original, gray_upscaled)
         if ssim_val >= ssim_threshold:
