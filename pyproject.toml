@@ -99,8 +99,21 @@ max-line-length = 79
 [tool.pylint.reports]
 output-format = "colorized"
 
+[tool.pylint.typecheck]
+# OpenCV exposes many dynamic members from C-extensions, which triggers
+# persistent false positives in pylint (E1101 no-member).
+generated-members = ["cv2.*"]
+# Decorator factory mutates wrapped callable signature; otherwise pylint raises
+# E1120 no-value-for-parameter for valid CLI callbacks.
+signature-mutators = ["davo.services.photo.utils.each_file"]
+
 [tool.pylint.messages_control]
 disable = [
+    "consider-using-f-string",
+    "too-many-arguments",
+    "too-many-branches",
+    "too-many-locals",
+    "too-many-statements",
     "missing-module-docstring",
     "missing-class-docstring",
     "missing-function-docstring",

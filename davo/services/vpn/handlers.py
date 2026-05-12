@@ -48,7 +48,7 @@ def connect_openconnect_sudo_2fa(account):
     sudo = davo.utils.conf.load_kr_kp_pass()
 
     ch = pexpect.spawn(cmd)
-    ch.expect("\[sudo\] ", timeout=5)
+    ch.expect(r"\[sudo\] ", timeout=5)
     ch.sendline(sudo)
     ch.sendline(account["password"])
     ch.sendline(otp)
@@ -65,7 +65,7 @@ def connect_openconnect_sudo(account):
     sudo = davo.utils.conf.load_kr_kp_pass()
 
     ch = pexpect.spawn(cmd)
-    ch.expect("\[sudo\] ", timeout=5)
+    ch.expect(r"\[sudo\] ", timeout=5)
     ch.sendline(sudo)
     ch.sendline(account["password"])
     ch.interact()
@@ -84,7 +84,7 @@ def connect_openvpn_otp(account):
 
     try:
         ch = pexpect.spawn(cmd)
-        ch.expect("\[sudo\] password for", timeout=1)
+        ch.expect(r"\[sudo\] password for", timeout=1)
         ch.sendline(sudo)
         ch.expect("Enter Google Authenticator Code ", timeout=10)
     finally:
@@ -104,7 +104,7 @@ def connect_openvpn(account):
 
     try:
         ch = pexpect.spawn(cmd)
-        ch.expect("\[sudo\] password for", timeout=1)
+        ch.expect(r"\[sudo\] password for", timeout=1)
         ch.sendline(sudo)
     finally:
         utils.remove_temp_file()

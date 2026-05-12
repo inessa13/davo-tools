@@ -1,6 +1,7 @@
 # Run from repository root (see shared agent policy: no `make -C`).
 VENV ?= .venv
 UV ?= uv
+LINT_PATH ?= davo tests
 # Prefer PYTHON from env / command line; else .venv if present; else python3 on PATH.
 PY = $(if $(strip $(PYTHON)),$(PYTHON),$(shell test -x $(CURDIR)/$(VENV)/bin/python && echo "$(CURDIR)/$(VENV)/bin/python" || echo python3))
 
@@ -15,9 +16,10 @@ help:
 	@echo "  make test      — run pytest (alias: make tests)"
 	@echo "  make tests     — same as make test"
 	@echo "  make coverage  — pytest with coverage for package \`davo\` (terminal table + htmlcov/)"
-	@echo "  make lint      — ruff check, isort --check-only, pylint on \`davo\`"
+	@echo "  make lint      — ruff check, isort --check-only, pylint (default: davo tests)"
+	@echo "                  use LINT_PATH to lint a specific path, e.g. make lint LINT_PATH=davo/services/photo/pdf.py"
 	@echo ""
-	@echo "Variables:  VENV=$(VENV)   UV=$(UV)   PYTHON=$(if $(strip $(PYTHON)),$(PYTHON),<unset>)"
+	@echo "Variables:  VENV=$(VENV)   UV=$(UV)   PYTHON=$(if $(strip $(PYTHON)),$(PYTHON),<unset>)   LINT_PATH=$(LINT_PATH)"
 
 test tests:
 	$(PY) -m pytest
@@ -32,9 +34,11 @@ coverage:
 		--cov-report=html
 
 lint:
-	$(PY) -m ruff check davo tests
-	$(PY) -m isort --check-only --diff davo tests
-	$(PY) -m pylint davo
+	@status=0; \
+	$(PY) -m ruff check $(LINT_PATH) || status=$$?; \
+	$(PY) -m isort --check-only --diff $(LINT_PATH) || status=$$?; \
+	$(PY) -m pylint $(LINT_PATH) || status=$$?; \
+	exit $$status
 
 venv:
 	@if command -v "$(UV)" >/dev/null 2>&1; then \
