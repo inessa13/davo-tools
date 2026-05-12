@@ -1,0 +1,107 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "davo-tools"
+version = "1.1.0"
+description = "Personal CLI utilities (davo, cit, davo-photo, davo-s3sync)"
+readme = "README.md"
+requires-python = ">=3.0"
+license = { text = "GPL-3.0" }
+authors = [{ name = "davo", email = "davo.fastcall@gmail.com" }]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Operating System :: POSIX",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "pyyaml",
+    "argcomplete",
+    "pillow",
+    "exif",
+    "pyotp",
+    "pexpect",
+    "pykeepass",
+    "keyring",
+    "boto",
+    "reprint",
+    "pymediainfo",
+    "opencv-python",
+    "rembg",
+    "onnxruntime",
+    "numpy",
+    "scikit-image",
+]
+[project.urls]
+Homepage = "https://github.com/inessa13/davo-tools"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7",
+    "pytest-mock>=3",
+    "pytest-cov>=4",
+]
+lint = [
+    "ruff>=0.4",
+    "isort>=5",
+    "pylint>=3",
+]
+
+[project.scripts]
+davo = "davo.cli:main"
+cit = "davo.services.git_tools:main"
+davo-photo = "davo.services.photo.cli:main"
+davo-s3sync = "davo.services.s3sync.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra"
+
+[tool.isort]
+line_length = 79
+multi_line_output = 3
+include_trailing_comma = true
+default_section = "THIRDPARTY"
+known_first_party = ["davo"]
+
+[tool.ruff]
+line-length = 79
+target-version = "py38"
+src = ["davo", "tests"]
+exclude = [
+    ".eggs",
+    ".git",
+    ".venv",
+    "build",
+    "dist",
+    "htmlcov",
+    ".dev",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["davo"]
+
+[tool.pylint.format]
+max-line-length = 79
+
+[tool.pylint.reports]
+output-format = "colorized"
+
+[tool.pylint.messages_control]
+disable = [
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+]

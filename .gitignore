@@ -1,4 +1,6 @@
 *.py[cod]
+.venv/
+htmlcov/
 .dev
 .idea
 .coverage

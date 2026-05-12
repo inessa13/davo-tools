@@ -1,0 +1,4 @@
+[submodule "docs/shared"]
+	path = docs/shared
+	url = git@bitbucket.org:davo/acp.git
+	branch = v1
