@@ -458,6 +458,18 @@ def init_parser_pdf(parser=None, subparsers=None, prefix='', commands=()):
             verbose=namespace.verbose,
         ))
 
+    if not commands or 'clean' in commands:
+        cmd = subparsers.add_parser(
+            '{}clean'.format(prefix), parents=p_RV, help='pdf: delete pages (PyMuPDF)')
+        cmd.add_argument('-o', '--out', action='store')
+        cmd.add_argument('-i', '--inf', action='store')
+        cmd.set_defaults(func=lambda namespace: helpers.command_pdf_clean(  # noqa
+            root=namespace.path,
+            out=namespace.out,
+            inf=namespace.inf,
+            verbose=namespace.verbose,
+        ))
+
 
 def main():
     logging.config.dictConfig(davo.settings.LOGGING)

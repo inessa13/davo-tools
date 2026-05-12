@@ -409,3 +409,37 @@ def split_pages(
             pass
         raise
 
+
+def clean_file(
+        input_file: str,
+        output_path: str,
+        verbose=False,
+):
+    # Ensure dependency is available
+    if fitz is None:
+        raise RuntimeError('PyMuPDF (fitz) is required for PDF splitting')
+
+    if not os.path.exists(input_file):
+        if verbose:
+            logger.warning('pdf.split: file not found: %s', input_file)
+        return False
+
+    if os.path.splitext(input_file)[1].lower() != '.pdf':
+        if verbose:
+            logger.warning('pdf.split: not a pdf: %s', input_file)
+        return False
+
+    try:
+        doc = fitz.open(input_file)
+    except Exception as exc:
+        logger.exception('pdf.split: failed to open pdf: %s', str(exc))
+        return False
+
+    try:
+        # Опция garbage=3 удаляет лишние объекты, а clean=True пытается восстановить структуру
+        doc.save(output_path, garbage=3, deflate=True, clean=True)
+        doc.close()
+        return True
+    except Exception as exc:
+        logger.error('pdf.split: failed to process pdf %s', str(exc))
+        return False

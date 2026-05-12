@@ -203,6 +203,8 @@ def command_live(root, recursive, commit=False):
 
         num = m.group('num')
         ext = m.group('ext').lower()
+        if ext == 'jpeg':
+            ext = 'jpg'
 
         context \
             .setdefault(root, {}) \
@@ -663,6 +665,20 @@ def command_pdf_split(
         os.path.join(root, inf),
         os.path.join(root, out),
         pages,
+        verbose=verbose)
+    status_h = 'prepared' if status else 'failed'
+    logger.info('pdf %s: %s', status_h, out)
+
+
+def command_pdf_clean(
+        root,
+        out: str,
+        inf: str,
+        verbose: bool = False,
+):
+    status = pdf.clean_file(
+        os.path.join(root, inf),
+        os.path.join(root, out),
         verbose=verbose)
     status_h = 'prepared' if status else 'failed'
     logger.info('pdf %s: %s', status_h, out)

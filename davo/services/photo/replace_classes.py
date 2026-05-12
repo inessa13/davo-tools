@@ -84,13 +84,23 @@ def source_datetime(filename, context):
     name = source_no_ext(filename, context)
     prefixes = '(' + PREFIXES_P + ')'
     if m := re.match(prefixes + r'(\d{8})[_ -](\d{6}).*', name):
-        return datetime.datetime.strptime('{} {}'.format(m.group(2), m.group(3)), '%Y%m%d %H%M%S')
+        d = datetime.datetime.strptime('{} {}'.format(m.group(2), m.group(3)), '%Y%m%d %H%M%S')
+        # if d:
+        #     return d.strftime('%Y%m%d %H%M%S')
+        return d
     if m := re.match(prefixes + r'(\d{8})\D+.*', name):
         d = datetime.datetime.strptime(m.group(2), '%Y%m%d')
         if d:
             return m.group(2)
         # return datetime.datetime.strptime('{} {}'.format(m.group(2)), '%Y%m%d')
     return None
+
+
+def source_datetime_str(filename, context):
+    dt = source_datetime(filename, context)
+    if dt:
+        return dt.strftime('%Y%m%d %H%M%S')
+    return ''
 
 
 def source_img_(filename, context):
@@ -369,8 +379,8 @@ def dt_optimal(filename, context, priority=False):
     values = []
 
     # datetime from filename
-    if ds := source_datetime(filename, context):
-        values.append(datetime.datetime.strptime(ds, '%Y%m%d'))
+    if dt := source_datetime(filename, context):
+        values.append(dt)
 
     mime = guess_mime(filename, context)
     if mime in ('image/jpeg',):
@@ -468,7 +478,7 @@ def df_prioritized(filename, context):
 
 CLASSES = {
     '[source:int]': source_int,
-    '[source:datetime]': source_datetime,
+    '[source:datetime]': source_datetime_str,
     '[source:img_]': source_img_,
     '[source:img_$]': source_img_2,
     '[source:dsc_$]': source_dsc_2,
