@@ -12,8 +12,8 @@ from davo import errors, settings
 
 logger = logging.getLogger(__name__)
 
-_P_KP_STR = r'kp:(?P<key>.*):(?P<attr>username|password|url)$'
-_P_KR_STR = r'kr:((?P<service>.+):)?(?P<key>.+)$'
+_P_KP_STR = r"kp:(?P<key>.*):(?P<attr>username|password|url)$"
+_P_KR_STR = r"kr:((?P<service>.+):)?(?P<key>.+)$"
 
 
 def load_yaml_config(conf_path):
@@ -24,18 +24,18 @@ def load_yaml_config(conf_path):
 
     :rtype: dict
     """
-    if '~' in conf_path:
+    if "~" in conf_path:
         conf_path = os.path.expanduser(conf_path)
 
     conf_root = os.path.dirname(conf_path)
 
     if not conf_path or not os.path.exists(conf_path):
-        raise errors.Error('Missing config: {}'.format(conf_path))
+        raise errors.Error("Missing config: {}".format(conf_path))
 
-    with open(conf_path, 'rt') as file:
+    with open(conf_path, "rt") as file:
         conf = yaml.safe_load(file)
 
-    conf['root'] = conf_root
+    conf["root"] = conf_root
     return conf
 
 
@@ -62,8 +62,8 @@ def fix_config_paths(conf, root=None):
         return [fix_config_paths(value, root=root) for value in conf]
 
     if isinstance(conf, str):
-        if conf.startswith('./'):
-            return os.path.join(root['root'], conf[2:])
+        if conf.startswith("./"):
+            return os.path.join(root["root"], conf[2:])
 
     return conf
 
@@ -79,8 +79,8 @@ def mask_config_secrets(conf, key=None):
         return [mask_config_secrets(value, key=key) for value in conf]
 
     if isinstance(conf, str):
-        if key in ('ACCESS_KEY', 'SECRET_KEY'):
-            return '{}***{}'.format(conf[0], conf[-1])
+        if key in ("ACCESS_KEY", "SECRET_KEY"):
+            return "{}***{}".format(conf[0], conf[-1])
 
     return conf
 
@@ -111,11 +111,12 @@ def fix_config_secrets(kp, conf, mask=True):
         # load data from keepass
         if m := re.match(_P_KP_STR, conf):
             return _get_kp_value(
-                kp, m.group('key'), m.group('attr'), mask=mask)
+                kp, m.group("key"), m.group("attr"), mask=mask
+            )
 
         # load data from keyring
         if m := re.match(_P_KR_STR, conf):
-            return _get_kr_value(m.group('service'), m.group('key'), mask=mask)
+            return _get_kr_value(m.group("service"), m.group("key"), mask=mask)
 
     return conf
 
@@ -130,9 +131,10 @@ def load_kr_kp_pass():
     """
     try:
         password = keyring.get_password(
-            settings.KEYRING_SERVICE, settings.KEYRING_USER_KEEPASS)
+            settings.KEYRING_SERVICE, settings.KEYRING_USER_KEEPASS
+        )
     except keyring.errors.InitError:
-        raise errors.Error('Keyring not inited')
+        raise errors.Error("Keyring not inited")
     return password
 
 
@@ -152,14 +154,14 @@ def load_kp(path=None, password=None):
         password = load_kr_kp_pass()
         if not password:
             raise errors.UserError(
-                'Missing Keepass password in keyring, please init it using '
-                '`davo-tools keyring keepass -p`'
+                "Missing Keepass password in keyring, please init it using "
+                "`davo-tools keyring keepass -p`"
             )
 
     try:
         return pykeepass.PyKeePass(path, password=password)
     except pykeepass.exceptions.CredentialsError:
-        raise errors.UserError('Invalid credentials')
+        raise errors.UserError("Invalid credentials")
 
 
 def load_kp_entry(kp, path, throw=False):
@@ -172,14 +174,14 @@ def load_kp_entry(kp, path, throw=False):
 
     :rtype: pykeepass.Entry
     """
-    path = path.strip('/').split('/')
+    path = path.strip("/").split("/")
     if len(path) > 1:
         entry = kp.find_entries(path=path[:])
     else:
         entry = kp.find_entries(title=path[0], first=True)
 
     if throw and not entry:
-        raise RuntimeError('Missing kp key: `{}`'.format(path))
+        raise RuntimeError("Missing kp key: `{}`".format(path))
 
     return entry
 
@@ -197,23 +199,23 @@ def _get_kp_value(kp, kp_key, kp_attr, mask=True):
     """
     entry = load_kp_entry(kp, kp_key)
     if not entry:
-        logger.warning('Missing kp key: `{}`'.format(kp_key))
-        value = ''
+        logger.warning("Missing kp key: `{}`".format(kp_key))
+        value = ""
 
-    elif kp_attr == 'username':
+    elif kp_attr == "username":
         value = entry.username
 
-    elif kp_attr == 'password':
+    elif kp_attr == "password":
         value = entry.password
 
-    elif kp_attr == 'url':
+    elif kp_attr == "url":
         value = entry.url
 
     else:
         value = entry.title
 
     if mask and value:
-        value = '{}***{}'.format(value[0], value[-1])
+        value = "{}***{}".format(value[0], value[-1])
 
     return value
 
@@ -233,6 +235,6 @@ def _get_kr_value(kr_service, kr_key, mask=True):
     value = keyring.get_password(kr_service, kr_key)
 
     if mask and value:
-        value = '{}***{}'.format(value[0], value[-1])
+        value = "{}***{}".format(value[0], value[-1])
 
     return value

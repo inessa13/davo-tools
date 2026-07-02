@@ -9,44 +9,50 @@ from . import cv3
 
 logger = logging.getLogger(__name__)
 
-STAT_FILE = os.path.abspath(os.path.join(
-    os.path.dirname(__file__), '..', '..', 'cv2stat.yaml'))
+STAT_FILE = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "cv2stat.yaml")
+)
 
 
 def init_stat_yaml():
     if not os.path.exists(STAT_FILE):
         return {}
-    with open(STAT_FILE, 'rt') as file:
+    with open(STAT_FILE, "rt") as file:
         stat = yaml.safe_load(file)
     return stat
 
 
 def flush_stat_yaml(data):
-    data['stat'] = dict(sorted(
-        data['stat'].items(), key=lambda i: i[1].get('success'), reverse=True))
-    with open(STAT_FILE, 'wt') as file:
+    data["stat"] = dict(
+        sorted(
+            data["stat"].items(),
+            key=lambda i: i[1].get("success"),
+            reverse=True,
+        )
+    )
+    with open(STAT_FILE, "wt") as file:
         yaml.dump(data, file, sort_keys=False)
 
 
 def image_recover(
-        image,
-        context: dict,
-        pipelines: dict,
-        algo: str = None,
-        scale: float = 1,
-        min_contour: float = None,
-        max_contour: float = None,
-        debug: bool = False,
-        verbose: bool = False,
+    image,
+    context: dict,
+    pipelines: dict,
+    algo: str = None,
+    scale: float = 1,
+    min_contour: float = None,
+    max_contour: float = None,
+    debug: bool = False,
+    verbose: bool = False,
 ):
     # scale down to speed up
     try:
         image = cv2.resize(image, (0, 0), fx=scale, fy=scale)
     except Exception as exc:
         logger.error(
-            '%s: downscale failed (%s)',
-            context.get('file'),
-            str(exc).split('\n')[0],
+            "%s: downscale failed (%s)",
+            context.get("file"),
+            str(exc).split("\n")[0],
         )
         return None
 
@@ -68,19 +74,29 @@ def image_recover(
     stat = init_stat_yaml()
     try:
         for name, t in ths.items():
-            _stat = stat.setdefault('stat', {}).setdefault(name, {
-                'try': 0,
-                'success': 0,
-                'min': 0,
-                'max': 0,
-            })
-            _stat['try'] += 1
+            _stat = stat.setdefault("stat", {}).setdefault(
+                name,
+                {
+                    "try": 0,
+                    "success": 0,
+                    "min": 0,
+                    "max": 0,
+                },
+            )
+            _stat["try"] += 1
 
             try:
-                c = find_contours(image, context, t, min_cnt, max_cnt, debug=debug)
+                c = find_contours(
+                    image, context, t, min_cnt, max_cnt, debug=debug
+                )
             except Exception as exc:
                 if verbose:
-                    logger.error('%s - %s: failed (%s)', context.get('file'), name, str(exc).split('\n')[0])
+                    logger.error(
+                        "%s - %s: failed (%s)",
+                        context.get("file"),
+                        name,
+                        str(exc).split("\n")[0],
+                    )
                 continue
 
             if c is None:
@@ -89,14 +105,17 @@ def image_recover(
             a = cv2.contourArea(c)
             if a > max_area and a >= min_cnt and a <= max_cnt:
                 if verbose:
-                    logger.info('%s - %s: %.2f' % (context.get('file'), name, a / img_size * 100))
+                    logger.info(
+                        "%s - %s: %.2f"
+                        % (context.get("file"), name, a / img_size * 100)
+                    )
                 max_area = a
                 best_c = c
 
                 a_rel = a / img_size * 100
-                _stat['success'] += 1
-                _stat['min'] = min(_stat['min'], a_rel)
-                _stat['max'] = min(_stat['max'], a_rel)
+                _stat["success"] += 1
+                _stat["min"] = min(_stat["min"], a_rel)
+                _stat["max"] = min(_stat["max"], a_rel)
 
             has_some = True
             cv2.drawContours(debug_contour, [c], -1, (0, 255, 0), 3)
@@ -105,23 +124,30 @@ def image_recover(
         raise
 
     if has_some:
-        cv3.debug_write(debug_contour, context, '8_cont')
+        cv3.debug_write(debug_contour, context, "8_cont")
         flush_stat_yaml(stat)
 
     if best_c is not None:
         best_c = np.array(
-            [[[int(pt[0][0] / scale), int(pt[0][1] / scale)]] for pt in best_c],
-            dtype=np.int32)
+            [
+                [[int(pt[0][0] / scale), int(pt[0][1] / scale)]]
+                for pt in best_c
+            ],
+            dtype=np.int32,
+        )
 
     return best_c
 
 
 def find_contours(image, context, edged, min_cnt, max_cnt, debug=False):
     contours, _ = cv2.findContours(
-        edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
-    contours = [c for c in contours if min_cnt <= cv2.contourArea(c) <= max_cnt]
+    contours = [
+        c for c in contours if min_cnt <= cv2.contourArea(c) <= max_cnt
+    ]
 
     photo_contour = None
     debug_contour = image.copy()
@@ -139,13 +165,15 @@ def find_contours(image, context, edged, min_cnt, max_cnt, debug=False):
 
             try:
                 hull = cv2.convexHull(contour)
-                approx2 = cv2.approxPolyDP(hull, 0.02 * cv2.arcLength(hull, True), False)
+                approx2 = cv2.approxPolyDP(
+                    hull, 0.02 * cv2.arcLength(hull, True), False
+                )
                 cv2.drawContours(debug, [approx2], -1, (0, 0, 255), 4)
-            except:
+            except Exception:
                 pass
 
     if debug and contours:
-        cv3.debug_write(debug_contour, context, '9_cont')
+        cv3.debug_write(debug_contour, context, "9_cont")
 
     return photo_contour
 

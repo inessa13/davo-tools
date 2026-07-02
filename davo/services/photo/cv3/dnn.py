@@ -5,15 +5,10 @@ import numpy as np
 
 
 def detect_dnn(image):
-    path = os.path.join(os.path.dirname(__file__), '..', '..', 'dnn')
-    pb = os.path.abspath(os.path.join(path, 'frozen_inference_graph.pb'))
-    # txt = os.path.abspath(os.path.join(path, 'deeplabv3_mnv2_pascal_train_aug.pbtxt'))
-    txt = os.path.abspath(os.path.join(path, 'ssd_inception_v2_coco_2017_11_17.pbtxt'))
-    # net = cv2.dnn.readNetFromTensorflow(pb, txt)
-    # net = cv2.dnn.readNetFromONNX(os.path.abspath(os.path.join(path, 'yolov4-tiny.onnx')))
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "dnn")
     net = cv2.dnn.readNet(
-        os.path.abspath(os.path.join(path, 'yolov4-tiny.cfg')),
-        os.path.abspath(os.path.join(path, 'yolov4-tiny.weights')),
+        os.path.abspath(os.path.join(path, "yolov4-tiny.cfg")),
+        os.path.abspath(os.path.join(path, "yolov4-tiny.weights")),
     )
     yolo(net, image)
     return
@@ -24,8 +19,9 @@ def yolo(net, image):
 
     # === Загрузка и подготовка изображения ===
     (H, W) = image.shape[:2]
-    blob = cv2.dnn.blobFromImage(image, 1 / 255.0, (416, 416), swapRB=True,
-                                 crop=False)
+    blob = cv2.dnn.blobFromImage(
+        image, 1 / 255.0, (416, 416), swapRB=True, crop=False
+    )
     net.setInput(blob)
 
     # === Выходные слои ===
@@ -59,9 +55,9 @@ def yolo(net, image):
                 confidences.append(float(confidence))
 
     # === NMS (подавление повторений) ===
-    indices = cv2.dnn.NMSBoxes(boxes, confidences,
-                               score_threshold=conf_threshold,
-                               nms_threshold=0.2)
+    indices = cv2.dnn.NMSBoxes(
+        boxes, confidences, score_threshold=conf_threshold, nms_threshold=0.2
+    )
 
     # === Вырезание и маскирование фона ===
     debug = image.copy()
@@ -72,7 +68,7 @@ def yolo(net, image):
 
         # Вырезаем фото
         cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 255, 0), i)
-        cropped = image[y:y + h, x:x + w]
+        cropped = image[y : y + h, x : x + w]
 
         # Создаем альфа-канал (маска из непрозрачного прямоугольника)
         alpha = np.ones((h, w), dtype=np.uint8) * 255
@@ -81,7 +77,7 @@ def yolo(net, image):
             cropped_rgba = cv2.merge((*cv2.split(cropped), alpha))
             cv2.imwrite("cropped_photo{}.png".format(i), cropped_rgba)
             # Сохраняем результат
-            print(f"Сохранили: cropped_photo.png")
+            print("Сохранили: cropped_photo.png")
         else:
             print("❌ Размеры не совпадают, вырезка невозможна.")
     cv2.imwrite("cropped_photo_d.png", debug)

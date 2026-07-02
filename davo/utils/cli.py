@@ -15,7 +15,7 @@ def run(func):
             return func(*args, **kwargs)
 
         except KeyboardInterrupt:
-            logger.warning('Interrupted')
+            logger.warning("Interrupted")
 
         except errors.UserError as exc:
             logger.warning(exc.args[0])
@@ -33,7 +33,7 @@ def run_parser(parser, use_completion=True):
 
     namespace = parser.parse_args()
 
-    if getattr(namespace, 'func', None):
+    if getattr(namespace, "func", None):
         namespace.func(namespace)
     else:
         parser.print_help()

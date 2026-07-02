@@ -10,15 +10,19 @@ def run_subproc(cmd, quiet=True, pipe=False, timeout_sec=1 * 60 * 60):
 
     options = {}
     if quiet:
-        options.update({
-            'stdout': subprocess.DEVNULL,
-            'stderr': subprocess.DEVNULL,
-        })
+        options.update(
+            {
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+            }
+        )
     elif pipe:
-        options.update({
-            'stdout': subprocess.PIPE,
-            'stderr': subprocess.PIPE,
-        })
+        options.update(
+            {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+            }
+        )
     with subprocess.Popen(cmd, shell=False, **options) as proc:
         timer = threading.Timer(timeout_sec, kill_proc, [proc])
         try:
@@ -29,9 +33,9 @@ def run_subproc(cmd, quiet=True, pipe=False, timeout_sec=1 * 60 * 60):
             else:
                 full_output = None
         except FileNotFoundError:
-            raise errors.Error('executable not found')
+            raise errors.Error("executable not found")
         except Exception as exc:
-            raise errors.Error('subprocess failed', exc)
+            raise errors.Error("subprocess failed", exc)
         finally:
             timer.cancel()
     return full_output

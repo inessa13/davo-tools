@@ -21,13 +21,14 @@ def iter_files(root_path, recursive=False, exclude=(), depth=None):
 
     :rtype: Iterator
     """
+
     def _check(dir_, file_):
         path_ = os.path.join(dir_, file_)
         if not os.path.isfile(path_):
             return None
         if exclude:
             for excl in exclude:
-                if excl.startswith('^'):
+                if excl.startswith("^"):
                     if re.match(excl, path_):
                         return None
                 elif excl in path_:
@@ -38,7 +39,9 @@ def iter_files(root_path, recursive=False, exclude=(), depth=None):
         if recursive:
             for dir_path, dirs, file_names in os.walk(root_path):
                 if depth is not None:
-                    depth_ = dir_path.count(os.sep) - root_path.count(os.sep) + 1
+                    depth_ = (
+                        dir_path.count(os.sep) - root_path.count(os.sep) + 1
+                    )
                     if depth < depth_:
                         dirs.clear()
                         continue
@@ -59,7 +62,7 @@ def iter_files(root_path, recursive=False, exclude=(), depth=None):
         yield root_path
 
     else:
-        raise errors.UserError('Invalid path {}'.format(root_path))
+        raise errors.UserError("Invalid path {}".format(root_path))
 
 
 def ensure(path, commit=False):
@@ -69,7 +72,7 @@ def ensure(path, commit=False):
     :param Union[str] path:
     :param bool commit:
     """
-    if '/' not in path:
+    if "/" not in path:
         return
 
     root, basename = os.path.split(path)
@@ -87,7 +90,7 @@ def file_hash(f_path):
     :param str f_path:
     :rtype: hashlib.md5
     """
-    file_ = open(f_path, 'rb')
+    file_ = open(f_path, "rb")
     hash_value = hashlib.md5()
     while True:
         block = file_.read(128)
@@ -99,11 +102,15 @@ def file_hash(f_path):
 
 
 def _get_rel_path(root, path):
-    return re.sub('^{}'.format(root), '', path).strip('/')
+    return re.sub("^{}".format(root), "", path).strip("/")
 
 
 def iter_file_options(
-    root, recursive=False, ignore_case=False, check_size=False, exclude=(),
+    root,
+    recursive=False,
+    ignore_case=False,
+    check_size=False,
+    exclude=(),
 ):
     for file_path in iter_files(root, recursive, exclude=exclude):
         # TODO: filters
@@ -115,29 +122,36 @@ def iter_file_options(
             file_key = file_key.lower()
 
         options = {
-            'key': file_key,
-            'path': file_path,
+            "key": file_key,
+            "path": file_path,
         }
 
         if check_size:
             stat = os.stat(file_path)
-            options['size'] = stat.st_size
-            options['modified'] = stat.st_mtime
+            options["size"] = stat.st_size
+            options["modified"] = stat.st_mtime
 
         yield options
 
 
 def _ensure_md5(file_options):
-    if file_options.get('md5'):
+    if file_options.get("md5"):
         return
     # if not file_options.get('path'):
     #     return
-    file_options['md5'] = file_hash(file_options['path'])
+    file_options["md5"] = file_hash(file_options["path"])
 
 
 def compare_dirs(
-    root1, root2, states=None, ignore_case=False, check_size=False,
-    check_md5=False, recursive=False, exclude=(), verbose=False,
+    root1,
+    root2,
+    states=None,
+    ignore_case=False,
+    check_size=False,
+    check_md5=False,
+    recursive=False,
+    exclude=(),
+    verbose=False,
 ):
     if states is None:
         states = constants.STATES_DIFF_VALID
@@ -145,33 +159,44 @@ def compare_dirs(
     files_src = []
     root1 = os.path.abspath(root1)
     for options in iter_file_options(
-            root1, recursive, ignore_case, check_size, exclude):
+        root1, recursive, ignore_case, check_size, exclude
+    ):
         files_src.append(options)
 
     if verbose:
-        logger.info('%d files in %s', len(files_src), root1)
+        logger.info("%d files in %s", len(files_src), root1)
 
     files_dest = dict()
     for options in iter_file_options(
-            root2, recursive, ignore_case, check_size, exclude):
-        options['state'] = constants.STATE_LOCAL_MISSING
-        files_dest[options['key']] = options
+        root2, recursive, ignore_case, check_size, exclude
+    ):
+        options["state"] = constants.STATE_LOCAL_MISSING
+        files_dest[options["key"]] = options
 
     if verbose:
-        logger.info('%d files in %s', len(files_dest), root2)
+        logger.info("%d files in %s", len(files_dest), root2)
 
     if not files_src and not files_dest:
         return
 
     return compare(
-        files_src, files_dest, states=states, check_size=check_size,
-        check_md5=check_md5, verbose=verbose,
+        files_src,
+        files_dest,
+        states=states,
+        check_size=check_size,
+        check_md5=check_md5,
+        verbose=verbose,
     )
 
 
 def compare(
-    files_src, files_dest, states=None, check_size=False, check_date=False,
-    check_md5=False, verbose=False,
+    files_src,
+    files_dest,
+    states=None,
+    check_size=False,
+    check_date=False,
+    check_md5=False,
+    verbose=False,
 ):
     """
     Compare files_src and files_dest compatible with iter_file_options.
@@ -191,80 +216,84 @@ def compare(
         states = constants.STATES_DIFF_VALID
 
     if verbose:
-        logger.info('comparing...')
+        logger.info("comparing...")
 
     for source in files_src:
-        key_src = source['key']
+        key_src = source["key"]
         if key_src in files_dest:
             equal = True
             dest = files_dest[key_src]
-            dest['path_source'] = source['path']
+            dest["path_source"] = source["path"]
 
             if check_size:
-                if source['size'] != dest['size']:
+                if source["size"] != dest["size"]:
                     equal = False
 
             if equal and check_md5:
                 _ensure_md5(source)
                 _ensure_md5(dest)
-                if source['md5'] != dest['md5']:
+                if source["md5"] != dest["md5"]:
                     equal = False
 
             if equal:
-                dest['state'] = constants.STATE_EQUAL
+                dest["state"] = constants.STATE_EQUAL
 
             elif check_date:
-                if source['modified'] > dest['modified']:
-                    dest['state'] = constants.STATE_LOCAL_NEWER
+                if source["modified"] > dest["modified"]:
+                    dest["state"] = constants.STATE_LOCAL_NEWER
                 else:
-                    dest['state'] = constants.STATE_LOCAL_OLDER
+                    dest["state"] = constants.STATE_LOCAL_OLDER
 
             else:
-                dest['state'] = constants.STATE_DIFFERENT
+                dest["state"] = constants.STATE_DIFFERENT
 
-        elif (constants.STATE_LOCAL_NEW in states
-              or constants.STATE_RENAMED in states):
+        elif (
+            constants.STATE_LOCAL_NEW in states
+            or constants.STATE_RENAMED in states
+        ):
             files_dest[key_src] = dest = dict(source.items())
-            dest['path_source'] = dest.pop('path')
+            dest["path_source"] = dest.pop("path")
 
     for key, dest in files_dest.items():
-        if not dest.get('state'):
-            dest['state'] = constants.STATE_LOCAL_NEW
-            dest.setdefault('path_source', '')
+        if not dest.get("state"):
+            dest["state"] = constants.STATE_LOCAL_NEW
+            dest.setdefault("path_source", "")
 
     # find renames
     if constants.STATE_RENAMED in states:
         for key_new, data_new in files_dest.items():
-            if data_new.get('state') != constants.STATE_LOCAL_NEW:
+            if data_new.get("state") != constants.STATE_LOCAL_NEW:
                 continue
 
             for key_missing, data_missing in files_dest.items():
-                if data_missing['state'] != constants.STATE_LOCAL_MISSING:
+                if data_missing["state"] != constants.STATE_LOCAL_MISSING:
                     continue
 
-                if data_missing['size'] != data_new['size']:
+                if data_missing["size"] != data_new["size"]:
                     continue
 
                 if check_md5:
                     _ensure_md5(data_missing)
                     _ensure_md5(data_new)
-                    if data_missing['md5'] != data_new['md5']:
+                    if data_missing["md5"] != data_new["md5"]:
                         continue
 
-                data_missing.update({
-                    'state': constants.STATE_RENAMED,
-                    'new_options': data_new,
-                    'comment': 'new key: {}'.format(data_new['key']),
-                    'path_source': data_new.get('path_source'),
-                })
+                data_missing.update(
+                    {
+                        "state": constants.STATE_RENAMED,
+                        "new_options": data_new,
+                        "comment": "new key: {}".format(data_new["key"]),
+                        "path_source": data_new.get("path_source"),
+                    }
+                )
                 # mark for remove from result
-                data_new['state'] = constants.STATE_MARK_DELETE
+                data_new["state"] = constants.STATE_MARK_DELETE
                 break
 
     return {
         key: options
         for key, options in files_dest.items()
-        if options.get('state', '?') in states
+        if options.get("state", "?") in states
     }
 
 
@@ -281,19 +310,18 @@ def count_diff(files, verbose=False):
     if not files:
         if verbose:
             if files:
-                logger.info('%d differences', len(files))
+                logger.info("%d differences", len(files))
             else:
-                logger.info('no differences')
-        return ''
+                logger.info("no differences")
+        return ""
 
     counter = collections.Counter()
     for data in files.values():
-        counter.update(data.get('state', '?'))
-    info = ', '.join(
-        '{}: {}'.format(k, v) for k, v in counter.most_common())
+        counter.update(data.get("state", "?"))
+    info = ", ".join("{}: {}".format(k, v) for k, v in counter.most_common())
 
     if verbose:
-        logger.info('%d differences (%s)', len(files), info)
+        logger.info("%d differences (%s)", len(files), info)
 
     return info
 
@@ -309,15 +337,15 @@ def split3(filename):
     """
     root, basename = os.path.split(filename)
 
-    if '.' not in basename:
-        return root, '', basename
+    if "." not in basename:
+        return root, "", basename
 
-    return root, *basename.rsplit('.', 1)
+    return root, *basename.rsplit(".", 1)
 
 
 def get_extension(basename, lower=False):
-    if '.' not in basename:
-        return ''
+    if "." not in basename:
+        return ""
 
     _root, _name, value = split3(basename)
 
@@ -368,16 +396,23 @@ def sync_file(path_dest, root_source, root_dest, safe, commit):
             return 0
     else:
         if not os.path.exists(source_dir):
-            print('mkdir -p {}'.format(source_dir))
+            print("mkdir -p {}".format(source_dir))
 
         if os.path.exists(source):
             if safe:
-                print('# (overriding will be skipped without --force) cp {} {}'.format(path_dest, source))
+                print(
+                    (
+                        "# (overriding will be skipped without --force) "
+                        "cp {} {}"
+                    ).format(
+                        path_dest, source
+                    )
+                )
             else:
-                print('rm {}'.format(source))
-                print('cp {} {}'.format(path_dest, source))
+                print("rm {}".format(source))
+                print("cp {} {}".format(path_dest, source))
         else:
-            print('cp {} {}'.format(path_dest, source))
+            print("cp {} {}".format(path_dest, source))
 
         return 0
 
@@ -405,8 +440,8 @@ def sync_file_rename(path_dest, path_source, root_dest, root_source, commit):
             return 0
     else:
         if not os.path.exists(dest_dir):
-            print('mkdir -p {}'.format(dest_dir))
-        print('mv {} {}'.format(source, dest))
+            print("mkdir -p {}".format(dest_dir))
+        print("mv {} {}".format(source, dest))
         return 0
 
 
@@ -421,7 +456,7 @@ def sync_file_remove(path_source, safe, commit):
         except OSError:
             return 0
     else:
-        print('rm {}'.format(path_source))
+        print("rm {}".format(path_source))
         return 0
 
 
@@ -432,7 +467,7 @@ def find_config_root(root, config_name):
             return root
 
         # TODO: fix for windows
-        if root == '/':
+        if root == "/":
             return None
 
         root = os.path.dirname(root)
