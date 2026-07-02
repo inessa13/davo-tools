@@ -1,5 +1,6 @@
 *.py[cod]
 .venv/
+build/
 htmlcov/
 .dev
 .idea

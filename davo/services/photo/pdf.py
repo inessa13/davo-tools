@@ -1,24 +1,22 @@
 import logging
 import os
 import tempfile
+import types
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
-
-fitz: Any = None
-try:
-    import fitz
-except ImportError:
-    logger.warning("PyMuPDF is not installed")
-    fitz = None
 
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
 
 
-def _require_fitz(action: str) -> None:
-    if fitz is None:
+def _import_fitz(action: str) -> types.ModuleType:
+    try:
+        import fitz  # noqa pylint: disable=C0415
+    except ImportError:
         raise RuntimeError(f"PyMuPDF (fitz) is required for PDF {action}")
+
+    return fitz
 
 
 def _default_output(input_file: str, suffix: str) -> str:
@@ -40,7 +38,7 @@ def _validate_source_pdf(action: str, input_file: str, verbose: bool) -> bool:
     return True
 
 
-def _open_pdf(input_file: str, action: str):
+def _open_pdf(fitz: Any, input_file: str, action: str):
     try:
         return fitz.open(input_file)
     except Exception:  # pragma: no cover - environment dependent
@@ -104,7 +102,7 @@ def merge_files(
     output_path: Optional[str],
     verbose: bool = False,
 ) -> bool:
-    _require_fitz("merge")
+    fitz = _import_fitz("merge")
 
     files = list(input_files)
     if not files:
@@ -153,7 +151,7 @@ def rotate_pages(
     inplace: bool = False,
     verbose: bool = False,
 ) -> bool:
-    _require_fitz("rotation")
+    fitz = _import_fitz("rotation")
 
     if not _validate_source_pdf("rotate", input_file, verbose):
         return False
@@ -169,7 +167,7 @@ def rotate_pages(
         else:
             output_path = _default_output(input_file, "_rotated")
 
-    with _open_pdf(input_file, "rotate") as doc:
+    with _open_pdf(fitz, input_file, "rotate") as doc:
         page_indices = _normalize_rotation_pages(pages, doc.page_count)
 
         for idx in page_indices:
@@ -197,7 +195,7 @@ def delete_pages(
     pages: Optional[Iterable[int]] = None,
     verbose: bool = False,
 ) -> bool:
-    _require_fitz("page deletion")
+    fitz = _import_fitz("page deletion")
 
     if not _validate_source_pdf("delete", input_file, verbose):
         return False
@@ -207,7 +205,7 @@ def delete_pages(
             logger.warning("pdf.delete: no pages provided")
         return False
 
-    with _open_pdf(input_file, "delete") as doc:
+    with _open_pdf(fitz, input_file, "delete") as doc:
         page_count = doc.page_count
         indices = []
         for page in pages:
@@ -249,7 +247,7 @@ def split_pages(
     pages: Optional[Iterable[int]] = None,
     verbose: bool = False,
 ) -> bool:
-    _require_fitz("splitting")
+    fitz = _import_fitz("splitting")
 
     if not _validate_source_pdf("split", input_file, verbose):
         return False
@@ -269,7 +267,7 @@ def split_pages(
     if starts[0] != 1:
         raise ValueError("pages must include 1 as the first block start")
 
-    with _open_pdf(input_file, "split") as src:
+    with _open_pdf(fitz, input_file, "split") as src:
         page_count = src.page_count
         for page in starts:
             if page < 1 or page > page_count:
@@ -327,7 +325,7 @@ def clean_file(
     output_path: Optional[str],
     verbose: bool = False,
 ) -> bool:
-    _require_fitz("cleanup")
+    fitz = _import_fitz("cleanup")
 
     if not _validate_source_pdf("clean", input_file, verbose):
         return False
@@ -336,7 +334,7 @@ def clean_file(
         output_path = _default_output(input_file, "_cleaned")
 
     try:
-        with _open_pdf(input_file, "clean") as doc:
+        with _open_pdf(fitz, input_file, "clean") as doc:
             doc.save(output_path, garbage=3, deflate=True, clean=True)
     except (OSError, RuntimeError, ValueError) as exc:
         logger.error("pdf.clean: failed to process pdf %s", str(exc))

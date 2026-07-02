@@ -57,7 +57,7 @@ def fake_paths(monkeypatch):
 
 
 @pytest.fixture()
-def fake_fitz(monkeypatch):
+def fake_fitz(mocker):
     docs = {}
 
     def _open(*args):
@@ -69,7 +69,7 @@ def fake_fitz(monkeypatch):
         return docs[key]
 
     fitz_mod = types.SimpleNamespace(open=_open)
-    monkeypatch.setattr(pdf, "fitz", fitz_mod)
+    mocker.patch("davo.services.photo.pdf._import_fitz", return_value=fitz_mod)
     return docs
 
 
