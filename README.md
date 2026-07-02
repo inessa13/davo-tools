@@ -2,6 +2,21 @@
 
 Personal CLI utilities (`davo`, `cit`, `davo-photo`, `davo-s3sync`). Package metadata, dependencies, scripts, and tool config live in **`pyproject.toml`**.
 
+## Installation
+
+Basic installation, without deps for keepass and other optional and heavy deps
+
+```bash
+uv tool install "davo-tools @ https://github.com/inessa13/davo-tools/archive/refs/heads/master.tar.gz"
+```
+
+Full installation with all functional deps (except dev deps)
+
+```bash
+sudo apt get install libxml2 libxslt
+uv tool install "davo-tools[full] @ https://github.com/inessa13/davo-tools/archive/refs/heads/master.tar.gz"
+```
+
 ## Development
 
 Use a **virtual environment** so tests and editable install do not touch system Python.

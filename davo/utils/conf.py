@@ -4,8 +4,6 @@ import re
 
 import keyring
 import keyring.errors
-import pykeepass
-import pykeepass.exceptions
 import yaml
 
 from davo import errors, settings
@@ -147,6 +145,15 @@ def load_kp(path=None, password=None):
 
     :rtype: pykeepass.PyKeePass
     """
+    try:
+        import pykeepass  # noqa pylint: disable=C0415
+        import pykeepass.exceptions  # noqa pylint: disable=C0415
+    except ImportError:
+        raise errors.Error(
+            "Missing `pykeepass` package, please install it using "
+            "`pip install pykeepass` or pip install davo-tools[keepass]`"
+        )
+
     if path is None:
         path = settings.KEEPASS_PATH_DEFAULT
 

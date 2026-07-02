@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "davo-tools"
-version = "1.1.0"
+version = "1.2.1"
 description = "Personal CLI utilities (davo, cit, davo-photo, davo-s3sync)"
 readme = "README.md"
-requires-python = ">=3.0"
+requires-python = ">=3.8"
 license = { text = "GPL-3.0" }
 authors = [{ name = "davo", email = "davo.fastcall@gmail.com" }]
 classifiers = [
@@ -25,14 +25,11 @@ dependencies = [
     "exif",
     "pyotp",
     "pexpect",
-    "pykeepass",
     "keyring",
     "boto",
     "reprint",
     "pymediainfo",
     "opencv-python",
-    "rembg",
-    "onnxruntime",
     "numpy",
     "scikit-image",
 ]
@@ -49,6 +46,18 @@ lint = [
     "ruff>=0.4",
     "isort>=5",
     "pylint>=3",
+]
+images = [
+    "rembg",
+    "onnxruntime",
+]
+keepass = [
+    "pykeepass",
+]
+full = [
+    "rembg",
+    "onnxruntime",
+    "pykeepass",
 ]
 
 [project.scripts]
@@ -91,6 +100,8 @@ exclude = [
 select = ["E", "F", "I"]
 
 [tool.ruff.lint.isort]
+split-on-trailing-comma = true
+default-section = "third-party"
 known-first-party = ["davo"]
 
 [tool.pylint.format]
