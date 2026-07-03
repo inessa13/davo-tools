@@ -26,19 +26,10 @@ Recommended: **[uv](https://docs.astral.sh/uv/getting-started/installation/)** (
 ```bash
 make              # or: make help — lists targets
 make venv         # .venv + editable install with test + lint extras
-make test         # same as: make tests; uses .venv/bin/python when present
+make test         # pytest, uses .venv/bin/python when present
+make test-lib     # pytest for all supported python versions
 make coverage     # pytest + coverage for davo/ (report in terminal + htmlcov/)
 make lint         # ruff, isort (check-only), pylint
 ```
 
 With an activated venv: `source .venv/bin/activate`, then `make test` or `python -m pytest`.
-
-Equivalent without Make (requires [uv](https://docs.astral.sh/uv/)):
-
-```bash
-uv venv && uv pip install -e ".[test,lint]"
-```
-
-Install only into an existing venv: `pip install -e ".[test,lint]"` or `uv pip install -e ".[test,lint]"`.
-
-Lint and test configuration live in **`pyproject.toml`** (`[tool.ruff]`, `[tool.isort]`, `[tool.pylint.*]`, `[tool.pytest.ini_options]`).
