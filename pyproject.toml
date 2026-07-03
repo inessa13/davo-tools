@@ -7,7 +7,7 @@ name = "davo-tools"
 version = "1.2.1"
 description = "Personal CLI utilities (davo, cit, davo-photo, davo-s3sync)"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.8,<3.12"
 license = { text = "GPL-3.0" }
 authors = [{ name = "davo", email = "davo.fastcall@gmail.com" }]
 classifiers = [
