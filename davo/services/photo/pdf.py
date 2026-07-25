@@ -1,3 +1,4 @@
+import io
 import logging
 import os
 import tempfile
@@ -8,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
+_EXTRACT_OUTPUT_TYPES = {"jpg", "png"}
 
 
 def _import_fitz(action: str) -> types.ModuleType:
@@ -95,6 +97,142 @@ def _normalize_rotation_pages(
 
     seen = set()
     return [idx for idx in normalized if not (idx in seen or seen.add(idx))]
+
+
+def _normalize_extract_pages(
+    pages: Optional[Iterable[int]],
+    page_count: int,
+) -> Sequence[int]:
+    if pages is None:
+        return range(page_count)
+
+    page_values = list(pages)
+    if not page_values:
+        return []
+
+    normalized: List[int] = []
+    seen = set()
+    for page in page_values:
+        if not isinstance(page, int):
+            raise TypeError("pages must be integers (1-based)")
+        if page < 1 or page > page_count:
+            raise IndexError(f"page number out of range: {page!r}")
+
+        idx = page - 1
+        if idx not in seen:
+            seen.add(idx)
+            normalized.append(idx)
+
+    return normalized
+
+
+def _normalize_extract_type(output_type: Optional[str]) -> str:
+    if output_type is None:
+        return "jpg"
+
+    normalized = str(output_type).lower().lstrip(".")
+    if normalized == "jpeg":
+        normalized = "jpg"
+
+    if normalized not in _EXTRACT_OUTPUT_TYPES:
+        raise ValueError(f"unsupported image type: {output_type!r}")
+
+    return normalized
+
+
+def _normalize_output_prefix(
+    input_file: str,
+    output_path: Optional[str],
+) -> str:
+    if output_path is None:
+        return os.path.splitext(input_file)[0]
+
+    prefix = output_path
+    if not os.path.isabs(prefix):
+        prefix = os.path.abspath(prefix)
+
+    base, ext = os.path.splitext(prefix)
+    if ext.lower() in (".jpg", ".jpeg", ".png"):
+        return base
+    return prefix
+
+
+def _list_page_image_xrefs(page: Any) -> List[int]:
+    if hasattr(page, "get_images"):
+        images = page.get_images(full=True)
+    elif hasattr(page, "getImageList"):
+        images = page.getImageList(full=True)
+    else:
+        raise RuntimeError(
+            "PyMuPDF page object does not support image listing API"
+        )
+
+    xrefs: List[int] = []
+    seen = set()
+    for image in images:
+        if not image:
+            continue
+
+        xref = image[0]
+        if xref in seen:
+            continue
+
+        seen.add(xref)
+        xrefs.append(xref)
+
+    return xrefs
+
+
+def _extract_image_payload(doc: Any, xref: int) -> Tuple[bytes, str]:
+    if hasattr(doc, "extract_image"):
+        payload = doc.extract_image(xref)
+    elif hasattr(doc, "extractImage"):
+        payload = doc.extractImage(xref)
+    else:
+        raise RuntimeError(
+            "PyMuPDF document does not support image extraction API"
+        )
+
+    image_bytes = payload.get("image")
+    image_ext = payload.get("ext")
+    if not image_bytes or not image_ext:
+        raise RuntimeError(f"invalid extracted image payload for xref {xref}")
+
+    normalized_ext = str(image_ext).lower().lstrip(".")
+    if normalized_ext == "jpeg":
+        normalized_ext = "jpg"
+
+    return image_bytes, normalized_ext
+
+
+def _write_extracted_image(
+    image_bytes: bytes,
+    source_ext: str,
+    target_path: str,
+    output_type: str,
+) -> None:
+    if source_ext == output_type:
+        with open(target_path, "wb") as f:
+            f.write(image_bytes)
+        return
+
+    from PIL import Image  # noqa pylint: disable=C0415
+
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        save_format = "PNG"
+        if output_type == "jpg":
+            save_format = "JPEG"
+            if image.mode not in ("1", "L", "RGB", "CMYK"):
+                image = image.convert("RGBA")
+            if image.mode in ("RGBA", "LA"):
+                background = Image.new("RGB", image.size, (255, 255, 255))
+                alpha = image.getchannel("A")
+                background.paste(image, mask=alpha)
+                image = background
+            elif image.mode not in ("L", "RGB", "CMYK"):
+                image = image.convert("RGB")
+
+        image.save(target_path, format=save_format)
 
 
 def merge_files(
@@ -185,6 +323,74 @@ def rotate_pages(
 
     if replace_when_done:
         os.replace(output_path, input_file)
+
+    return True
+
+
+def extract_images(
+    input_file: str,
+    output_path: Optional[str],
+    pages: Optional[Iterable[int]] = None,
+    output_type: Optional[str] = None,
+    verbose: bool = False,
+) -> bool:
+    normalized_type = _normalize_extract_type(output_type)
+    fitz = _import_fitz("image extraction")
+
+    if not _validate_source_pdf("extract", input_file, verbose):
+        return False
+
+    output_prefix = _normalize_output_prefix(input_file, output_path)
+
+    try:
+        with _open_pdf(fitz, input_file, "extract") as doc:
+            page_indices = _normalize_extract_pages(pages, doc.page_count)
+            image_refs: List[Tuple[int, int]] = []
+            for page_idx in page_indices:
+                page = doc.load_page(page_idx)
+                for xref in _list_page_image_xrefs(page):
+                    image_refs.append((page_idx, xref))
+
+            if not image_refs:
+                if verbose:
+                    logger.warning("pdf.extract: no embedded images found")
+                return False
+
+            targets = [
+                f"{output_prefix}_{i:03d}.{normalized_type}"
+                for i in range(1, len(image_refs) + 1)
+            ]
+            collisions = [path for path in targets if os.path.exists(path)]
+            if collisions:
+                if verbose:
+                    logger.warning(
+                        "pdf.extract: target files exist, aborting: %s",
+                        collisions,
+                    )
+                return False
+
+            created: List[str] = []
+            try:
+                for (_, xref), target in zip(image_refs, targets):
+                    image_bytes, source_ext = _extract_image_payload(doc, xref)
+                    _write_extracted_image(
+                        image_bytes,
+                        source_ext,
+                        target,
+                        normalized_type,
+                    )
+                    created.append(target)
+            except (OSError, RuntimeError, ValueError):
+                for path in created:
+                    try:
+                        if os.path.exists(path):
+                            os.remove(path)
+                    except OSError:
+                        pass
+                raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.error("pdf.extract: failed to extract images %s", str(exc))
+        return False
 
     return True
 

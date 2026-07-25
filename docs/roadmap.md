@@ -4,6 +4,7 @@ Single index of **order and priority** for davo-tools. Process: [`docs/shared/do
 
 ## Now
 
+- [Feature: add `davo pdf extract` command](specs/20260725-feature-pdf-extract-images.md) — `davo/services/photo/`
 - [Bug: s3sync replace-upload cache not updating](specs/20260512-bug-replace-upload-cache.md) — `davo/services/s3sync/`
 - [photo/helpers] Implement copy behavior when `file_path == file_path_new` in convert flow (`davo/services/photo/helpers.py:508`)
 

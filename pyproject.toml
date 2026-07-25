@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "davo-tools"
-version = "1.2.2"
+version = "1.2.3"
 description = "Personal CLI utilities (davo, cit, davo-photo, davo-s3sync)"
 readme = "README.md"
 requires-python = ">=3.8,<3.12"
@@ -58,6 +58,7 @@ full = [
     "rembg",
     "onnxruntime",
     "pykeepass",
+    "PyMuPDF",
 ]
 
 [project.scripts]

@@ -6,9 +6,15 @@ from davo.services.photo import pdf
 
 
 class FakePage:
-    def __init__(self, use_legacy=False, with_rotation=True):
+    def __init__(
+        self,
+        use_legacy=False,
+        with_rotation=True,
+        images=None,
+    ):
         self.rotation = []
         self.rotation_legacy = []
+        self.images = images or []
         if with_rotation:
             if use_legacy:
                 self.setRotation = self._set_rotation_legacy
@@ -21,11 +27,15 @@ class FakePage:
     def _set_rotation_legacy(self, value):
         self.rotation_legacy.append(value)
 
+    def get_images(self, full=True):
+        return list(self.images)
+
 
 class FakeDoc:
-    def __init__(self, page_count=1, pages=None):
+    def __init__(self, page_count=1, pages=None, extracted_images=None):
         self.page_count = page_count
         self.pages = pages
+        self.extracted_images = extracted_images or {}
         if self.pages is None:
             self.pages = [FakePage() for _ in range(page_count)]
         self.saved = []
@@ -49,6 +59,9 @@ class FakeDoc:
 
     def insert_pdf(self, doc, from_page=None, to_page=None):
         self.inserted.append((doc, from_page, to_page))
+
+    def extract_image(self, xref):
+        return self.extracted_images[xref]
 
 
 @pytest.fixture(autouse=True)
@@ -168,5 +181,128 @@ def test_merge_files_returns_false_when_nothing_added(monkeypatch, fake_fitz):
     monkeypatch.setattr(pdf.os.path, "exists", lambda _path: False)
 
     status = pdf.merge_files(["/missing.pdf"], "/out.pdf", verbose=True)
+
+    assert status is False
+
+
+def test_extract_images_uses_default_prefix_and_global_counter(
+    monkeypatch, fake_fitz
+):
+    monkeypatch.setattr(
+        pdf.os.path,
+        "exists",
+        lambda path: path == "/a.pdf",
+    )
+    fake_fitz["/a.pdf"] = FakeDoc(
+        page_count=3,
+        pages=[
+            FakePage(images=[(11,), (12,)]),
+            FakePage(images=[]),
+            FakePage(images=[(31,)]),
+        ],
+        extracted_images={
+            11: {"image": b"img-11", "ext": "png"},
+            12: {"image": b"img-12", "ext": "jpeg"},
+            31: {"image": b"img-31", "ext": "png"},
+        },
+    )
+    written = []
+    monkeypatch.setattr(
+        pdf,
+        "_write_extracted_image",
+        lambda image_bytes, source_ext, target_path, output_type: written.append(
+            (image_bytes, source_ext, target_path, output_type)
+        ),
+    )
+
+    status = pdf.extract_images("/a.pdf", None)
+
+    assert status is True
+    assert written == [
+        (b"img-11", "png", "/a_001.jpg", "jpg"),
+        (b"img-12", "jpg", "/a_002.jpg", "jpg"),
+        (b"img-31", "png", "/a_003.jpg", "jpg"),
+    ]
+
+
+def test_extract_images_respects_selected_page_order_and_output_type(
+    monkeypatch, fake_fitz
+):
+    monkeypatch.setattr(
+        pdf.os.path,
+        "exists",
+        lambda path: path == "/a.pdf",
+    )
+    fake_fitz["/a.pdf"] = FakeDoc(
+        page_count=3,
+        pages=[
+            FakePage(images=[(11,)]),
+            FakePage(images=[(22,), (23,)]),
+            FakePage(images=[(33,)]),
+        ],
+        extracted_images={
+            11: {"image": b"img-11", "ext": "png"},
+            22: {"image": b"img-22", "ext": "png"},
+            23: {"image": b"img-23", "ext": "png"},
+            33: {"image": b"img-33", "ext": "png"},
+        },
+    )
+    written = []
+    monkeypatch.setattr(
+        pdf,
+        "_write_extracted_image",
+        lambda image_bytes, source_ext, target_path, output_type: written.append(
+            (image_bytes, source_ext, target_path, output_type)
+        ),
+    )
+
+    status = pdf.extract_images("/a.pdf", "/tmp/out.png", pages=[2, 1], output_type="png")
+
+    assert status is True
+    assert written == [
+        (b"img-22", "png", "/tmp/out_001.png", "png"),
+        (b"img-23", "png", "/tmp/out_002.png", "png"),
+        (b"img-11", "png", "/tmp/out_003.png", "png"),
+    ]
+
+
+def test_extract_images_returns_false_when_no_embedded_images(
+    monkeypatch, fake_fitz
+):
+    monkeypatch.setattr(
+        pdf.os.path,
+        "exists",
+        lambda path: path == "/a.pdf",
+    )
+    fake_fitz["/a.pdf"] = FakeDoc(
+        page_count=2,
+        pages=[FakePage(images=[]), FakePage(images=[])],
+    )
+
+    status = pdf.extract_images("/a.pdf", None, verbose=True)
+
+    assert status is False
+
+
+def test_extract_images_rejects_invalid_type():
+    with pytest.raises(ValueError, match="unsupported image type"):
+        pdf.extract_images("/a.pdf", None, output_type="gif")
+
+
+def test_extract_images_returns_false_on_output_collision(
+    monkeypatch, fake_fitz
+):
+    monkeypatch.setattr(
+        pdf.os.path,
+        "exists",
+        lambda path: path in {"/a.pdf", "/a_001.jpg"},
+    )
+    fake_fitz["/a.pdf"] = FakeDoc(
+        page_count=1,
+        pages=[FakePage(images=[(11,)])],
+        extracted_images={11: {"image": b"img-11", "ext": "png"}},
+    )
+
+    status = pdf.extract_images("/a.pdf", None, verbose=True)
 
     assert status is False

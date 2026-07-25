@@ -643,6 +643,38 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
             )
         )
 
+    if not commands or "extract" in commands:
+        cmd = subparsers.add_parser(
+            "{}extract".format(prefix),
+            parents=p_RV,
+            help="pdf: extract embedded images (PyMuPDF)",
+        )
+        cmd.add_argument("-o", "--out", action="store")
+        cmd.add_argument("-i", "--inf", action="store")
+        cmd.add_argument(
+            "-p",
+            "--pages",
+            nargs="+",
+            type=int,
+            help="pages to inspect, 1-based",
+        )
+        cmd.add_argument(
+            "-t",
+            "--type",
+            action="store",
+            choices=("jpg", "png"),
+        )
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_pdf_extract(  # noqa
+                root=namespace.path,
+                inf=namespace.inf,
+                out=namespace.out,
+                pages=namespace.pages,
+                output_type=namespace.type,
+                verbose=namespace.verbose,
+            )
+        )
+
 
 def main():
     logging.config.dictConfig(davo.settings.LOGGING)

@@ -734,3 +734,29 @@ def command_pdf_clean(
     )
     status_h = "prepared" if status else "failed"
     logger.info("pdf %s: %s", status_h, out)
+
+
+def command_pdf_extract(
+    root,
+    inf: str,
+    out: str = None,
+    pages: list = None,
+    output_type: str = None,
+    verbose: bool = False,
+):
+    input_file = os.path.join(root, inf)
+    output_prefix = None
+    if out:
+        output_prefix = out
+        if not os.path.isabs(output_prefix):
+            output_prefix = os.path.abspath(output_prefix)
+
+    status = pdf.extract_images(
+        input_file,
+        output_prefix,
+        pages=pages,
+        output_type=output_type,
+        verbose=verbose,
+    )
+    status_h = "prepared" if status else "failed"
+    logger.info("pdf %s: %s", status_h, inf)
