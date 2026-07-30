@@ -1,5 +1,5 @@
 ---
-status: draft
+status: implemented
 type: feature
 slug: pdf-extract-images
 date: 2026-07-25
@@ -7,13 +7,13 @@ date: 2026-07-25
 
 # Feature: add `davo pdf extract` command
 
-**Roadmap:** [Now -> pdf extract images](../roadmap.md#now)
+**Roadmap:** implemented and removed from the active roadmap.
 
 ## Summary
 
 Add a new `davo pdf extract` command that extracts embedded images from selected PDF pages into image files.
 
-The command must support the same input/output/page flag family as sibling PDF commands, plus a new image type flag for selecting the output format.
+The command must support the same input/output/page flag family as sibling PDF commands, plus a new image type flag for selecting the output format and a mode flag for whole-page conversion.
 
 ## Scope
 
@@ -21,6 +21,16 @@ The command must support the same input/output/page flag family as sibling PDF c
 - CLI wrapper: `davo/services/photo/helpers.py`
 - PDF implementation: `davo/services/photo/pdf.py`
 - Tests: `tests/services/test_pdf.py`
+
+## Implementation status
+
+Implemented.
+
+- `davo pdf extract` is wired in the CLI parser.
+- Default mode extracts embedded images from selected PDF pages.
+- `-w` / `--whole-page` renders one output image per selected page.
+- Whole-page rendering uses `300 DPI`.
+- Focused unit tests cover the command contract and naming behavior.
 
 ## Command contract
 
@@ -31,6 +41,7 @@ The command must support the same input/output/page flag family as sibling PDF c
   - `-o` for the output path prefix or base name
   - `-p N1 N2 ... NX` for explicit source PDF page numbers to inspect
   - `-t`, `--type` for output image type
+  - `-w`, `--whole-page` to convert each selected source page into one output image
 - Supported output types:
   - `jpg`
   - `png`
@@ -39,6 +50,7 @@ The command must support the same input/output/page flag family as sibling PDF c
 ## Defaults
 
 - `-o`, `-p`, and `-t` are optional.
+- `-w` is optional and disabled by default.
 - If `-o` is omitted, derive the base output name from the source PDF file name.
 - If `-t` is omitted, default to `jpg`.
 - If `-p` is omitted, extract all pages.
@@ -60,15 +72,27 @@ The command must support the same input/output/page flag family as sibling PDF c
 - Reuse the existing `-p` / `--pages` style used by sibling PDF commands.
 - `-p N1 N2 ... NX` refers to source PDF page numbers.
 - Page numbering is 1-based.
-- When `-p` is provided, inspect only the listed source pages for extraction.
+- When `-p` is provided, inspect only the listed source pages.
 - When `-p` is omitted, process the full document.
+
+## Modes
+
+- Default mode:
+  - inspect selected pages and extract embedded images only
+- Whole-page mode:
+  - when `-w` / `--whole-page` is enabled, convert each selected source page into a single output image
+  - this mode renders the full page, including text and non-image content
+  - whole-page rendering uses `300 DPI`
+  - output count in this mode is one file per selected page
 
 ## Expected behavior
 
 - Validate that the input exists and is a PDF before extraction starts.
 - Reject unsupported output types with a clear error.
-- Extract embedded images from the selected PDF pages; do not rasterize text-only pages into images.
+- In default mode, extract embedded images from the selected PDF pages; do not rasterize text-only pages into images.
 - If a selected page contains one or more embedded images, extract those images.
+- In whole-page mode, render the entire selected page into a single output image even if the page contains only text.
+- In whole-page mode, request `300 DPI` rendering for the page rasterization step.
 - Preserve extraction order in the generated output files.
 - Avoid silent overwrite of outputs by always emitting unique names via the required counter suffix.
 
@@ -80,18 +104,22 @@ The command must support the same input/output/page flag family as sibling PDF c
   - 1-based page selection semantics
   - default `jpg` output
   - `png` output via `-t` / `--type`
+  - whole-page mode via `-w` / `--whole-page`
+  - `300 DPI` rendering in whole-page mode
+  - one output per selected page in whole-page mode
   - generated file naming with global zero-padded suffixes
   - multiple extracted images from a single page
   - invalid type rejection
 - Manual spot check:
   - run `davo pdf extract -i sample.pdf`
   - run `davo pdf extract -i sample.pdf -p 1 3 -t png`
+  - run `davo pdf extract -i sample.pdf -p 1 3 -t png -w`
   - confirm files are emitted as `[orig_name]_[counter].[ext]`
-  - confirm text-only pages are not rasterized into images
+  - confirm text-only pages are not rasterized into images in default mode
+  - confirm whole-page mode emits exactly one image per selected page
 
 ## Out of scope
 
 - OCR or text extraction from PDFs
-- Rendering text-only pages into raster images
 - Additional image formats beyond `jpg` and `png`
 - Changes to unrelated `davo file` or non-PDF commands

@@ -205,6 +205,25 @@ def _extract_image_payload(doc: Any, xref: int) -> Tuple[bytes, str]:
     return image_bytes, normalized_ext
 
 
+def _render_page_payload(page: Any, fitz: Any) -> Tuple[bytes, str]:
+    if hasattr(page, "get_pixmap"):
+        try:
+            pixmap = page.get_pixmap(dpi=300)
+        except TypeError:
+            zoom = 300 / 72
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+    elif hasattr(page, "getPixmap"):
+        zoom = 300 / 72
+        pixmap = page.getPixmap(matrix=fitz.Matrix(zoom, zoom))
+    else:
+        raise RuntimeError("PyMuPDF page object does not support pixmap API")
+
+    if hasattr(pixmap, "tobytes"):
+        return pixmap.tobytes("png"), "png"
+
+    raise RuntimeError("PyMuPDF pixmap does not support bytes export API")
+
+
 def _write_extracted_image(
     image_bytes: bytes,
     source_ext: str,
@@ -332,6 +351,7 @@ def extract_images(
     output_path: Optional[str],
     pages: Optional[Iterable[int]] = None,
     output_type: Optional[str] = None,
+    whole_page: bool = False,
     verbose: bool = False,
 ) -> bool:
     normalized_type = _normalize_extract_type(output_type)
@@ -345,20 +365,23 @@ def extract_images(
     try:
         with _open_pdf(fitz, input_file, "extract") as doc:
             page_indices = _normalize_extract_pages(pages, doc.page_count)
-            image_refs: List[Tuple[int, int]] = []
-            for page_idx in page_indices:
-                page = doc.load_page(page_idx)
-                for xref in _list_page_image_xrefs(page):
-                    image_refs.append((page_idx, xref))
+            payloads: List[Tuple[str, Any]] = []
+            if whole_page:
+                payloads = [("page", page_idx) for page_idx in page_indices]
+            else:
+                for page_idx in page_indices:
+                    page = doc.load_page(page_idx)
+                    for xref in _list_page_image_xrefs(page):
+                        payloads.append(("image", xref))
 
-            if not image_refs:
+            if not payloads:
                 if verbose:
-                    logger.warning("pdf.extract: no embedded images found")
+                    logger.warning("pdf.extract: no output images found")
                 return False
 
             targets = [
                 f"{output_prefix}_{i:03d}.{normalized_type}"
-                for i in range(1, len(image_refs) + 1)
+                for i in range(1, len(payloads) + 1)
             ]
             collisions = [path for path in targets if os.path.exists(path)]
             if collisions:
@@ -371,8 +394,18 @@ def extract_images(
 
             created: List[str] = []
             try:
-                for (_, xref), target in zip(image_refs, targets):
-                    image_bytes, source_ext = _extract_image_payload(doc, xref)
+                for (payload_type, payload_value), target in zip(
+                    payloads, targets
+                ):
+                    if payload_type == "page":
+                        page = doc.load_page(payload_value)
+                        image_bytes, source_ext = _render_page_payload(
+                            page, fitz
+                        )
+                    else:
+                        image_bytes, source_ext = _extract_image_payload(
+                            doc, payload_value
+                        )
                     _write_extracted_image(
                         image_bytes,
                         source_ext,

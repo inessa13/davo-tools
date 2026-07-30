@@ -11,10 +11,13 @@ class FakePage:
         use_legacy=False,
         with_rotation=True,
         images=None,
+        rendered_bytes=None,
     ):
         self.rotation = []
         self.rotation_legacy = []
         self.images = images or []
+        self.rendered_bytes = rendered_bytes or b"rendered-page"
+        self.pixmap_calls = []
         if with_rotation:
             if use_legacy:
                 self.setRotation = self._set_rotation_legacy
@@ -29,6 +32,19 @@ class FakePage:
 
     def get_images(self, full=True):
         return list(self.images)
+
+    def get_pixmap(self, **kwargs):
+        self.pixmap_calls.append(kwargs)
+        return FakePixmap(self.rendered_bytes)
+
+
+class FakePixmap:
+    def __init__(self, image_bytes):
+        self.image_bytes = image_bytes
+
+    def tobytes(self, output="png"):
+        assert output == "png"
+        return self.image_bytes
 
 
 class FakeDoc:
@@ -81,7 +97,10 @@ def fake_fitz(mocker):
             docs[key] = FakeDoc(page_count=3)
         return docs[key]
 
-    fitz_mod = types.SimpleNamespace(open=_open)
+    fitz_mod = types.SimpleNamespace(
+        open=_open,
+        Matrix=lambda x, y: (x, y),
+    )
     mocker.patch("davo.services.photo.pdf._import_fitz", return_value=fitz_mod)
     return docs
 
@@ -306,3 +325,46 @@ def test_extract_images_returns_false_on_output_collision(
     status = pdf.extract_images("/a.pdf", None, verbose=True)
 
     assert status is False
+
+
+def test_extract_images_whole_page_mode_renders_selected_pages(
+    monkeypatch, fake_fitz
+):
+    monkeypatch.setattr(
+        pdf.os.path,
+        "exists",
+        lambda path: path == "/a.pdf",
+    )
+    fake_fitz["/a.pdf"] = FakeDoc(
+        page_count=3,
+        pages=[
+            FakePage(images=[], rendered_bytes=b"page-1"),
+            FakePage(images=[], rendered_bytes=b"page-2"),
+            FakePage(images=[(31,)], rendered_bytes=b"page-3"),
+        ],
+        extracted_images={31: {"image": b"img-31", "ext": "png"}},
+    )
+    written = []
+    monkeypatch.setattr(
+        pdf,
+        "_write_extracted_image",
+        lambda image_bytes, source_ext, target_path, output_type: written.append(
+            (image_bytes, source_ext, target_path, output_type)
+        ),
+    )
+
+    status = pdf.extract_images(
+        "/a.pdf",
+        None,
+        pages=[2, 1],
+        output_type="png",
+        whole_page=True,
+    )
+
+    assert status is True
+    assert written == [
+        (b"page-2", "png", "/a_001.png", "png"),
+        (b"page-1", "png", "/a_002.png", "png"),
+    ]
+    assert fake_fitz["/a.pdf"].pages[1].pixmap_calls == [{"dpi": 300}]
+    assert fake_fitz["/a.pdf"].pages[0].pixmap_calls == [{"dpi": 300}]

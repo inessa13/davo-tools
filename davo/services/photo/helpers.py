@@ -742,6 +742,7 @@ def command_pdf_extract(
     out: str = None,
     pages: list = None,
     output_type: str = None,
+    whole_page: bool = False,
     verbose: bool = False,
 ):
     input_file = os.path.join(root, inf)
@@ -756,6 +757,7 @@ def command_pdf_extract(
         output_prefix,
         pages=pages,
         output_type=output_type,
+        whole_page=whole_page,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"

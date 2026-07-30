@@ -664,6 +664,12 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
             action="store",
             choices=("jpg", "png"),
         )
+        cmd.add_argument(
+            "-w",
+            "--whole-page",
+            action="store_true",
+            help="render each selected page into one image",
+        )
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_extract(  # noqa
                 root=namespace.path,
@@ -671,6 +677,7 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
                 out=namespace.out,
                 pages=namespace.pages,
                 output_type=namespace.type,
+                whole_page=namespace.whole_page,
                 verbose=namespace.verbose,
             )
         )
