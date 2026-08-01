@@ -57,6 +57,7 @@ class FakeDoc:
         self.saved = []
         self.deleted = []
         self.inserted = []
+        self.rewritten = []
 
     def __enter__(self):
         return self
@@ -79,10 +80,14 @@ class FakeDoc:
     def extract_image(self, xref):
         return self.extracted_images[xref]
 
+    def rewrite_images(self, **kwargs):
+        self.rewritten.append(kwargs)
+
 
 @pytest.fixture(autouse=True)
 def fake_paths(monkeypatch):
     monkeypatch.setattr(pdf.os.path, "exists", lambda path: True)
+    monkeypatch.setattr(pdf.os.path, "getsize", lambda _path: 1024)
 
 
 @pytest.fixture()
@@ -194,6 +199,112 @@ def test_clean_file_uses_default_output_and_save_options(fake_fitz):
     assert fake_fitz["/a.pdf"].saved == [
         ("/a_cleaned.pdf", {"garbage": 3, "deflate": True, "clean": True})
     ]
+
+
+def test_compress_file_rewrites_images_and_saves(fake_fitz):
+    fake_fitz["/a.pdf"] = FakeDoc(page_count=2)
+
+    status = pdf.compress_file("/a.pdf", "/out.pdf", 300)
+
+    assert status is True
+    assert fake_fitz["/a.pdf"].rewritten == [
+        {
+            "dpi_threshold": 301,
+            "dpi_target": 300,
+            "quality": 75,
+            "lossy": True,
+            "lossless": True,
+            "bitonal": True,
+            "color": True,
+            "gray": True,
+            "set_to_gray": False,
+        }
+    ]
+    assert fake_fitz["/a.pdf"].saved == [
+        ("/out.pdf", {"garbage": 3, "deflate": True, "clean": True})
+    ]
+
+
+def test_compress_file_uses_default_output_name(fake_fitz):
+    fake_fitz["/a.pdf"] = FakeDoc(page_count=2)
+
+    status = pdf.compress_file("/a.pdf", None, 200)
+
+    assert status is True
+    assert fake_fitz["/a.pdf"].saved == [
+        (
+            "/a_compressed_200dpi.pdf",
+            {"garbage": 3, "deflate": True, "clean": True},
+        )
+    ]
+
+
+def test_compress_file_supports_quality_override_and_grayscale(fake_fitz):
+    fake_fitz["/a.pdf"] = FakeDoc(page_count=1)
+
+    status = pdf.compress_file(
+        "/a.pdf",
+        "/out.pdf",
+        400,
+        quality=55,
+        grayscale=True,
+    )
+
+    assert status is True
+    assert fake_fitz["/a.pdf"].rewritten == [
+        {
+            "dpi_threshold": 401,
+            "dpi_target": 400,
+            "quality": 55,
+            "lossy": True,
+            "lossless": True,
+            "bitonal": True,
+            "color": True,
+            "gray": True,
+            "set_to_gray": True,
+        }
+    ]
+
+
+def test_compress_file_logs_size_report(monkeypatch, fake_fitz):
+    fake_fitz["/a.pdf"] = FakeDoc(page_count=1)
+    size_map = {"/a.pdf": 2048, "/out.pdf": 1024}
+    logged = []
+
+    monkeypatch.setattr(pdf.os.path, "getsize", lambda path: size_map[path])
+    monkeypatch.setattr(
+        pdf.logger,
+        "info",
+        lambda msg, *args: logged.append((msg, args)),
+    )
+
+    status = pdf.compress_file("/a.pdf", "/out.pdf", 300)
+
+    assert status is True
+    assert logged == [
+        (
+            "pdf.compress: size %s -> %s (%.2f%%)",
+            ("   2.00 K", "1024.00  ", 50.0),
+        )
+    ]
+
+
+def test_compress_file_returns_false_for_missing_input(monkeypatch, fake_fitz):
+    monkeypatch.setattr(pdf.os.path, "exists", lambda _path: False)
+
+    status = pdf.compress_file("/missing.pdf", "/out.pdf", 300, verbose=True)
+
+    assert status is False
+    assert "/missing.pdf" not in fake_fitz
+
+
+def test_compress_file_returns_false_for_non_pdf(fake_fitz):
+    fake_fitz["/a.txt"] = FakeDoc(page_count=1)
+
+    status = pdf.compress_file("/a.txt", "/out.pdf", 400, verbose=True)
+
+    assert status is False
+    assert fake_fitz["/a.txt"].rewritten == []
 
 
 def test_merge_files_returns_false_when_nothing_added(monkeypatch, fake_fitz):

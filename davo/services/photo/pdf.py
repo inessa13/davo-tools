@@ -5,11 +5,15 @@ import tempfile
 import types
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
+from davo.utils import format as format_utils
+
 logger = logging.getLogger(__name__)
 
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
 _EXTRACT_OUTPUT_TYPES = {"jpg", "png"}
+_COMPRESS_DPI_PRESETS = {200, 300, 400}
+_COMPRESS_JPEG_QUALITY = 75
 
 
 def _import_fitz(action: str) -> types.ModuleType:
@@ -138,6 +142,49 @@ def _normalize_extract_type(output_type: Optional[str]) -> str:
         raise ValueError(f"unsupported image type: {output_type!r}")
 
     return normalized
+
+
+def _normalize_compress_dpi(dpi: Any) -> int:
+    try:
+        normalized = int(dpi)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"unsupported dpi preset: {dpi!r}") from exc
+
+    if normalized not in _COMPRESS_DPI_PRESETS:
+        raise ValueError(f"unsupported dpi preset: {dpi!r}")
+
+    return normalized
+
+
+def _normalize_compress_quality(quality: Any) -> int:
+    if quality is None:
+        return _COMPRESS_JPEG_QUALITY
+
+    try:
+        normalized = int(quality)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"unsupported jpeg quality: {quality!r}") from exc
+
+    if not 0 <= normalized <= 100:
+        raise ValueError(f"unsupported jpeg quality: {quality!r}")
+
+    return normalized
+
+
+def _log_compress_size_report(input_file: str, output_path: str) -> None:
+    input_size = os.path.getsize(input_file)
+    output_size = os.path.getsize(output_path)
+
+    ratio = 0.0
+    if input_size:
+        ratio = output_size * 100.0 / float(input_size)
+
+    logger.info(
+        "pdf.compress: size %s -> %s (%.2f%%)",
+        format_utils.humanize_bytes(input_size),
+        format_utils.humanize_bytes(output_size),
+        ratio,
+    )
 
 
 def _normalize_output_prefix(
@@ -577,6 +624,54 @@ def clean_file(
             doc.save(output_path, garbage=3, deflate=True, clean=True)
     except (OSError, RuntimeError, ValueError) as exc:
         logger.error("pdf.clean: failed to process pdf %s", str(exc))
+        return False
+
+    return True
+
+
+def compress_file(
+    input_file: str,
+    output_path: Optional[str],
+    dpi: Any,
+    quality: Any = None,
+    grayscale: bool = False,
+    verbose: bool = False,
+) -> bool:
+    fitz = _import_fitz("compression")
+
+    if not _validate_source_pdf("compress", input_file, verbose):
+        return False
+
+    normalized_dpi = _normalize_compress_dpi(dpi)
+    normalized_quality = _normalize_compress_quality(quality)
+
+    if output_path is None:
+        output_path = _default_output(
+            input_file, f"_compressed_{normalized_dpi}dpi"
+        )
+
+    try:
+        with _open_pdf(fitz, input_file, "compress") as doc:
+            if not hasattr(doc, "rewrite_images"):
+                raise RuntimeError(
+                    "PyMuPDF document does not support image rewrite API"
+                )
+
+            doc.rewrite_images(
+                dpi_threshold=normalized_dpi + 1,
+                dpi_target=normalized_dpi,
+                quality=normalized_quality,
+                lossy=True,
+                lossless=True,
+                bitonal=True,
+                color=True,
+                gray=True,
+                set_to_gray=grayscale,
+            )
+            doc.save(output_path, garbage=3, deflate=True, clean=True)
+            _log_compress_size_report(input_file, output_path)
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.error("pdf.compress: failed to process pdf %s", str(exc))
         return False
 
     return True

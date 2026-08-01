@@ -736,6 +736,31 @@ def command_pdf_clean(
     logger.info("pdf %s: %s", status_h, out)
 
 
+def command_pdf_compress(
+    root,
+    out: str,
+    inf: str,
+    dpi: int,
+    quality: int,
+    grayscale: bool = False,
+    verbose: bool = False,
+):
+    output_path = None
+    if out:
+        output_path = os.path.join(root, out)
+
+    status = pdf.compress_file(
+        os.path.join(root, inf),
+        output_path,
+        dpi=dpi,
+        quality=quality,
+        grayscale=grayscale,
+        verbose=verbose,
+    )
+    status_h = "prepared" if status else "failed"
+    logger.info("pdf %s: %s", status_h, out or inf)
+
+
 def command_pdf_extract(
     root,
     inf: str,

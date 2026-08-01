@@ -605,7 +605,7 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
         cmd = subparsers.add_parser(
             "{}split".format(prefix),
             parents=p_RV,
-            help="pdf: delete pages (PyMuPDF)",
+            help="pdf: split into separate docs (PyMuPDF)",
         )
         cmd.add_argument("-o", "--out", action="store")
         cmd.add_argument("-i", "--inf", action="store")
@@ -639,6 +639,47 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
                 root=namespace.path,
                 out=namespace.out,
                 inf=namespace.inf,
+                verbose=namespace.verbose,
+            )
+        )
+
+    if not commands or "compress" in commands:
+        cmd = subparsers.add_parser(
+            "{}compress".format(prefix),
+            parents=p_RV,
+            help="pdf: compress embedded images (PyMuPDF)",
+        )
+        cmd.add_argument("-o", "--out", action="store")
+        cmd.add_argument("-i", "--inf", action="store")
+        cmd.add_argument(
+            "-d", "--dpi",
+            action="store",
+            type=int,
+            choices=(150, 200, 300, 400),
+            default=300,
+            help="target embedded image dpi, default %(default)s",
+        )
+        cmd.add_argument(
+            "-q", "--quality",
+            action="store",
+            type=int,
+            metavar="0..100",
+            default=75,
+            help="jpeg recompression quality 0..100, default %(default)s",
+        )
+        cmd.add_argument(
+            "-g", "--grayscale",
+            action="store_true",
+            help="convert the output document to grayscale before rewriting images",
+        )
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_pdf_compress(  # noqa
+                root=namespace.path,
+                out=namespace.out,
+                inf=namespace.inf,
+                dpi=namespace.dpi,
+                quality=namespace.quality,
+                grayscale=namespace.grayscale,
                 verbose=namespace.verbose,
             )
         )
