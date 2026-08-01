@@ -256,15 +256,19 @@ def _extract_image_payload(doc: Any, xref: int) -> Tuple[bytes, str]:
     return image_bytes, normalized_ext
 
 
-def _render_page_payload(page: Any, fitz: Any) -> Tuple[bytes, str]:
+def _render_page_payload(
+    page: Any,
+    fitz: Any,
+    dpi: int = 300,
+) -> Tuple[bytes, str]:
     if hasattr(page, "get_pixmap"):
         try:
-            pixmap = page.get_pixmap(dpi=300)
+            pixmap = page.get_pixmap(dpi=dpi)
         except TypeError:
-            zoom = 300 / 72
+            zoom = dpi / 72
             pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
     elif hasattr(page, "getPixmap"):
-        zoom = 300 / 72
+        zoom = dpi / 72
         pixmap = page.getPixmap(matrix=fitz.Matrix(zoom, zoom))
     else:
         raise RuntimeError("PyMuPDF page object does not support pixmap API")
@@ -591,6 +595,74 @@ def _fit_rect_within(
         x0 + fitted_width,
         y0 + fitted_height,
     )
+
+
+def _render_page_jpeg_bytes(
+    page: Any,
+    fitz: Any,
+    dpi: int,
+    quality: int,
+    grayscale: bool = False,
+) -> bytes:
+    image_bytes, _ = _render_page_payload(page, fitz, dpi=dpi)
+
+    from PIL import Image  # noqa pylint: disable=C0415
+
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        if grayscale:
+            image = image.convert("L")
+        else:
+            if image.mode not in ("1", "L", "RGB", "CMYK"):
+                image = image.convert("RGBA")
+            if image.mode in ("RGBA", "LA"):
+                background = Image.new("RGB", image.size, (255, 255, 255))
+                alpha = image.getchannel("A")
+                background.paste(image, mask=alpha)
+                image = background
+            elif image.mode not in ("L", "RGB", "CMYK"):
+                image = image.convert("RGB")
+
+        output = io.BytesIO()
+        image.save(output, format="JPEG", quality=quality)
+        return output.getvalue()
+
+
+def _rebuild_pdf_pages(
+    src: Any,
+    fitz: Any,
+    output_path: str,
+    dpi: int,
+    quality: int,
+    grayscale: bool = False,
+) -> None:
+    with fitz.open() as out_doc:
+        for page_idx in range(src.page_count):
+            page = src.load_page(page_idx)
+            page_rect = _get_page_rect(page)
+            width_pt, height_pt = _rect_dimensions(page_rect)
+            image_bytes = _render_page_jpeg_bytes(
+                page,
+                fitz,
+                dpi=dpi,
+                quality=quality,
+                grayscale=grayscale,
+            )
+            out_page = out_doc.new_page(width=width_pt, height=height_pt)
+            target_rect = _build_rect(fitz, 0.0, 0.0, width_pt, height_pt)
+            if hasattr(out_page, "insert_image"):
+                out_page.insert_image(
+                    target_rect,
+                    stream=image_bytes,
+                    keep_proportion=False,
+                )
+            elif hasattr(out_page, "insertImage"):
+                out_page.insertImage(target_rect, stream=image_bytes)
+            else:
+                raise RuntimeError(
+                    "PyMuPDF page object does not support image insertion API"
+                )
+
+        out_doc.save(output_path, garbage=3, deflate=True, clean=True)
 
 
 def scale_file(
@@ -1024,6 +1096,7 @@ def compress_file(
     dpi: Any,
     quality: Any = None,
     grayscale: bool = False,
+    rebuild: bool = False,
     verbose: bool = False,
 ) -> bool:
     fitz = _import_fitz("compression")
@@ -1041,23 +1114,33 @@ def compress_file(
 
     try:
         with _open_pdf(fitz, input_file, "compress") as doc:
-            if not hasattr(doc, "rewrite_images"):
-                raise RuntimeError(
-                    "PyMuPDF document does not support image rewrite API"
+            if rebuild:
+                _rebuild_pdf_pages(
+                    doc,
+                    fitz,
+                    output_path,
+                    dpi=normalized_dpi,
+                    quality=normalized_quality,
+                    grayscale=grayscale,
                 )
+            else:
+                if not hasattr(doc, "rewrite_images"):
+                    raise RuntimeError(
+                        "PyMuPDF document does not support image rewrite API"
+                    )
 
-            doc.rewrite_images(
-                dpi_threshold=normalized_dpi + 1,
-                dpi_target=normalized_dpi,
-                quality=normalized_quality,
-                lossy=True,
-                lossless=True,
-                bitonal=True,
-                color=True,
-                gray=True,
-                set_to_gray=grayscale,
-            )
-            doc.save(output_path, garbage=3, deflate=True, clean=True)
+                doc.rewrite_images(
+                    dpi_threshold=normalized_dpi + 1,
+                    dpi_target=normalized_dpi,
+                    quality=normalized_quality,
+                    lossy=True,
+                    lossless=True,
+                    bitonal=True,
+                    color=True,
+                    gray=True,
+                    set_to_gray=grayscale,
+                )
+                doc.save(output_path, garbage=3, deflate=True, clean=True)
             _log_compress_size_report(input_file, output_path)
     except (OSError, RuntimeError, ValueError) as exc:
         logger.error("pdf.compress: failed to process pdf %s", str(exc))

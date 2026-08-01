@@ -743,6 +743,7 @@ def command_pdf_compress(
     dpi: int,
     quality: int,
     grayscale: bool = False,
+    rebuild: bool = False,
     verbose: bool = False,
 ):
     output_path = None
@@ -755,6 +756,7 @@ def command_pdf_compress(
         dpi=dpi,
         quality=quality,
         grayscale=grayscale,
+        rebuild=rebuild,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"

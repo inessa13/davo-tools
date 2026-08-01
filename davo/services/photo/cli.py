@@ -672,6 +672,11 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
             action="store_true",
             help="convert the output document to grayscale before rewriting images",
         )
+        cmd.add_argument(
+            "--rebuild",
+            action="store_true",
+            help="rasterize and rebuild each page at the target dpi",
+        )
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_compress(  # noqa
                 root=namespace.path,
@@ -680,6 +685,7 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
                 dpi=namespace.dpi,
                 quality=namespace.quality,
                 grayscale=namespace.grayscale,
+                rebuild=namespace.rebuild,
                 verbose=namespace.verbose,
             )
         )

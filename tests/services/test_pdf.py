@@ -1,7 +1,9 @@
 import argparse
+import io
 import types
 
 import pytest
+from PIL import Image
 
 from davo.services.photo import cli as photo_cli, helpers, pdf
 
@@ -24,11 +26,18 @@ class FakeOutputPage:
         self.width = width
         self.height = height
         self.shown = []
+        self.inserted = []
 
     def show_pdf_page(
         self, rect, doc, page_idx, keep_proportion=True
     ):
         self.shown.append((rect, doc, page_idx, keep_proportion))
+
+    def insert_image(self, rect, stream, keep_proportion=True):
+        self.inserted.append((rect, stream, keep_proportion))
+
+    def insertImage(self, rect, stream):
+        self.inserted.append((rect, stream, True))
 
 
 class FakePage:
@@ -167,6 +176,13 @@ def fake_fitz(mocker):
     )
     mocker.patch("davo.services.photo.pdf._import_fitz", return_value=fitz_mod)
     return docs
+
+
+def make_png_bytes(size=(8, 8), color=(255, 0, 0)):
+    image = Image.new("RGB", size, color)
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
 
 
 def test_rotate_pages_sets_rotation_and_saves(fake_fitz):
@@ -568,6 +584,21 @@ def test_init_parser_pdf_registers_scale_command():
     assert callable(namespace.func)
 
 
+def test_init_parser_pdf_registers_compress_rebuild_flag():
+    parser = argparse.ArgumentParser()
+
+    photo_cli.init_parser_pdf(parser)
+
+    namespace = parser.parse_args(
+        ["compress", "-i", "a.pdf", "--dpi", "200", "--rebuild"]
+    )
+
+    assert namespace.inf == "a.pdf"
+    assert namespace.dpi == 200
+    assert namespace.rebuild is True
+    assert callable(namespace.func)
+
+
 def test_inspect_pages_classifies_text_vector_empty_and_mixed(fake_fitz):
     fake_fitz["/a.pdf"] = FakeDoc(
         page_count=4,
@@ -799,6 +830,99 @@ def test_command_pdf_scale_passes_paths_and_format(monkeypatch):
             {
                 "pages": [2, 1],
                 "paper_format": "a5",
+                "verbose": True,
+            },
+        )
+    ]
+
+
+def test_compress_file_rebuild_renders_pages_and_inserts_full_page_images(
+    fake_fitz,
+):
+    png_bytes = make_png_bytes()
+    fake_fitz["/a.pdf"] = FakeDoc(
+        page_count=2,
+        pages=[
+            FakePage(rect=FakeRect(595, 842), rendered_bytes=png_bytes),
+            FakePage(rect=FakeRect(400, 200), rendered_bytes=png_bytes),
+        ],
+    )
+
+    status = pdf.compress_file(
+        "/a.pdf",
+        "/out.pdf",
+        200,
+        rebuild=True,
+    )
+
+    assert status is True
+    assert fake_fitz["/a.pdf"].rewritten == []
+    assert fake_fitz["/a.pdf"].pages[0].pixmap_calls == [{"dpi": 200}]
+    assert fake_fitz["/a.pdf"].pages[1].pixmap_calls == [{"dpi": 200}]
+    created = fake_fitz["__created__"][0]
+    assert created.saved == [
+        ("/out.pdf", {"garbage": 3, "deflate": True, "clean": True})
+    ]
+    assert [
+        (page.width, page.height) for page in created.new_pages
+    ] == [(595, 842), (400, 200)]
+    assert created.new_pages[0].inserted[0][0] == (0.0, 0.0, 595.0, 842.0)
+    assert created.new_pages[1].inserted[0][0] == (0.0, 0.0, 400.0, 200.0)
+    assert created.new_pages[0].inserted[0][2] is False
+    assert created.new_pages[1].inserted[0][2] is False
+    assert created.new_pages[0].inserted[0][1]
+    assert created.new_pages[1].inserted[0][1]
+
+
+def test_compress_file_rebuild_uses_default_output_name(fake_fitz):
+    fake_fitz["/a.pdf"] = FakeDoc(
+        page_count=1,
+        pages=[FakePage(rect=FakeRect(595, 842), rendered_bytes=make_png_bytes())],
+    )
+
+    status = pdf.compress_file("/a.pdf", None, 200, rebuild=True)
+
+    assert status is True
+    created = fake_fitz["__created__"][0]
+    assert created.saved == [
+        (
+            "/a_compressed_200dpi.pdf",
+            {"garbage": 3, "deflate": True, "clean": True},
+        )
+    ]
+
+
+def test_command_pdf_compress_passes_rebuild_flag(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        pdf,
+        "compress_file",
+        lambda input_file, output_path, dpi, **kwargs: calls.append(
+            (input_file, output_path, dpi, kwargs)
+        )
+        or True,
+    )
+
+    helpers.command_pdf_compress(
+        "/root",
+        "out.pdf",
+        "a.pdf",
+        200,
+        55,
+        grayscale=True,
+        rebuild=True,
+        verbose=True,
+    )
+
+    assert calls == [
+        (
+            "/root/a.pdf",
+            "/root/out.pdf",
+            200,
+            {
+                "quality": 55,
+                "grayscale": True,
+                "rebuild": True,
                 "verbose": True,
             },
         )
