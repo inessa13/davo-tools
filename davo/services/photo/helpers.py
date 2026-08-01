@@ -804,3 +804,26 @@ def command_pdf_info(
         return
 
     print(pdf.format_page_info_report(rows))
+
+
+def command_pdf_scale(
+    root,
+    out: str,
+    inf: str,
+    pages: list = None,
+    paper_format: str = "a4",
+    verbose: bool = False,
+):
+    output_path = None
+    if out:
+        output_path = os.path.join(root, out)
+
+    status = pdf.scale_file(
+        os.path.join(root, inf),
+        output_path,
+        pages=pages,
+        paper_format=paper_format,
+        verbose=verbose,
+    )
+    status_h = "prepared" if status else "failed"
+    logger.info("pdf %s: %s", status_h, out or inf)

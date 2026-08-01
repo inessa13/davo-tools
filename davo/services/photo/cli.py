@@ -746,6 +746,41 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
             )
         )
 
+    if not commands or "scale" in commands:
+        cmd = subparsers.add_parser(
+            "{}scale".format(prefix),
+            parents=p_RV,
+            help="pdf: scale pages to A4/A5 (PyMuPDF)",
+        )
+        cmd.add_argument("-o", "--out", action="store")
+        cmd.add_argument("-i", "--inf", action="store")
+        cmd.add_argument(
+            "-p",
+            "--pages",
+            nargs="+",
+            type=int,
+            help="pages to scale, 1-based",
+        )
+        cmd.add_argument(
+            "-f",
+            "--format",
+            dest="paper_format",
+            action="store",
+            choices=("a4", "a5"),
+            default="a4",
+            help="target paper format, default %(default)s",
+        )
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_pdf_scale(  # noqa
+                root=namespace.path,
+                out=namespace.out,
+                inf=namespace.inf,
+                pages=namespace.pages,
+                paper_format=namespace.paper_format,
+                verbose=namespace.verbose,
+            )
+        )
+
 
 def main():
     logging.config.dictConfig(davo.settings.LOGGING)

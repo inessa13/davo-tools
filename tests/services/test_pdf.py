@@ -7,9 +7,28 @@ from davo.services.photo import cli as photo_cli, helpers, pdf
 
 
 class FakeRect:
+    def __init__(self, width, height, x0=0, y0=0):
+        self.x0 = x0
+        self.y0 = y0
+        self.width = width
+        self.height = height
+        self.x1 = x0 + width
+        self.y1 = y0 + height
+
+    def as_tuple(self):
+        return (self.x0, self.y0, self.x1, self.y1)
+
+
+class FakeOutputPage:
     def __init__(self, width, height):
         self.width = width
         self.height = height
+        self.shown = []
+
+    def show_pdf_page(
+        self, rect, doc, page_idx, keep_proportion=True
+    ):
+        self.shown.append((rect, doc, page_idx, keep_proportion))
 
 
 class FakePage:
@@ -89,6 +108,7 @@ class FakeDoc:
         self.deleted = []
         self.inserted = []
         self.rewritten = []
+        self.new_pages = []
 
     def __enter__(self):
         return self
@@ -114,6 +134,11 @@ class FakeDoc:
     def rewrite_images(self, **kwargs):
         self.rewritten.append(kwargs)
 
+    def new_page(self, width, height):
+        page = FakeOutputPage(width, height)
+        self.new_pages.append(page)
+        return page
+
 
 @pytest.fixture(autouse=True)
 def fake_paths(monkeypatch):
@@ -123,11 +148,13 @@ def fake_paths(monkeypatch):
 
 @pytest.fixture()
 def fake_fitz(mocker):
-    docs = {}
+    docs = {"__created__": []}
 
     def _open(*args):
         if len(args) == 0:
-            return FakeDoc(page_count=0)
+            doc = FakeDoc(page_count=0)
+            docs["__created__"].append(doc)
+            return doc
         key = args[0]
         if key not in docs:
             docs[key] = FakeDoc(page_count=3)
@@ -136,6 +163,7 @@ def fake_fitz(mocker):
     fitz_mod = types.SimpleNamespace(
         open=_open,
         Matrix=lambda x, y: (x, y),
+        Rect=lambda x0, y0, x1, y1: (x0, y0, x1, y1),
     )
     mocker.patch("davo.services.photo.pdf._import_fitz", return_value=fitz_mod)
     return docs
@@ -524,6 +552,22 @@ def test_init_parser_pdf_registers_info_command():
     assert callable(namespace.func)
 
 
+def test_init_parser_pdf_registers_scale_command():
+    parser = argparse.ArgumentParser()
+
+    photo_cli.init_parser_pdf(parser)
+
+    namespace = parser.parse_args(
+        ["scale", "-i", "a.pdf", "-o", "out.pdf", "-p", "2", "1", "--format", "a5"]
+    )
+
+    assert namespace.inf == "a.pdf"
+    assert namespace.out == "out.pdf"
+    assert namespace.pages == [2, 1]
+    assert namespace.paper_format == "a5"
+    assert callable(namespace.func)
+
+
 def test_inspect_pages_classifies_text_vector_empty_and_mixed(fake_fitz):
     fake_fitz["/a.pdf"] = FakeDoc(
         page_count=4,
@@ -640,3 +684,122 @@ def test_command_pdf_info_prints_report(monkeypatch, capsys):
     assert "Page" in output
     assert "empty" in output
     assert "595x842 pt (210x297 mm)" in output
+
+
+def test_scale_file_uses_default_output_name_and_a4_portrait(fake_fitz):
+    fake_fitz["/a.pdf"] = FakeDoc(
+        page_count=1,
+        pages=[FakePage(rect=FakeRect(200, 400))],
+    )
+
+    status = pdf.scale_file("/a.pdf", None, paper_format="a4")
+
+    assert status is True
+    created = fake_fitz["__created__"][0]
+    assert created.saved == [
+        (
+            "/a_scaled_a4.pdf",
+            {"garbage": 3, "deflate": True, "clean": True},
+        )
+    ]
+    assert len(created.new_pages) == 1
+    new_page = created.new_pages[0]
+    assert round(new_page.width, 3) == round(210.0 * 72.0 / 25.4, 3)
+    assert round(new_page.height, 3) == round(297.0 * 72.0 / 25.4, 3)
+    shown_rect, shown_doc, shown_idx, keep_proportion = new_page.shown[0]
+    assert shown_doc is fake_fitz["/a.pdf"]
+    assert shown_idx == 0
+    assert keep_proportion is True
+    a4_width = 210.0 * 72.0 / 25.4
+    a4_height = 297.0 * 72.0 / 25.4
+    scale = min(a4_width / 200.0, a4_height / 400.0)
+    fitted_width = 200.0 * scale
+    assert shown_rect == pytest.approx(
+        (
+            (a4_width - fitted_width) / 2.0,
+            0.0,
+            (a4_width + fitted_width) / 2.0,
+            a4_height,
+        )
+    )
+
+
+def test_scale_file_supports_a5_landscape(fake_fitz):
+    fake_fitz["/landscape.pdf"] = FakeDoc(
+        page_count=1,
+        pages=[FakePage(rect=FakeRect(400, 200))],
+    )
+
+    status = pdf.scale_file("/landscape.pdf", "/out.pdf", paper_format="a5")
+
+    assert status is True
+    created = fake_fitz["__created__"][0]
+    assert created.saved == [
+        ("/out.pdf", {"garbage": 3, "deflate": True, "clean": True})
+    ]
+    new_page = created.new_pages[0]
+    assert round(new_page.width, 3) == round(210.0 * 72.0 / 25.4, 3)
+    assert round(new_page.height, 3) == round(148.0 * 72.0 / 25.4, 3)
+    shown_rect = new_page.shown[0][0]
+    a5_width = 210.0 * 72.0 / 25.4
+    a5_height = 148.0 * 72.0 / 25.4
+    scale = min(a5_width / 400.0, a5_height / 200.0)
+    fitted_height = 200.0 * scale
+    assert shown_rect == pytest.approx(
+        (
+            0.0,
+            (a5_height - fitted_height) / 2.0,
+            a5_width,
+            (a5_height + fitted_height) / 2.0,
+        )
+    )
+
+
+def test_scale_file_respects_page_selection_order(fake_fitz):
+    fake_fitz["/a.pdf"] = FakeDoc(
+        page_count=3,
+        pages=[
+            FakePage(rect=FakeRect(200, 400)),
+            FakePage(rect=FakeRect(400, 200)),
+            FakePage(rect=FakeRect(300, 300)),
+        ],
+    )
+
+    status = pdf.scale_file("/a.pdf", "/out.pdf", pages=[2, 1])
+
+    assert status is True
+    created = fake_fitz["__created__"][0]
+    assert [page.shown[0][2] for page in created.new_pages] == [1, 0]
+
+
+def test_command_pdf_scale_passes_paths_and_format(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        pdf,
+        "scale_file",
+        lambda input_file, output_path, **kwargs: calls.append(
+            (input_file, output_path, kwargs)
+        )
+        or True,
+    )
+
+    helpers.command_pdf_scale(
+        "/root",
+        "out.pdf",
+        "a.pdf",
+        pages=[2, 1],
+        paper_format="a5",
+        verbose=True,
+    )
+
+    assert calls == [
+        (
+            "/root/a.pdf",
+            "/root/out.pdf",
+            {
+                "pages": [2, 1],
+                "paper_format": "a5",
+                "verbose": True,
+            },
+        )
+    ]

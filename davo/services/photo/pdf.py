@@ -14,6 +14,10 @@ _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
 _EXTRACT_OUTPUT_TYPES = {"jpg", "png"}
 _COMPRESS_DPI_PRESETS = {200, 300, 400}
 _COMPRESS_JPEG_QUALITY = 75
+_PAPER_FORMATS = {
+    "a4": (210.0 * 72.0 / 25.4, 297.0 * 72.0 / 25.4),
+    "a5": (148.0 * 72.0 / 25.4, 210.0 * 72.0 / 25.4),
+}
 
 
 def _import_fitz(action: str) -> types.ModuleType:
@@ -533,6 +537,127 @@ def format_page_info_report(rows: Sequence[Dict[str, Any]]) -> str:
             )
         )
     return "\n".join(rendered_rows)
+
+
+def _normalize_scale_format(paper_format: Optional[str]) -> str:
+    normalized = str(paper_format or "a4").lower()
+    if normalized not in _PAPER_FORMATS:
+        raise ValueError(f"unsupported paper format: {paper_format!r}")
+    return normalized
+
+
+def _resolve_target_page_size(
+    paper_format: str,
+    source_rect: Any,
+) -> Tuple[float, float]:
+    width_pt, height_pt = _PAPER_FORMATS[paper_format]
+    source_width, source_height = _rect_dimensions(source_rect)
+    if source_width > source_height:
+        return height_pt, width_pt
+    return width_pt, height_pt
+
+
+def _build_rect(
+    fitz: Any,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+) -> Any:
+    if hasattr(fitz, "Rect"):
+        return fitz.Rect(x0, y0, x1, y1)
+    return (x0, y0, x1, y1)
+
+
+def _fit_rect_within(
+    fitz: Any,
+    source_rect: Any,
+    target_width: float,
+    target_height: float,
+) -> Any:
+    source_width, source_height = _rect_dimensions(source_rect)
+    if source_width <= 0 or source_height <= 0:
+        raise RuntimeError("source page has invalid bounds")
+
+    scale = min(target_width / source_width, target_height / source_height)
+    fitted_width = source_width * scale
+    fitted_height = source_height * scale
+    x0 = (target_width - fitted_width) / 2.0
+    y0 = (target_height - fitted_height) / 2.0
+    return _build_rect(
+        fitz,
+        x0,
+        y0,
+        x0 + fitted_width,
+        y0 + fitted_height,
+    )
+
+
+def scale_file(
+    input_file: str,
+    output_path: Optional[str],
+    pages: Optional[Iterable[int]] = None,
+    paper_format: Optional[str] = None,
+    verbose: bool = False,
+) -> bool:
+    fitz = _import_fitz("scaling")
+
+    if not _validate_source_pdf("scale", input_file, verbose):
+        return False
+
+    normalized_format = _normalize_scale_format(paper_format)
+    if output_path is None:
+        output_path = _default_output(
+            input_file,
+            f"_scaled_{normalized_format}",
+        )
+
+    try:
+        with _open_pdf(fitz, input_file, "scale") as src:
+            page_indices = _normalize_extract_pages(pages, src.page_count)
+            if not page_indices:
+                if verbose:
+                    logger.warning("pdf.scale: no pages selected")
+                return False
+
+            with fitz.open() as out_doc:
+                for page_idx in page_indices:
+                    page = src.load_page(page_idx)
+                    page_rect = _get_page_rect(page)
+                    target_width, target_height = _resolve_target_page_size(
+                        normalized_format,
+                        page_rect,
+                    )
+                    dest_page = out_doc.new_page(
+                        width=target_width,
+                        height=target_height,
+                    )
+                    dest_rect = _fit_rect_within(
+                        fitz,
+                        page_rect,
+                        target_width,
+                        target_height,
+                    )
+                    if hasattr(dest_page, "show_pdf_page"):
+                        dest_page.show_pdf_page(
+                            dest_rect,
+                            src,
+                            page_idx,
+                            keep_proportion=True,
+                        )
+                    elif hasattr(dest_page, "showPDFpage"):
+                        dest_page.showPDFpage(dest_rect, src, page_idx)
+                    else:
+                        raise RuntimeError(
+                            "PyMuPDF page object does not support page placement API"
+                        )
+
+                out_doc.save(output_path, garbage=3, deflate=True, clean=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.error("pdf.scale: failed to scale pdf %s", str(exc))
+        return False
+
+    return True
 
 
 def _write_extracted_image(
