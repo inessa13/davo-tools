@@ -787,3 +787,20 @@ def command_pdf_extract(
     )
     status_h = "prepared" if status else "failed"
     logger.info("pdf %s: %s", status_h, inf)
+
+
+def command_pdf_info(
+    root,
+    inf: str,
+    pages: list = None,
+    verbose: bool = False,
+):
+    rows = pdf.inspect_pages(
+        os.path.join(root, inf),
+        pages=pages,
+        verbose=verbose,
+    )
+    if rows is None:
+        return
+
+    print(pdf.format_page_info_report(rows))

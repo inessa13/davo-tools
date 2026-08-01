@@ -1,8 +1,15 @@
+import argparse
 import types
 
 import pytest
 
-from davo.services.photo import pdf
+from davo.services.photo import cli as photo_cli, helpers, pdf
+
+
+class FakeRect:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
 
 
 class FakePage:
@@ -12,12 +19,20 @@ class FakePage:
         with_rotation=True,
         images=None,
         rendered_bytes=None,
+        text="",
+        drawings=None,
+        image_rects=None,
+        rect=None,
     ):
         self.rotation = []
         self.rotation_legacy = []
         self.images = images or []
         self.rendered_bytes = rendered_bytes or b"rendered-page"
         self.pixmap_calls = []
+        self.text = text
+        self.drawings = drawings or []
+        self.image_rects = image_rects or {}
+        self.rect = rect or FakeRect(595, 842)
         if with_rotation:
             if use_legacy:
                 self.setRotation = self._set_rotation_legacy
@@ -32,6 +47,22 @@ class FakePage:
 
     def get_images(self, full=True):
         return list(self.images)
+
+    def get_text(self, output="text"):
+        assert output == "text"
+        return self.text
+
+    def getText(self, output="text"):
+        return self.get_text(output)
+
+    def get_drawings(self):
+        return list(self.drawings)
+
+    def getDrawings(self):
+        return self.get_drawings()
+
+    def get_image_rects(self, xref):
+        return list(self.image_rects.get(xref, []))
 
     def get_pixmap(self, **kwargs):
         self.pixmap_calls.append(kwargs)
@@ -479,3 +510,133 @@ def test_extract_images_whole_page_mode_renders_selected_pages(
     ]
     assert fake_fitz["/a.pdf"].pages[1].pixmap_calls == [{"dpi": 300}]
     assert fake_fitz["/a.pdf"].pages[0].pixmap_calls == [{"dpi": 300}]
+
+
+def test_init_parser_pdf_registers_info_command():
+    parser = argparse.ArgumentParser()
+
+    photo_cli.init_parser_pdf(parser)
+
+    namespace = parser.parse_args(["info", "-i", "a.pdf", "-p", "2", "1"])
+
+    assert namespace.inf == "a.pdf"
+    assert namespace.pages == [2, 1]
+    assert callable(namespace.func)
+
+
+def test_inspect_pages_classifies_text_vector_empty_and_mixed(fake_fitz):
+    fake_fitz["/a.pdf"] = FakeDoc(
+        page_count=4,
+        pages=[
+            FakePage(text="hello"),
+            FakePage(drawings=[object()]),
+            FakePage(),
+            FakePage(
+                text="caption",
+                images=[(41,)],
+                image_rects={41: [FakeRect(100, 100)]},
+            ),
+        ],
+        extracted_images={
+            41: {"width": 400, "height": 400},
+        },
+    )
+
+    rows = pdf.inspect_pages("/a.pdf")
+
+    assert [row["type"] for row in rows] == [
+        "text",
+        "vector",
+        "empty",
+        "mixed",
+    ]
+    assert [row["resolution"] for row in rows[:3]] == ["-", "-", "-"]
+
+
+def test_inspect_pages_classifies_raster_and_formats_metadata(fake_fitz):
+    page_rect = FakeRect(595, 842)
+    fake_fitz["/scan.pdf"] = FakeDoc(
+        page_count=1,
+        pages=[
+            FakePage(
+                images=[(11,)],
+                image_rects={11: [page_rect]},
+                rect=page_rect,
+            )
+        ],
+        extracted_images={
+            11: {"width": 2480, "height": 3508},
+        },
+    )
+
+    rows = pdf.inspect_pages("/scan.pdf")
+
+    assert rows == [
+        {
+            "page": 1,
+            "type": "raster",
+            "resolution": "300x300 dpi",
+            "x_resolution": 300,
+            "y_resolution": 300,
+            "orientation": "portrait",
+            "page_size": "595x842 pt (210x297 mm)",
+        }
+    ]
+
+
+def test_inspect_pages_uses_visible_bbox_and_reused_xref_for_multi_raster(
+    fake_fitz,
+):
+    fake_fitz["/multi.pdf"] = FakeDoc(
+        page_count=1,
+        pages=[
+            FakePage(
+                images=[(11,)],
+                image_rects={
+                    11: [FakeRect(100, 100), FakeRect(360, 360)],
+                },
+            )
+        ],
+        extracted_images={
+            11: {"width": 1500, "height": 1500},
+        },
+    )
+
+    rows = pdf.inspect_pages("/multi.pdf")
+
+    assert rows == [
+        {
+            "page": 1,
+            "type": "multi-raster",
+            "resolution": "300x300 dpi",
+            "x_resolution": 300,
+            "y_resolution": 300,
+            "orientation": "portrait",
+            "page_size": "595x842 pt (210x297 mm)",
+        }
+    ]
+
+
+def test_command_pdf_info_prints_report(monkeypatch, capsys):
+    monkeypatch.setattr(
+        pdf,
+        "inspect_pages",
+        lambda *_args, **_kwargs: [
+            {
+                "page": 1,
+                "type": "empty",
+                "resolution": "-",
+                "x_resolution": None,
+                "y_resolution": None,
+                "orientation": "portrait",
+                "page_size": "595x842 pt (210x297 mm)",
+            }
+        ],
+    )
+
+    helpers.command_pdf_info("/root", "a.pdf")
+
+    output = capsys.readouterr().out
+    assert "Page" in output
+    assert "empty" in output
+    assert "595x842 pt (210x297 mm)" in output

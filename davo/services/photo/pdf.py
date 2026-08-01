@@ -3,7 +3,7 @@ import logging
 import os
 import tempfile
 import types
-from typing import Any, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from davo.utils import format as format_utils
 
@@ -269,6 +269,270 @@ def _render_page_payload(page: Any, fitz: Any) -> Tuple[bytes, str]:
         return pixmap.tobytes("png"), "png"
 
     raise RuntimeError("PyMuPDF pixmap does not support bytes export API")
+
+
+def _get_page_text(page: Any) -> str:
+    if hasattr(page, "get_text"):
+        return page.get_text("text")
+    if hasattr(page, "getText"):
+        return page.getText("text")
+    raise RuntimeError("PyMuPDF page object does not support text API")
+
+
+def _get_page_drawings(page: Any) -> List[Any]:
+    if hasattr(page, "get_drawings"):
+        return list(page.get_drawings())
+    if hasattr(page, "getDrawings"):
+        return list(page.getDrawings())
+    raise RuntimeError("PyMuPDF page object does not support drawings API")
+
+
+def _get_page_rect(page: Any) -> Any:
+    rect = getattr(page, "rect", None)
+    if rect is not None:
+        return rect
+    if hasattr(page, "bound"):
+        return page.bound()
+    raise RuntimeError("PyMuPDF page object does not expose page bounds")
+
+
+def _rect_dimensions(rect: Any) -> Tuple[float, float]:
+    width = getattr(rect, "width", None)
+    height = getattr(rect, "height", None)
+    if width is not None and height is not None:
+        return float(width), float(height)
+
+    if isinstance(rect, (list, tuple)) and len(rect) >= 4:
+        return float(rect[2] - rect[0]), float(rect[3] - rect[1])
+
+    raise RuntimeError(f"unsupported rect representation: {rect!r}")
+
+
+def _rect_area(rect: Any) -> float:
+    width, height = _rect_dimensions(rect)
+    return max(width, 0.0) * max(height, 0.0)
+
+
+def _get_page_image_rects(page: Any, xref: int) -> List[Any]:
+    if hasattr(page, "get_image_rects"):
+        rects = page.get_image_rects(xref)
+    elif hasattr(page, "getImageRects"):
+        rects = page.getImageRects(xref)
+    else:
+        raise RuntimeError(
+            "PyMuPDF page object does not support image rect listing API"
+        )
+    return list(rects or [])
+
+
+def _extract_image_dimensions(doc: Any, xref: int) -> Tuple[int, int]:
+    if hasattr(doc, "extract_image"):
+        payload = doc.extract_image(xref)
+    elif hasattr(doc, "extractImage"):
+        payload = doc.extractImage(xref)
+    else:
+        raise RuntimeError(
+            "PyMuPDF document does not support image extraction API"
+        )
+
+    width = payload.get("width")
+    height = payload.get("height")
+    if width and height:
+        return int(width), int(height)
+
+    image_bytes = payload.get("image")
+    if not image_bytes:
+        raise RuntimeError(f"invalid extracted image payload for xref {xref}")
+
+    from PIL import Image  # noqa pylint: disable=C0415
+
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        return int(image.width), int(image.height)
+
+
+def _inspect_page_raster_placements(doc: Any, page: Any) -> List[Dict[str, Any]]:
+    placements: List[Dict[str, Any]] = []
+    for xref in _list_page_image_xrefs(page):
+        width_px, height_px = _extract_image_dimensions(doc, xref)
+        for rect in _get_page_image_rects(page, xref):
+            width_pt, height_pt = _rect_dimensions(rect)
+            if width_pt <= 0 or height_pt <= 0:
+                continue
+
+            width_in = width_pt / 72.0
+            height_in = height_pt / 72.0
+            if width_in <= 0 or height_in <= 0:
+                continue
+
+            placements.append(
+                {
+                    "xref": xref,
+                    "width_px": width_px,
+                    "height_px": height_px,
+                    "width_pt": width_pt,
+                    "height_pt": height_pt,
+                    "area_pt": width_pt * height_pt,
+                    "x_dpi": width_px / width_in,
+                    "y_dpi": height_px / height_in,
+                }
+            )
+    return placements
+
+
+def _classify_page_type(
+    has_text: bool,
+    has_vector: bool,
+    raster_placements: Sequence[Dict[str, Any]],
+    page_area: float,
+    raster_coverage_threshold: float,
+) -> str:
+    raster_count = len(raster_placements)
+    if not has_text and not has_vector and raster_count == 0:
+        return "empty"
+    if has_text and not has_vector and raster_count == 0:
+        return "text"
+    if has_vector and not has_text and raster_count == 0:
+        return "vector"
+    if not has_text and not has_vector and raster_count > 1:
+        return "multi-raster"
+    if not has_text and not has_vector and raster_count == 1:
+        dominant_area = raster_placements[0]["area_pt"]
+        coverage = 0.0
+        if page_area > 0:
+            coverage = dominant_area / page_area
+        if coverage >= raster_coverage_threshold:
+            return "raster"
+    return "mixed"
+
+
+def _format_resolution_value(value: Optional[int]) -> str:
+    if value is None:
+        return "-"
+    return str(value)
+
+
+def _format_page_size(rect: Any) -> str:
+    width_pt, height_pt = _rect_dimensions(rect)
+    width_pt_h = int(round(width_pt))
+    height_pt_h = int(round(height_pt))
+    width_mm = int(round(width_pt * 25.4 / 72.0))
+    height_mm = int(round(height_pt * 25.4 / 72.0))
+    return (
+        f"{width_pt_h}x{height_pt_h} pt "
+        f"({width_mm}x{height_mm} mm)"
+    )
+
+
+def inspect_pages(
+    input_file: str,
+    pages: Optional[Iterable[int]] = None,
+    verbose: bool = False,
+    raster_coverage_threshold: float = 0.9,
+) -> Optional[List[Dict[str, Any]]]:
+    fitz = _import_fitz("page inspection")
+
+    if not _validate_source_pdf("info", input_file, verbose):
+        return None
+
+    try:
+        with _open_pdf(fitz, input_file, "info") as doc:
+            page_indices = _normalize_extract_pages(pages, doc.page_count)
+            rows: List[Dict[str, Any]] = []
+            for page_idx in page_indices:
+                page = doc.load_page(page_idx)
+                page_rect = _get_page_rect(page)
+                page_area = _rect_area(page_rect)
+                has_text = bool(_get_page_text(page).strip())
+                has_vector = bool(_get_page_drawings(page))
+                raster_placements = _inspect_page_raster_placements(doc, page)
+                dominant = None
+                if raster_placements:
+                    dominant = max(
+                        raster_placements,
+                        key=lambda item: item["area_pt"],
+                    )
+
+                page_type = _classify_page_type(
+                    has_text,
+                    has_vector,
+                    raster_placements,
+                    page_area,
+                    raster_coverage_threshold,
+                )
+                x_resolution = None
+                y_resolution = None
+                resolution = "-"
+                if dominant is not None:
+                    x_resolution = int(round(dominant["x_dpi"]))
+                    y_resolution = int(round(dominant["y_dpi"]))
+                    resolution = f"{x_resolution}x{y_resolution} dpi"
+
+                width_pt, height_pt = _rect_dimensions(page_rect)
+                if abs(width_pt - height_pt) < 0.01:
+                    orientation = "square"
+                elif width_pt > height_pt:
+                    orientation = "landscape"
+                else:
+                    orientation = "portrait"
+
+                rows.append(
+                    {
+                        "page": page_idx + 1,
+                        "type": page_type,
+                        "resolution": resolution,
+                        "x_resolution": x_resolution,
+                        "y_resolution": y_resolution,
+                        "orientation": orientation,
+                        "page_size": _format_page_size(page_rect),
+                    }
+                )
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.error("pdf.info: failed to inspect pdf %s", str(exc))
+        return None
+
+    return rows
+
+
+def format_page_info_report(rows: Sequence[Dict[str, Any]]) -> str:
+    headers = [
+        "Page",
+        "Type",
+        "Resolution",
+        "XResolution",
+        "YResolution",
+        "Orientation",
+        "PageSize",
+    ]
+    table_rows = [
+        [
+            str(row["page"]),
+            row["type"],
+            row["resolution"],
+            _format_resolution_value(row["x_resolution"]),
+            _format_resolution_value(row["y_resolution"]),
+            row["orientation"],
+            row["page_size"],
+        ]
+        for row in rows
+    ]
+
+    widths = [len(header) for header in headers]
+    for row in table_rows:
+        for idx, value in enumerate(row):
+            widths[idx] = max(widths[idx], len(value))
+
+    rendered_rows = [
+        "  ".join(
+            header.ljust(widths[idx]) for idx, header in enumerate(headers)
+        )
+    ]
+    for row in table_rows:
+        rendered_rows.append(
+            "  ".join(
+                value.ljust(widths[idx]) for idx, value in enumerate(row)
+            )
+        )
+    return "\n".join(rendered_rows)
 
 
 def _write_extracted_image(

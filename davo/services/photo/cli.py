@@ -723,6 +723,29 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
             )
         )
 
+    if not commands or "info" in commands:
+        cmd = subparsers.add_parser(
+            "{}info".format(prefix),
+            parents=p_RV,
+            help="pdf: show page metadata (PyMuPDF)",
+        )
+        cmd.add_argument("-i", "--inf", action="store")
+        cmd.add_argument(
+            "-p",
+            "--pages",
+            nargs="+",
+            type=int,
+            help="pages to inspect, 1-based",
+        )
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_pdf_info(  # noqa
+                root=namespace.path,
+                inf=namespace.inf,
+                pages=namespace.pages,
+                verbose=namespace.verbose,
+            )
+        )
+
 
 def main():
     logging.config.dictConfig(davo.settings.LOGGING)
