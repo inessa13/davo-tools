@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
 _EXTRACT_OUTPUT_TYPES = {"jpg", "png"}
-_COMPRESS_DPI_PRESETS = {200, 300, 400}
+_COMPRESS_DPI_PRESETS = {150, 200, 300, 400}
 _COMPRESS_JPEG_QUALITY = 75
 _PAPER_FORMATS = {
     "a4": (210.0 * 72.0 / 25.4, 297.0 * 72.0 / 25.4),
@@ -470,10 +470,14 @@ def inspect_pages(
                 x_resolution = None
                 y_resolution = None
                 resolution = "-"
+                image_size_px = "-"
                 if dominant is not None:
                     x_resolution = int(round(dominant["x_dpi"]))
                     y_resolution = int(round(dominant["y_dpi"]))
                     resolution = f"{x_resolution}x{y_resolution} dpi"
+                    image_size_px = (
+                        f'{dominant["width_px"]}x{dominant["height_px"]} px'
+                    )
 
                 width_pt, height_pt = _rect_dimensions(page_rect)
                 if abs(width_pt - height_pt) < 0.01:
@@ -488,6 +492,7 @@ def inspect_pages(
                         "page": page_idx + 1,
                         "type": page_type,
                         "resolution": resolution,
+                        "image_size_px": image_size_px,
                         "x_resolution": x_resolution,
                         "y_resolution": y_resolution,
                         "orientation": orientation,
@@ -506,6 +511,7 @@ def format_page_info_report(rows: Sequence[Dict[str, Any]]) -> str:
         "Page",
         "Type",
         "Resolution",
+        "ImageSizePx",
         "XResolution",
         "YResolution",
         "Orientation",
@@ -516,6 +522,7 @@ def format_page_info_report(rows: Sequence[Dict[str, Any]]) -> str:
             str(row["page"]),
             row["type"],
             row["resolution"],
+            row["image_size_px"],
             _format_resolution_value(row["x_resolution"]),
             _format_resolution_value(row["y_resolution"]),
             row["orientation"],

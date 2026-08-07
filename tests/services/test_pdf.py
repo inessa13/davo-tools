@@ -626,6 +626,7 @@ def test_inspect_pages_classifies_text_vector_empty_and_mixed(fake_fitz):
         "mixed",
     ]
     assert [row["resolution"] for row in rows[:3]] == ["-", "-", "-"]
+    assert [row["image_size_px"] for row in rows[:3]] == ["-", "-", "-"]
 
 
 def test_inspect_pages_classifies_raster_and_formats_metadata(fake_fitz):
@@ -651,6 +652,7 @@ def test_inspect_pages_classifies_raster_and_formats_metadata(fake_fitz):
             "page": 1,
             "type": "raster",
             "resolution": "300x300 dpi",
+            "image_size_px": "2480x3508 px",
             "x_resolution": 300,
             "y_resolution": 300,
             "orientation": "portrait",
@@ -684,6 +686,7 @@ def test_inspect_pages_uses_visible_bbox_and_reused_xref_for_multi_raster(
             "page": 1,
             "type": "multi-raster",
             "resolution": "300x300 dpi",
+            "image_size_px": "1500x1500 px",
             "x_resolution": 300,
             "y_resolution": 300,
             "orientation": "portrait",
@@ -701,6 +704,7 @@ def test_command_pdf_info_prints_report(monkeypatch, capsys):
                 "page": 1,
                 "type": "empty",
                 "resolution": "-",
+                "image_size_px": "-",
                 "x_resolution": None,
                 "y_resolution": None,
                 "orientation": "portrait",
@@ -713,6 +717,7 @@ def test_command_pdf_info_prints_report(monkeypatch, capsys):
 
     output = capsys.readouterr().out
     assert "Page" in output
+    assert "ImageSizePx" in output
     assert "empty" in output
     assert "595x842 pt (210x297 mm)" in output
 
