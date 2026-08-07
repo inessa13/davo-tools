@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 import argparse
 import io
 import types
@@ -5,7 +6,8 @@ import types
 import pytest
 from PIL import Image
 
-from davo.services.photo import cli as photo_cli, helpers, pdf
+from davo.services.photo import cli as photo_cli
+from davo.services.photo import helpers, pdf
 
 
 class FakeRect:
@@ -415,8 +417,10 @@ def test_extract_images_uses_default_prefix_and_global_counter(
     monkeypatch.setattr(
         pdf,
         "_write_extracted_image",
-        lambda image_bytes, source_ext, target_path, output_type: written.append(
-            (image_bytes, source_ext, target_path, output_type)
+        lambda image_bytes, source_ext, target_path, output_type: (
+            written.append(
+                (image_bytes, source_ext, target_path, output_type)
+            )
         ),
     )
 
@@ -456,12 +460,19 @@ def test_extract_images_respects_selected_page_order_and_output_type(
     monkeypatch.setattr(
         pdf,
         "_write_extracted_image",
-        lambda image_bytes, source_ext, target_path, output_type: written.append(
-            (image_bytes, source_ext, target_path, output_type)
+        lambda image_bytes, source_ext, target_path, output_type: (
+            written.append(
+                (image_bytes, source_ext, target_path, output_type)
+            )
         ),
     )
 
-    status = pdf.extract_images("/a.pdf", "/tmp/out.png", pages=[2, 1], output_type="png")
+    status = pdf.extract_images(
+        "/a.pdf",
+        "/tmp/out.png",
+        pages=[2, 1],
+        output_type="png",
+    )
 
     assert status is True
     assert written == [
@@ -534,8 +545,10 @@ def test_extract_images_whole_page_mode_renders_selected_pages(
     monkeypatch.setattr(
         pdf,
         "_write_extracted_image",
-        lambda image_bytes, source_ext, target_path, output_type: written.append(
-            (image_bytes, source_ext, target_path, output_type)
+        lambda image_bytes, source_ext, target_path, output_type: (
+            written.append(
+                (image_bytes, source_ext, target_path, output_type)
+            )
         ),
     )
 
@@ -556,47 +569,265 @@ def test_extract_images_whole_page_mode_renders_selected_pages(
     assert fake_fitz["/a.pdf"].pages[0].pixmap_calls == [{"dpi": 300}]
 
 
-def test_init_parser_pdf_registers_info_command():
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        (
+            ["merge", "cover.pdf", "/tmp/body.pdf", "-o", "all.pdf"],
+            {"inf": ["cover.pdf", "/tmp/body.pdf"], "out": "all.pdf"},
+        ),
+        (
+            ["rotate", "scan.pdf", "-o", "/tmp/out.pdf", "-d", "left"],
+            {"inf": "scan.pdf", "out": "/tmp/out.pdf", "dir": "left"},
+        ),
+        (
+            ["delete", "scan.pdf", "-o", "out.pdf", "-p", "2", "4"],
+            {"inf": "scan.pdf", "out": "out.pdf", "pages": [2, 4]},
+        ),
+        (
+            ["split", "scan.pdf", "-o", "out.pdf", "-p", "3", "7"],
+            {"inf": "scan.pdf", "out": "out.pdf", "pages": [3, 7]},
+        ),
+        (
+            ["clean", "/tmp/scan.pdf", "-o", "clean.pdf"],
+            {"inf": "/tmp/scan.pdf", "out": "clean.pdf"},
+        ),
+        (
+            [
+                "compress",
+                "scan.pdf",
+                "-o",
+                "small.pdf",
+                "--dpi",
+                "200",
+                "--quality",
+                "60",
+                "--grayscale",
+                "--rebuild",
+            ],
+            {
+                "inf": "scan.pdf",
+                "out": "small.pdf",
+                "dpi": 200,
+                "quality": 60,
+                "grayscale": True,
+                "rebuild": True,
+            },
+        ),
+        (
+            [
+                "extract",
+                "scan.pdf",
+                "-o",
+                "/tmp/page.png",
+                "-p",
+                "1",
+                "3",
+                "-t",
+                "png",
+                "-w",
+            ],
+            {
+                "inf": "scan.pdf",
+                "out": "/tmp/page.png",
+                "pages": [1, 3],
+                "type": "png",
+                "whole_page": True,
+            },
+        ),
+        (
+            ["info", "/documents/scan.pdf", "-p", "2", "1"],
+            {"inf": "/documents/scan.pdf", "pages": [2, 1]},
+        ),
+        (
+            [
+                "scale",
+                "scan.pdf",
+                "-o",
+                "out.pdf",
+                "-p",
+                "2",
+                "1",
+                "--format",
+                "a5",
+            ],
+            {
+                "inf": "scan.pdf",
+                "out": "out.pdf",
+                "pages": [2, 1],
+                "paper_format": "a5",
+            },
+        ),
+    ],
+)
+def test_init_parser_pdf_accepts_positional_inputs_and_options(
+    arguments, expected
+):
     parser = argparse.ArgumentParser()
-
     photo_cli.init_parser_pdf(parser)
 
-    namespace = parser.parse_args(["info", "-i", "a.pdf", "-p", "2", "1"])
+    namespace = parser.parse_args(arguments)
 
-    assert namespace.inf == "a.pdf"
-    assert namespace.pages == [2, 1]
+    for name, value in expected.items():
+        assert getattr(namespace, name) == value
+    assert not hasattr(namespace, "path")
     assert callable(namespace.func)
 
 
-def test_init_parser_pdf_registers_scale_command():
+@pytest.mark.parametrize(
+    "command",
+    [
+        "merge",
+        "rotate",
+        "delete",
+        "split",
+        "clean",
+        "compress",
+        "extract",
+        "info",
+        "scale",
+    ],
+)
+def test_init_parser_pdf_requires_input(command):
     parser = argparse.ArgumentParser()
-
     photo_cli.init_parser_pdf(parser)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args([command])
+
+
+@pytest.mark.parametrize("input_option", ["-i", "--inf"])
+def test_init_parser_pdf_rejects_removed_input_options(input_option):
+    parser = argparse.ArgumentParser()
+    photo_cli.init_parser_pdf(parser)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["info", input_option, "a.pdf"])
+
+
+def test_init_parser_pdf_rejects_removed_root_option():
+    parser = argparse.ArgumentParser()
+    photo_cli.init_parser_pdf(parser)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["info", "a.pdf", "--root", "/documents"])
+
+
+@pytest.mark.parametrize("command", ["merge", "rotate", "delete"])
+def test_init_parser_pdf_preserves_legacy_alias_arguments(command):
+    parser = argparse.ArgumentParser()
+    photo_cli.init_parser_pdf(
+        parser,
+        prefix="pdf-",
+        commands=(command,),
+        legacy=True,
+    )
+    input_files = ["a.pdf", "b.pdf"] if command == "merge" else ["a.pdf"]
 
     namespace = parser.parse_args(
-        ["scale", "-i", "a.pdf", "-o", "out.pdf", "-p", "2", "1", "--format", "a5"]
+        [f"pdf-{command}", "/documents", "-i", *input_files]
     )
 
-    assert namespace.inf == "a.pdf"
-    assert namespace.out == "out.pdf"
-    assert namespace.pages == [2, 1]
-    assert namespace.paper_format == "a5"
-    assert callable(namespace.func)
+    assert namespace.path == "/documents"
+    expected_input = input_files if command == "merge" else "a.pdf"
+    assert namespace.inf == expected_input
 
 
-def test_init_parser_pdf_registers_compress_rebuild_flag():
+@pytest.mark.parametrize("command", ["info", "merge"])
+def test_init_parser_pdf_help_documents_positional_input(
+    command, capsys
+):
     parser = argparse.ArgumentParser()
-
     photo_cli.init_parser_pdf(parser)
 
-    namespace = parser.parse_args(
-        ["compress", "-i", "a.pdf", "--dpi", "200", "--rebuild"]
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args([command, "--help"])
+
+    assert exc_info.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "INPUT" in help_text
+    assert "--inf" not in help_text
+    assert "--root" not in help_text
+
+
+@pytest.mark.parametrize(
+    ("command", "arguments", "expected_input"),
+    [
+        ("merge", ["first.pdf", "second.pdf"], ["first.pdf", "second.pdf"]),
+        ("rotate", ["scan.pdf"], "scan.pdf"),
+        ("delete", ["scan.pdf", "-p", "1"], "scan.pdf"),
+        ("split", ["scan.pdf", "-p", "1"], "scan.pdf"),
+        ("clean", ["scan.pdf"], "scan.pdf"),
+        ("compress", ["scan.pdf"], "scan.pdf"),
+        ("extract", ["scan.pdf"], "scan.pdf"),
+        ("scale", ["scan.pdf"], "scan.pdf"),
+    ],
+)
+def test_init_parser_pdf_passes_direct_input_and_no_output(
+    monkeypatch, command, arguments, expected_input
+):
+    calls = []
+    monkeypatch.setattr(
+        helpers,
+        f"command_pdf_{command}",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    parser = argparse.ArgumentParser()
+    photo_cli.init_parser_pdf(parser)
+
+    namespace = parser.parse_args([command, *arguments])
+    namespace.func(namespace)
+
+    assert calls[0]["root"] is None
+    assert calls[0]["inf"] == expected_input
+    assert calls[0]["out"] is None
+
+
+def test_command_pdf_merge_preserves_direct_paths_and_omitted_output(
+    monkeypatch,
+):
+    calls = []
+    monkeypatch.setattr(
+        pdf,
+        "merge_files",
+        lambda input_files, output_path, **kwargs: calls.append(
+            (input_files, output_path, kwargs)
+        )
+        or True,
     )
 
-    assert namespace.inf == "a.pdf"
-    assert namespace.dpi == 200
-    assert namespace.rebuild is True
-    assert callable(namespace.func)
+    helpers.command_pdf_merge(
+        None,
+        None,
+        ["body.pdf", "/documents/appendix.pdf"],
+        verbose=True,
+    )
+
+    assert calls == [
+        (
+            ["body.pdf", "/documents/appendix.pdf"],
+            None,
+            {"verbose": True},
+        )
+    ]
+
+
+def test_command_pdf_clean_preserves_direct_paths_and_omitted_output(
+    monkeypatch,
+):
+    calls = []
+    monkeypatch.setattr(
+        pdf,
+        "clean_file",
+        lambda input_file, output_path, **kwargs: calls.append(
+            (input_file, output_path, kwargs)
+        )
+        or True,
+    )
+
+    helpers.command_pdf_clean(None, None, "scan.pdf", verbose=True)
+
+    assert calls == [("scan.pdf", None, {"verbose": True})]
 
 
 def test_inspect_pages_classifies_text_vector_empty_and_mixed(fake_fitz):
@@ -882,7 +1113,12 @@ def test_compress_file_rebuild_renders_pages_and_inserts_full_page_images(
 def test_compress_file_rebuild_uses_default_output_name(fake_fitz):
     fake_fitz["/a.pdf"] = FakeDoc(
         page_count=1,
-        pages=[FakePage(rect=FakeRect(595, 842), rendered_bytes=make_png_bytes())],
+        pages=[
+            FakePage(
+                rect=FakeRect(595, 842),
+                rendered_bytes=make_png_bytes(),
+            )
+        ],
     )
 
     status = pdf.compress_file("/a.pdf", None, 200, rebuild=True)

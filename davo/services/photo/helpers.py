@@ -657,6 +657,12 @@ def command_downscale(
             cv2.imwrite(file_name, downscaled)
 
 
+def _pdf_path(root: str | None, path: str | None) -> str | None:
+    if path is None or root is None:
+        return path
+    return os.path.join(root, path)
+
+
 def command_pdf_merge(
     root,
     out: str,
@@ -664,8 +670,8 @@ def command_pdf_merge(
     verbose: bool = False,
 ):
     status = pdf.merge_files(
-        [os.path.join(root, f) for f in inf],
-        os.path.join(root, out),
+        [_pdf_path(root, file_path) for file_path in inf],
+        _pdf_path(root, out),
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -680,8 +686,8 @@ def command_pdf_rotate(
     verbose: bool = False,
 ):
     status = pdf.rotate_pages(
-        os.path.join(root, inf),
-        os.path.join(root, out),
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
         direction,
         verbose=verbose,
     )
@@ -697,8 +703,8 @@ def command_pdf_delete(
     verbose: bool = False,
 ):
     status = pdf.delete_pages(
-        os.path.join(root, inf),
-        os.path.join(root, out),
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
         pages,
         verbose=verbose,
     )
@@ -714,8 +720,8 @@ def command_pdf_split(
     verbose: bool = False,
 ):
     status = pdf.split_pages(
-        os.path.join(root, inf),
-        os.path.join(root, out),
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
         pages,
         verbose=verbose,
     )
@@ -730,7 +736,7 @@ def command_pdf_clean(
     verbose: bool = False,
 ):
     status = pdf.clean_file(
-        os.path.join(root, inf), os.path.join(root, out), verbose=verbose
+        _pdf_path(root, inf), _pdf_path(root, out), verbose=verbose
     )
     status_h = "prepared" if status else "failed"
     logger.info("pdf %s: %s", status_h, out)
@@ -746,13 +752,9 @@ def command_pdf_compress(
     rebuild: bool = False,
     verbose: bool = False,
 ):
-    output_path = None
-    if out:
-        output_path = os.path.join(root, out)
-
     status = pdf.compress_file(
-        os.path.join(root, inf),
-        output_path,
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
         dpi=dpi,
         quality=quality,
         grayscale=grayscale,
@@ -772,16 +774,9 @@ def command_pdf_extract(
     whole_page: bool = False,
     verbose: bool = False,
 ):
-    input_file = os.path.join(root, inf)
-    output_prefix = None
-    if out:
-        output_prefix = out
-        if not os.path.isabs(output_prefix):
-            output_prefix = os.path.abspath(output_prefix)
-
     status = pdf.extract_images(
-        input_file,
-        output_prefix,
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
         pages=pages,
         output_type=output_type,
         whole_page=whole_page,
@@ -798,7 +793,7 @@ def command_pdf_info(
     verbose: bool = False,
 ):
     rows = pdf.inspect_pages(
-        os.path.join(root, inf),
+        _pdf_path(root, inf),
         pages=pages,
         verbose=verbose,
     )
@@ -816,13 +811,9 @@ def command_pdf_scale(
     paper_format: str = "a4",
     verbose: bool = False,
 ):
-    output_path = None
-    if out:
-        output_path = os.path.join(root, out)
-
     status = pdf.scale_file(
-        os.path.join(root, inf),
-        output_path,
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
         pages=pages,
         paper_format=paper_format,
         verbose=verbose,
