@@ -681,7 +681,7 @@ def init_parser_pdf(
             "-d", "--dpi",
             action="store",
             type=int,
-            choices=(150, 200, 300, 400),
+            choices=(72, 96, 150, 200, 300, 400),
             default=300,
             help="target embedded image dpi, default %(default)s",
         )

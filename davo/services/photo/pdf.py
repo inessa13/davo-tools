@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
 _EXTRACT_OUTPUT_TYPES = {"jpg", "png"}
-_COMPRESS_DPI_PRESETS = {150, 200, 300, 400}
+_COMPRESS_DPI_PRESETS = {72, 96, 150, 200, 300, 400}
 _COMPRESS_JPEG_QUALITY = 75
 _PAPER_FORMATS = {
     "a4": (210.0 * 72.0 / 25.4, 297.0 * 72.0 / 25.4),

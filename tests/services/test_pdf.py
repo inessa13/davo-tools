@@ -302,6 +302,18 @@ def test_compress_file_rewrites_images_and_saves(fake_fitz):
     ]
 
 
+@pytest.mark.parametrize("dpi", [72, 96])
+def test_compress_file_supports_low_dpi_presets(fake_fitz, dpi):
+    fake_fitz["/a.pdf"] = FakeDoc(page_count=1)
+
+    status = pdf.compress_file("/a.pdf", "/out.pdf", dpi)
+
+    assert status is True
+    rewrite = fake_fitz["/a.pdf"].rewritten[0]
+    assert rewrite["dpi_threshold"] == dpi + 1
+    assert rewrite["dpi_target"] == dpi
+
+
 def test_compress_file_uses_default_output_name(fake_fitz):
     fake_fitz["/a.pdf"] = FakeDoc(page_count=2)
 
@@ -694,6 +706,18 @@ def test_init_parser_pdf_requires_input(command):
 
     with pytest.raises(SystemExit):
         parser.parse_args([command])
+
+
+@pytest.mark.parametrize("dpi", [72, 96])
+def test_init_parser_pdf_accepts_low_compress_dpi(dpi):
+    parser = argparse.ArgumentParser()
+    photo_cli.init_parser_pdf(parser)
+
+    namespace = parser.parse_args(
+        ["compress", "scan.pdf", "--dpi", str(dpi)]
+    )
+
+    assert namespace.dpi == dpi
 
 
 @pytest.mark.parametrize("input_option", ["-i", "--inf"])
