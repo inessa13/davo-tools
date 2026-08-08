@@ -24,21 +24,20 @@ def init_parser():
     services.common.init_parser(cmd, commands=("keyring",))
 
     cmd = subparsers.add_parser("file", help="file tools")
-    cmd, _sub = services.photo.cli.init_parser(
+    cmd, _subparsers = services.photo.cli.init_parser(
         cmd,
-        commands=(
-            "convert",
-            "thumbs",
-            "rename",
-            "iphone-clean-live",
-            "search-duplicates",
-            "recover",
-            "downscale",
-            "clips",
-            "pdf",
-        ),
+        commands=("rename", "iphone-clean-live", "search-duplicates"),
     )
-    services.common.init_parser(cmd, _sub, commands=("compare",))
+    services.common.init_parser(cmd, _subparsers, commands=("compare",))
+
+    cmd = subparsers.add_parser("clips", help="video tools")
+    services.photo.cli.init_parser_clips(cmd)
+
+    cmd = subparsers.add_parser("im", help="image tools")
+    services.photo.cli.init_parser(
+        cmd,
+        commands=("convert", "thumbs", "recover", "downscale"),
+    )
 
     cmd = subparsers.add_parser("pdf", help="pdf tools")
     services.photo.cli.init_parser_pdf(cmd)

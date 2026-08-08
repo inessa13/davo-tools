@@ -44,7 +44,6 @@ def init_parser(parser=None, subparsers=None, commands=()):
     p_root.add_argument("path", nargs="?", default=os.getcwd())
 
     p_common = [p_root, p_recursive, p_commit, p_silent]
-    p_prcvs = [p_root, p_recursive, p_commit, p_verbose, p_silent]
 
     if subparsers is None:
         subparsers = parser.add_subparsers(title="list of commands")
@@ -162,7 +161,9 @@ def init_parser(parser=None, subparsers=None, commands=()):
 
     if not commands or "thumbnail" in commands:
         cmd = subparsers.add_parser(
-            "thumbnail", parents=p_common, help="prepare thumbnails"
+            "thumbnail",
+            parents=[p_root, p_recursive, p_commit],
+            help="prepare thumbnails",
         )
         cmd.add_argument(
             "-s",
@@ -263,83 +264,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
         )
 
     if not commands or "clips" in commands:
-        cmd = subparsers.add_parser(
-            "clips-convert", parents=p_prcvs, help="convert video (ffmpeg)"
-        )
-        cmd.add_argument("-R", "--replace-pattern", default="[source].[Ext]")
-        cmd.add_argument("-t", "--thumbnail", type=int)
-        cmd.set_defaults(
-            func=lambda namespace: helpers.command_convert_video(
-                root=namespace.path,
-                replace=namespace.replace_pattern,
-                recursive=namespace.recursive,
-                thumbnail=namespace.thumbnail,
-                verbose=namespace.verbose,
-                silent=namespace.silent,
-                commit=namespace.commit,
-            )
-        )
-
-        cmd = subparsers.add_parser(
-            "clips-split",
-            parents=[p_commit, p_silent, p_verbose],
-            help="split video to clips (ffmpeg)",
-        )
-        cmd.add_argument("path")
-        cmd.add_argument("-e", "--ext", action="store")
-        cmd.add_argument("points", nargs="+")
-        cmd.set_defaults(
-            func=lambda namespace: helpers.command_clips_split(
-                root=namespace.path,
-                points=namespace.points,
-                ext=namespace.ext,
-                verbose=namespace.verbose,
-                silent=namespace.silent,
-                commit=namespace.commit,
-            )
-        )
-
-        cmd = subparsers.add_parser(
-            "clips-trim", parents=p_prcvs, help="trim video (ffmpeg)"
-        )
-        cmd.add_argument("--ss", action="store")
-        cmd.add_argument("--to", action="store")
-        cmd.set_defaults(
-            func=lambda namespace: helpers.command_clips_trim(
-                root=namespace.path,
-                recursive=namespace.recursive,
-                ss=namespace.ss,
-                to=namespace.to,
-                verbose=namespace.verbose,
-                commit=namespace.commit,
-            )
-        )
-
-        cmd = subparsers.add_parser(
-            "clips-web", parents=p_prcvs, help="encode +faststart (ffmpeg)"
-        )
-        cmd.set_defaults(
-            func=lambda namespace: helpers.command_clips_web(
-                root=namespace.path,
-                recursive=namespace.recursive,
-                verbose=namespace.verbose,
-                silent=namespace.silent,
-                commit=namespace.commit,
-            )
-        )
-
-        cmd = subparsers.add_parser(
-            "clips-isweb",
-            parents=[p_root, p_recursive, p_silent],
-            help="check is video encoded with +faststart (ffmpeg)",
-        )
-        cmd.set_defaults(
-            func=lambda namespace: helpers.command_clips_check_web(
-                root=namespace.path,
-                recursive=namespace.recursive,
-                silent=namespace.silent,
-            )
-        )
+        init_parser_clips(parser, subparsers, prefix="clips-")
 
     if not commands or "iphone-clean-live" in commands:
         cmd = subparsers.add_parser(
@@ -514,6 +439,122 @@ def init_parser(parser=None, subparsers=None, commands=()):
         )
 
     return parser, subparsers
+
+
+def init_parser_clips(parser=None, subparsers=None, prefix=""):
+    """Register video commands with either grouped or legacy names."""
+    if parser is None:
+        parser = argparse.ArgumentParser()
+
+    p_recursive = argparse.ArgumentParser(add_help=False)
+    p_recursive.add_argument(
+        "-r", "--recursive", action="store_true", help="recursive scan"
+    )
+
+    p_commit = argparse.ArgumentParser(add_help=False)
+    p_commit.add_argument(
+        "-c", "--commit", action="store_true", help="commit mode"
+    )
+
+    p_verbose = argparse.ArgumentParser(add_help=False)
+    p_verbose.add_argument("-v", "--verbose", action="store_true")
+
+    p_silent = argparse.ArgumentParser(add_help=False)
+    p_silent.add_argument("-s", "--silent", action="store_true")
+
+    p_root = argparse.ArgumentParser(add_help=False)
+    p_root.add_argument("path", nargs="?", default=os.getcwd())
+    p_prcvs = [p_root, p_recursive, p_commit, p_verbose, p_silent]
+
+    if subparsers is None:
+        subparsers = parser.add_subparsers(title="list of commands")
+
+    def command_name(name):
+        return "{}{}".format(prefix, name)
+
+    cmd = subparsers.add_parser(
+        command_name("convert"),
+        parents=p_prcvs,
+        help="convert video (ffmpeg)",
+    )
+    cmd.add_argument("-R", "--replace-pattern", default="[source].[Ext]")
+    cmd.add_argument("-t", "--thumbnail", type=int)
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_convert_video(
+            root=namespace.path,
+            replace=namespace.replace_pattern,
+            recursive=namespace.recursive,
+            thumbnail=namespace.thumbnail,
+            verbose=namespace.verbose,
+            silent=namespace.silent,
+            commit=namespace.commit,
+        )
+    )
+
+    cmd = subparsers.add_parser(
+        command_name("split"),
+        parents=[p_commit, p_silent, p_verbose],
+        help="split video to clips (ffmpeg)",
+    )
+    cmd.add_argument("path")
+    cmd.add_argument("-e", "--ext", action="store")
+    cmd.add_argument("points", nargs="+")
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_clips_split(
+            root=namespace.path,
+            points=namespace.points,
+            ext=namespace.ext,
+            verbose=namespace.verbose,
+            silent=namespace.silent,
+            commit=namespace.commit,
+        )
+    )
+
+    cmd = subparsers.add_parser(
+        command_name("trim"),
+        parents=p_prcvs,
+        help="trim video (ffmpeg)",
+    )
+    cmd.add_argument("--ss", action="store")
+    cmd.add_argument("--to", action="store")
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_clips_trim(
+            root=namespace.path,
+            recursive=namespace.recursive,
+            ss=namespace.ss,
+            to=namespace.to,
+            verbose=namespace.verbose,
+            commit=namespace.commit,
+        )
+    )
+
+    cmd = subparsers.add_parser(
+        command_name("web"),
+        parents=p_prcvs,
+        help="encode +faststart (ffmpeg)",
+    )
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_clips_web(
+            root=namespace.path,
+            recursive=namespace.recursive,
+            verbose=namespace.verbose,
+            silent=namespace.silent,
+            commit=namespace.commit,
+        )
+    )
+
+    cmd = subparsers.add_parser(
+        command_name("isweb"),
+        parents=[p_root, p_recursive, p_silent],
+        help="check is video encoded with +faststart (ffmpeg)",
+    )
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_clips_check_web(
+            root=namespace.path,
+            recursive=namespace.recursive,
+            silent=namespace.silent,
+        )
+    )
 
 
 def init_parser_pdf(
@@ -830,7 +871,7 @@ def init_parser_pdf(
 
 def main():
     logging.config.dictConfig(davo.settings.LOGGING)
-    parser = init_parser()
+    parser, _subparsers = init_parser()
     davo.utils.cli.run_parser(parser, use_completion=True)
 
 
