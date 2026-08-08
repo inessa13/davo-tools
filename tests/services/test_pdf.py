@@ -403,7 +403,7 @@ def test_compress_file_rewrites_images_and_saves(fake_fitz):
         {
             "dpi_threshold": 301,
             "dpi_target": 300,
-            "quality": 75,
+            "quality": 80,
             "lossy": True,
             "lossless": True,
             "bitonal": True,
@@ -748,7 +748,6 @@ def test_extract_images_whole_page_mode_renders_selected_pages(
                 "--quality",
                 "60",
                 "--grayscale",
-                "--rebuild",
             ],
             {
                 "inf": "scan.pdf",
@@ -756,7 +755,6 @@ def test_extract_images_whole_page_mode_renders_selected_pages(
                 "dpi": 200,
                 "quality": 60,
                 "grayscale": True,
-                "rebuild": True,
             },
         ),
         (
@@ -851,6 +849,25 @@ def test_init_parser_pdf_accepts_low_compress_dpi(dpi):
     )
 
     assert namespace.dpi == dpi
+
+
+def test_init_parser_pdf_compress_defaults():
+    parser = argparse.ArgumentParser()
+    photo_cli.init_parser_pdf(parser)
+
+    namespace = parser.parse_args(["compress", "scan.pdf"])
+
+    assert namespace.dpi == 300
+    assert namespace.quality == 80
+    assert not hasattr(namespace, "rebuild")
+
+
+def test_init_parser_pdf_rejects_removed_rebuild_flag():
+    parser = argparse.ArgumentParser()
+    photo_cli.init_parser_pdf(parser)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["compress", "scan.pdf", "--rebuild"])
 
 
 @pytest.mark.parametrize(
@@ -1331,7 +1348,7 @@ def test_compress_file_rebuild_uses_default_output_name(fake_fitz):
     ]
 
 
-def test_command_pdf_compress_passes_rebuild_flag(monkeypatch):
+def test_command_pdf_compress_rebuilds_by_default(monkeypatch):
     calls = []
     monkeypatch.setattr(
         pdf,
@@ -1349,7 +1366,6 @@ def test_command_pdf_compress_passes_rebuild_flag(monkeypatch):
         200,
         55,
         grayscale=True,
-        rebuild=True,
         verbose=True,
     )
 

@@ -703,7 +703,7 @@ def init_parser_pdf(
             action="store",
             type=int,
             metavar="0..100",
-            default=75,
+            default=80,
             help="jpeg recompression quality 0..100, default %(default)s",
         )
         cmd.add_argument(
@@ -714,11 +714,6 @@ def init_parser_pdf(
                 "images"
             ),
         )
-        cmd.add_argument(
-            "--rebuild",
-            action="store_true",
-            help="rasterize and rebuild each page at the target dpi",
-        )
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_compress(  # noqa
                 root=root(namespace),
@@ -727,7 +722,7 @@ def init_parser_pdf(
                 dpi=namespace.dpi,
                 quality=namespace.quality,
                 grayscale=namespace.grayscale,
-                rebuild=namespace.rebuild,
+                rebuild=True,
                 rewrite=namespace.rewrite,
                 verbose=namespace.verbose,
             )

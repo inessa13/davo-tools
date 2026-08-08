@@ -761,7 +761,7 @@ def command_pdf_compress(
     dpi: int,
     quality: int,
     grayscale: bool = False,
-    rebuild: bool = False,
+    rebuild: bool = True,
     verbose: bool = False,
     rewrite: bool = False,
 ):
