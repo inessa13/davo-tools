@@ -657,15 +657,23 @@ def command_downscale(
             cv2.imwrite(file_name, downscaled)
 
 
+def _pdf_path(root: str | None, path: str | None) -> str | None:
+    if path is None or root is None:
+        return path
+    return os.path.join(root, path)
+
+
 def command_pdf_merge(
     root,
     out: str,
     inf: list,
     verbose: bool = False,
+    rewrite: bool = False,
 ):
     status = pdf.merge_files(
-        [os.path.join(root, f) for f in inf],
-        os.path.join(root, out),
+        [_pdf_path(root, file_path) for file_path in inf],
+        _pdf_path(root, out),
+        rewrite=rewrite,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -678,11 +686,13 @@ def command_pdf_rotate(
     inf: str,
     direction: str,
     verbose: bool = False,
+    rewrite: bool = False,
 ):
     status = pdf.rotate_pages(
-        os.path.join(root, inf),
-        os.path.join(root, out),
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
         direction,
+        rewrite=rewrite,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -695,11 +705,13 @@ def command_pdf_delete(
     inf: str,
     pages: list,
     verbose: bool = False,
+    rewrite: bool = False,
 ):
     status = pdf.delete_pages(
-        os.path.join(root, inf),
-        os.path.join(root, out),
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
         pages,
+        rewrite=rewrite,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -712,11 +724,13 @@ def command_pdf_split(
     inf: str,
     pages: list,
     verbose: bool = False,
+    rewrite: bool = False,
 ):
     status = pdf.split_pages(
-        os.path.join(root, inf),
-        os.path.join(root, out),
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
         pages,
+        rewrite=rewrite,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -728,9 +742,99 @@ def command_pdf_clean(
     out: str,
     inf: str,
     verbose: bool = False,
+    rewrite: bool = False,
 ):
     status = pdf.clean_file(
-        os.path.join(root, inf), os.path.join(root, out), verbose=verbose
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
+        rewrite=rewrite,
+        verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
     logger.info("pdf %s: %s", status_h, out)
+
+
+def command_pdf_compress(
+    root,
+    out: str,
+    inf: str,
+    dpi: int,
+    quality: int,
+    grayscale: bool = False,
+    rebuild: bool = True,
+    verbose: bool = False,
+    rewrite: bool = False,
+):
+    status = pdf.compress_file(
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
+        dpi=dpi,
+        quality=quality,
+        grayscale=grayscale,
+        rebuild=rebuild,
+        rewrite=rewrite,
+        verbose=verbose,
+    )
+    status_h = "prepared" if status else "failed"
+    logger.info("pdf %s: %s", status_h, out or inf)
+
+
+def command_pdf_extract(
+    root,
+    inf: str,
+    out: str = None,
+    pages: list = None,
+    output_type: str = None,
+    whole_page: bool = False,
+    verbose: bool = False,
+    rewrite: bool = False,
+):
+    status = pdf.extract_images(
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
+        pages=pages,
+        output_type=output_type,
+        whole_page=whole_page,
+        rewrite=rewrite,
+        verbose=verbose,
+    )
+    status_h = "prepared" if status else "failed"
+    logger.info("pdf %s: %s", status_h, inf)
+
+
+def command_pdf_info(
+    root,
+    inf: str,
+    pages: list = None,
+    verbose: bool = False,
+):
+    rows = pdf.inspect_pages(
+        _pdf_path(root, inf),
+        pages=pages,
+        verbose=verbose,
+    )
+    if rows is None:
+        return
+
+    print(pdf.format_page_info_report(rows))
+
+
+def command_pdf_scale(
+    root,
+    out: str,
+    inf: str,
+    pages: list = None,
+    paper_format: str = "a4",
+    verbose: bool = False,
+    rewrite: bool = False,
+):
+    status = pdf.scale_file(
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
+        pages=pages,
+        paper_format=paper_format,
+        rewrite=rewrite,
+        verbose=verbose,
+    )
+    status_h = "prepared" if status else "failed"
+    logger.info("pdf %s: %s", status_h, out or inf)

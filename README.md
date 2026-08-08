@@ -4,6 +4,8 @@ Personal CLI utilities (`davo`, `cit`, `davo-photo`, `davo-s3sync`). Package met
 
 ## Installation
 
+Requires Python 3.11.
+
 Basic installation, without deps for keepass and other optional and heavy deps
 
 ```bash
@@ -27,7 +29,7 @@ Recommended: **[uv](https://docs.astral.sh/uv/getting-started/installation/)** (
 make              # or: make help — lists targets
 make venv         # .venv + editable install with test + lint extras
 make test         # pytest, uses .venv/bin/python when present
-make test-lib     # pytest for all supported python versions
+make test-lib     # pytest for configured supported python versions
 make coverage     # pytest + coverage for davo/ (report in terminal + htmlcov/)
 make lint         # ruff, isort (check-only), pylint
 ```

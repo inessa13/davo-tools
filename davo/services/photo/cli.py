@@ -505,6 +505,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
             parser,
             subparsers,
             prefix="pdf-",
+            legacy=True,
             commands=(
                 "merge",
                 "rotate",
@@ -515,7 +516,13 @@ def init_parser(parser=None, subparsers=None, commands=()):
     return parser, subparsers
 
 
-def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
+def init_parser_pdf(
+    parser=None,
+    subparsers=None,
+    prefix="",
+    commands=(),
+    legacy=False,
+):
     if subparsers is None:
         if parser is None:
             parser = argparse.ArgumentParser()
@@ -528,25 +535,53 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
             )
         subparsers = parser.add_subparsers(title="list of commands")
 
-    p_root = argparse.ArgumentParser(add_help=False)
-    p_root.add_argument("path", nargs="?", default=os.getcwd())
     p_verbose = argparse.ArgumentParser(add_help=False)
     p_verbose.add_argument("-v", "--verbose", action="store_true")
-    p_RV = [p_root, p_verbose]
+    parents = [p_verbose]
+    if legacy:
+        p_root = argparse.ArgumentParser(add_help=False)
+        p_root.add_argument("path", nargs="?", default=os.getcwd())
+        parents.insert(0, p_root)
+    p_rewrite = argparse.ArgumentParser(add_help=False)
+    p_rewrite.add_argument(
+        "-W",
+        "--rewrite",
+        action="store_true",
+        help="overwrite existing output files (never input files)",
+    )
+    write_parents = [*parents, p_rewrite]
+
+    def add_input_argument(command, multiple=False):
+        if legacy:
+            command.add_argument(
+                "-i",
+                "--inf",
+                nargs="+" if multiple else None,
+            )
+            return
+        command.add_argument(
+            "inf",
+            nargs="+" if multiple else None,
+            metavar="INPUT",
+        )
+
+    def root(namespace):
+        return namespace.path if legacy else None
 
     if not commands or "merge" in commands:
         cmd = subparsers.add_parser(
             "{}merge".format(prefix),
-            parents=p_RV,
+            parents=write_parents,
             help="merge pdf files (PyMuPDF)",
         )
         cmd.add_argument("-o", "--out", action="store")
-        cmd.add_argument("-i", "--inf", nargs="+")
+        add_input_argument(cmd, multiple=True)
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_merge(  # noqa
-                root=namespace.path,
+                root=root(namespace),
                 out=namespace.out,
                 inf=namespace.inf,
+                rewrite=namespace.rewrite,
                 verbose=namespace.verbose,
             )
         )
@@ -554,11 +589,11 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
     if not commands or "rotate" in commands:
         cmd = subparsers.add_parser(
             "{}rotate".format(prefix),
-            parents=p_RV,
+            parents=write_parents,
             help="pdf: rotate pages (PyMuPDF)",
         )
         cmd.add_argument("-o", "--out", action="store")
-        cmd.add_argument("-i", "--inf", action="store")
+        add_input_argument(cmd)
         cmd.add_argument(
             "-d",
             "--dir",
@@ -568,10 +603,11 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
         )
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_rotate(  # noqa
-                root=namespace.path,
+                root=root(namespace),
                 out=namespace.out,
                 inf=namespace.inf,
                 direction=namespace.dir,
+                rewrite=namespace.rewrite,
                 verbose=namespace.verbose,
             )
         )
@@ -579,11 +615,11 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
     if not commands or "delete" in commands:
         cmd = subparsers.add_parser(
             "{}delete".format(prefix),
-            parents=p_RV,
+            parents=write_parents,
             help="pdf: delete pages (PyMuPDF)",
         )
         cmd.add_argument("-o", "--out", action="store")
-        cmd.add_argument("-i", "--inf", action="store")
+        add_input_argument(cmd)
         cmd.add_argument(
             "-p",
             "--pages",
@@ -593,10 +629,11 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
         )
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_delete(  # noqa
-                root=namespace.path,
+                root=root(namespace),
                 out=namespace.out,
                 inf=namespace.inf,
                 pages=namespace.pages,
+                rewrite=namespace.rewrite,
                 verbose=namespace.verbose,
             )
         )
@@ -604,11 +641,11 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
     if not commands or "split" in commands:
         cmd = subparsers.add_parser(
             "{}split".format(prefix),
-            parents=p_RV,
-            help="pdf: delete pages (PyMuPDF)",
+            parents=write_parents,
+            help="pdf: split into separate docs (PyMuPDF)",
         )
         cmd.add_argument("-o", "--out", action="store")
-        cmd.add_argument("-i", "--inf", action="store")
+        add_input_argument(cmd)
         cmd.add_argument(
             "-p",
             "--pages",
@@ -618,10 +655,11 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
         )
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_split(  # noqa
-                root=namespace.path,
+                root=root(namespace),
                 out=namespace.out,
                 inf=namespace.inf,
                 pages=namespace.pages,
+                rewrite=namespace.rewrite,
                 verbose=namespace.verbose,
             )
         )
@@ -629,16 +667,162 @@ def init_parser_pdf(parser=None, subparsers=None, prefix="", commands=()):
     if not commands or "clean" in commands:
         cmd = subparsers.add_parser(
             "{}clean".format(prefix),
-            parents=p_RV,
+            parents=write_parents,
             help="pdf: delete pages (PyMuPDF)",
         )
         cmd.add_argument("-o", "--out", action="store")
-        cmd.add_argument("-i", "--inf", action="store")
+        add_input_argument(cmd)
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_clean(  # noqa
-                root=namespace.path,
+                root=root(namespace),
                 out=namespace.out,
                 inf=namespace.inf,
+                rewrite=namespace.rewrite,
+                verbose=namespace.verbose,
+            )
+        )
+
+    if not commands or "compress" in commands:
+        cmd = subparsers.add_parser(
+            "{}compress".format(prefix),
+            parents=write_parents,
+            help="pdf: compress embedded images (PyMuPDF)",
+        )
+        cmd.add_argument("-o", "--out", action="store")
+        add_input_argument(cmd)
+        cmd.add_argument(
+            "-d", "--dpi",
+            action="store",
+            type=int,
+            choices=(72, 96, 150, 200, 300, 400),
+            default=300,
+            help="target embedded image dpi, default %(default)s",
+        )
+        cmd.add_argument(
+            "-q", "--quality",
+            action="store",
+            type=int,
+            metavar="0..100",
+            default=80,
+            help="jpeg recompression quality 0..100, default %(default)s",
+        )
+        cmd.add_argument(
+            "-g", "--grayscale",
+            action="store_true",
+            help=(
+                "convert the output document to grayscale before rewriting "
+                "images"
+            ),
+        )
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_pdf_compress(  # noqa
+                root=root(namespace),
+                out=namespace.out,
+                inf=namespace.inf,
+                dpi=namespace.dpi,
+                quality=namespace.quality,
+                grayscale=namespace.grayscale,
+                rebuild=True,
+                rewrite=namespace.rewrite,
+                verbose=namespace.verbose,
+            )
+        )
+
+    if not commands or "extract" in commands:
+        cmd = subparsers.add_parser(
+            "{}extract".format(prefix),
+            parents=write_parents,
+            help="pdf: extract embedded images (PyMuPDF)",
+        )
+        cmd.add_argument("-o", "--out", action="store")
+        add_input_argument(cmd)
+        cmd.add_argument(
+            "-p",
+            "--pages",
+            nargs="+",
+            type=int,
+            help="pages to inspect, 1-based",
+        )
+        cmd.add_argument(
+            "-t",
+            "--type",
+            action="store",
+            choices=("jpg", "png"),
+        )
+        cmd.add_argument(
+            "-w",
+            "--whole-page",
+            action="store_true",
+            help="render each selected page into one image",
+        )
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_pdf_extract(  # noqa
+                root=root(namespace),
+                inf=namespace.inf,
+                out=namespace.out,
+                pages=namespace.pages,
+                output_type=namespace.type,
+                whole_page=namespace.whole_page,
+                rewrite=namespace.rewrite,
+                verbose=namespace.verbose,
+            )
+        )
+
+    if not commands or "info" in commands:
+        cmd = subparsers.add_parser(
+            "{}info".format(prefix),
+            parents=parents,
+            help="pdf: show page metadata (PyMuPDF)",
+        )
+        add_input_argument(cmd)
+        cmd.add_argument(
+            "-p",
+            "--pages",
+            nargs="+",
+            type=int,
+            help="pages to inspect, 1-based",
+        )
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_pdf_info(  # noqa
+                root=root(namespace),
+                inf=namespace.inf,
+                pages=namespace.pages,
+                verbose=namespace.verbose,
+            )
+        )
+
+    if not commands or "scale" in commands:
+        cmd = subparsers.add_parser(
+            "{}scale".format(prefix),
+            parents=write_parents,
+            help="pdf: scale pages to A4/A5 (PyMuPDF)",
+        )
+        cmd.add_argument("-o", "--out", action="store")
+        add_input_argument(cmd)
+        cmd.add_argument(
+            "-p",
+            "--pages",
+            nargs="+",
+            type=int,
+            help="pages to scale, 1-based",
+        )
+        cmd.add_argument(
+            "-f",
+            "--format",
+            dest="paper_format",
+            action="store",
+            choices=("a4", "a5"),
+            default="a4",
+            help="target paper format, default %(default)s",
+        )
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_pdf_scale(  # noqa
+                root=root(namespace),
+                out=namespace.out,
+                inf=namespace.inf,
+                pages=namespace.pages,
+                paper_format=namespace.paper_format,
+                rewrite=namespace.rewrite,
                 verbose=namespace.verbose,
             )
         )

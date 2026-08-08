@@ -2,7 +2,7 @@
 VENV ?= .venv
 UV ?= uv
 LINT_PATH ?= davo tests
-LIB_TEST_PYTHONS ?= 3.8 3.9 3.10 3.11 # 3.12 3.13 3.14
+LIB_TEST_PYTHONS ?= 3.11 # 3.12 3.13 3.14
 # Prefer PYTHON from env / command line; else .venv if present; else python3 on PATH.
 PY = $(if $(strip $(PYTHON)),$(PYTHON),$(shell test -x $(CURDIR)/$(VENV)/bin/python && echo "$(CURDIR)/$(VENV)/bin/python" || echo python3))
 
