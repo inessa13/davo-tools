@@ -153,7 +153,21 @@ class FakeDoc:
 
 @pytest.fixture(autouse=True)
 def fake_paths(monkeypatch):
-    monkeypatch.setattr(pdf.os.path, "exists", lambda path: True)
+    input_paths = {
+        "/a.pdf",
+        "/a.txt",
+        "/a_1.pdf",
+        "/b.pdf",
+        "/docs/merged.pdf",
+        "/landscape.pdf",
+        "/multi.pdf",
+        "/scan.pdf",
+    }
+    monkeypatch.setattr(
+        pdf.os.path,
+        "exists",
+        lambda path: path in input_paths,
+    )
     monkeypatch.setattr(pdf.os.path, "getsize", lambda _path: 1024)
 
 
@@ -253,18 +267,23 @@ def test_delete_pages_uses_one_based_and_descending(fake_fitz):
     assert fake_fitz["/a.pdf"].saved == [("/a_deleted.pdf", {})]
 
 
-def test_split_pages_returns_false_on_collision(monkeypatch, fake_fitz):
-    def _exists(path):
-        if path == "/a_1.pdf":
-            return True
-        return True
-
-    monkeypatch.setattr(pdf.os.path, "exists", _exists)
+def test_split_pages_overwrites_collision_with_warning(
+    monkeypatch, fake_fitz, caplog
+):
+    monkeypatch.setattr(pdf.os.path, "exists", lambda _path: True)
     fake_fitz["/a.pdf"] = FakeDoc(page_count=4)
 
-    status = pdf.split_pages("/a.pdf", None, pages=[1, 3], verbose=True)
+    status = pdf.split_pages(
+        "/a.pdf",
+        None,
+        pages=[1, 3],
+        verbose=True,
+        rewrite=True,
+    )
 
-    assert status is False
+    assert status is True
+    assert "overwriting existing output file: /a_1.pdf" in caplog.text
+    assert "overwriting existing output file: /a_2.pdf" in caplog.text
 
 
 def test_clean_file_uses_default_output_and_save_options(fake_fitz):
@@ -276,6 +295,102 @@ def test_clean_file_uses_default_output_and_save_options(fake_fitz):
     assert fake_fitz["/a.pdf"].saved == [
         ("/a_cleaned.pdf", {"garbage": 3, "deflate": True, "clean": True})
     ]
+
+
+@pytest.mark.parametrize(
+    ("operation", "args", "kwargs"),
+    [
+        (pdf.scale_file, ("/a.pdf", "/a.pdf"), {}),
+        (pdf.merge_files, (["/a.pdf", "/b.pdf"], "/b.pdf"), {}),
+        (pdf.rotate_pages, ("/a.pdf", "/a.pdf"), {}),
+        (pdf.delete_pages, ("/a.pdf", "/a.pdf"), {"pages": [1]}),
+        (pdf.clean_file, ("/a.pdf", "/a.pdf"), {}),
+        (pdf.compress_file, ("/a.pdf", "/a.pdf", 96), {}),
+    ],
+)
+def test_pdf_operations_refuse_to_overwrite_input(
+    fake_fitz, caplog, operation, args, kwargs
+):
+    fake_fitz["/a.pdf"] = FakeDoc(page_count=2)
+
+    status = operation(*args, **kwargs)
+
+    assert status is False
+    assert "refusing to overwrite input file" in caplog.text
+    assert fake_fitz["/a.pdf"].saved == []
+
+
+def test_rewrite_flag_never_allows_overwriting_input(fake_fitz, caplog):
+    fake_fitz["/a.pdf"] = FakeDoc(page_count=1)
+
+    status = pdf.clean_file("/a.pdf", "/a.pdf", rewrite=True)
+
+    assert status is False
+    assert "refusing to overwrite input file" in caplog.text
+    assert fake_fitz["/a.pdf"].saved == []
+
+
+def test_existing_output_requires_rewrite_flag(
+    monkeypatch, fake_fitz, caplog
+):
+    monkeypatch.setattr(
+        pdf.os.path,
+        "exists",
+        lambda path: path in {"/a.pdf", "/out.pdf"},
+    )
+    fake_fitz["/a.pdf"] = FakeDoc(page_count=1)
+
+    status = pdf.clean_file("/a.pdf", "/out.pdf")
+
+    assert status is False
+    assert "use -W/--rewrite to overwrite" in caplog.text
+    assert fake_fitz["/a.pdf"].saved == []
+
+    status = pdf.clean_file("/a.pdf", "/out.pdf", rewrite=True)
+
+    assert status is True
+    assert "overwriting existing output file: /out.pdf" in caplog.text
+    assert fake_fitz["/a.pdf"].saved == [
+        ("/out.pdf", {"garbage": 3, "deflate": True, "clean": True})
+    ]
+
+
+def test_merge_refuses_automatic_output_that_is_an_input(fake_fitz, caplog):
+    fake_fitz["/docs/merged.pdf"] = FakeDoc(page_count=1)
+
+    status = pdf.merge_files(["/docs/merged.pdf"], None)
+
+    assert status is False
+    assert "refusing to overwrite input file" in caplog.text
+
+
+def test_split_refuses_computed_target_that_is_input(fake_fitz, caplog):
+    fake_fitz["/a_1.pdf"] = FakeDoc(page_count=2)
+
+    status = pdf.split_pages(
+        "/a_1.pdf",
+        "/a.pdf",
+        pages=[1],
+    )
+
+    assert status is False
+    assert "refusing to overwrite input file: /a_1.pdf" in caplog.text
+
+
+def test_output_guard_recognizes_relative_and_absolute_input(
+    monkeypatch, tmp_path, caplog, fake_fitz
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(pdf.os.path, "exists", lambda _path: True)
+    fake_fitz["input.pdf"] = FakeDoc(page_count=1)
+
+    status = pdf.clean_file(
+        "input.pdf",
+        str(tmp_path / "input.pdf"),
+    )
+
+    assert status is False
+    assert "refusing to overwrite input file" in caplog.text
 
 
 def test_compress_file_rewrites_images_and_saves(fake_fitz):
@@ -507,7 +622,12 @@ def test_extract_images_returns_false_when_no_embedded_images(
         pages=[FakePage(images=[]), FakePage(images=[])],
     )
 
-    status = pdf.extract_images("/a.pdf", None, verbose=True)
+    status = pdf.extract_images(
+        "/a.pdf",
+        None,
+        verbose=True,
+        rewrite=True,
+    )
 
     assert status is False
 
@@ -517,8 +637,8 @@ def test_extract_images_rejects_invalid_type():
         pdf.extract_images("/a.pdf", None, output_type="gif")
 
 
-def test_extract_images_returns_false_on_output_collision(
-    monkeypatch, fake_fitz
+def test_extract_images_overwrites_collision_with_warning(
+    monkeypatch, fake_fitz, caplog
 ):
     monkeypatch.setattr(
         pdf.os.path,
@@ -530,10 +650,23 @@ def test_extract_images_returns_false_on_output_collision(
         pages=[FakePage(images=[(11,)])],
         extracted_images={11: {"image": b"img-11", "ext": "png"}},
     )
+    written = []
+    monkeypatch.setattr(
+        pdf,
+        "_write_extracted_image",
+        lambda *args: written.append(args),
+    )
 
-    status = pdf.extract_images("/a.pdf", None, verbose=True)
+    status = pdf.extract_images(
+        "/a.pdf",
+        None,
+        verbose=True,
+        rewrite=True,
+    )
 
-    assert status is False
+    assert status is True
+    assert written
+    assert "overwriting existing output file: /a_001.jpg" in caplog.text
 
 
 def test_extract_images_whole_page_mode_renders_selected_pages(
@@ -720,6 +853,36 @@ def test_init_parser_pdf_accepts_low_compress_dpi(dpi):
     assert namespace.dpi == dpi
 
 
+@pytest.mark.parametrize(
+    ("command", "arguments"),
+    [
+        ("merge", ["first.pdf", "second.pdf"]),
+        ("rotate", ["scan.pdf"]),
+        ("delete", ["scan.pdf", "-p", "1"]),
+        ("split", ["scan.pdf", "-p", "1"]),
+        ("clean", ["scan.pdf"]),
+        ("compress", ["scan.pdf"]),
+        ("extract", ["scan.pdf"]),
+        ("scale", ["scan.pdf"]),
+    ],
+)
+def test_init_parser_pdf_accepts_rewrite_flag(command, arguments):
+    parser = argparse.ArgumentParser()
+    photo_cli.init_parser_pdf(parser)
+
+    namespace = parser.parse_args([command, *arguments, "--rewrite"])
+
+    assert namespace.rewrite is True
+
+
+def test_init_parser_pdf_info_rejects_rewrite_flag():
+    parser = argparse.ArgumentParser()
+    photo_cli.init_parser_pdf(parser)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["info", "scan.pdf", "--rewrite"])
+
+
 @pytest.mark.parametrize("input_option", ["-i", "--inf"])
 def test_init_parser_pdf_rejects_removed_input_options(input_option):
     parser = argparse.ArgumentParser()
@@ -749,12 +912,13 @@ def test_init_parser_pdf_preserves_legacy_alias_arguments(command):
     input_files = ["a.pdf", "b.pdf"] if command == "merge" else ["a.pdf"]
 
     namespace = parser.parse_args(
-        [f"pdf-{command}", "/documents", "-i", *input_files]
+        [f"pdf-{command}", "/documents", "-i", *input_files, "-W"]
     )
 
     assert namespace.path == "/documents"
     expected_input = input_files if command == "merge" else "a.pdf"
     assert namespace.inf == expected_input
+    assert namespace.rewrite is True
 
 
 @pytest.mark.parametrize("command", ["info", "merge"])
@@ -805,6 +969,7 @@ def test_init_parser_pdf_passes_direct_input_and_no_output(
     assert calls[0]["root"] is None
     assert calls[0]["inf"] == expected_input
     assert calls[0]["out"] is None
+    assert calls[0]["rewrite"] is False
 
 
 def test_command_pdf_merge_preserves_direct_paths_and_omitted_output(
@@ -831,7 +996,7 @@ def test_command_pdf_merge_preserves_direct_paths_and_omitted_output(
         (
             ["body.pdf", "/documents/appendix.pdf"],
             None,
-            {"verbose": True},
+            {"rewrite": False, "verbose": True},
         )
     ]
 
@@ -849,9 +1014,17 @@ def test_command_pdf_clean_preserves_direct_paths_and_omitted_output(
         or True,
     )
 
-    helpers.command_pdf_clean(None, None, "scan.pdf", verbose=True)
+    helpers.command_pdf_clean(
+        None,
+        None,
+        "scan.pdf",
+        verbose=True,
+        rewrite=True,
+    )
 
-    assert calls == [("scan.pdf", None, {"verbose": True})]
+    assert calls == [
+        ("scan.pdf", None, {"rewrite": True, "verbose": True})
+    ]
 
 
 def test_inspect_pages_classifies_text_vector_empty_and_mixed(fake_fitz):
@@ -1090,6 +1263,7 @@ def test_command_pdf_scale_passes_paths_and_format(monkeypatch):
             {
                 "pages": [2, 1],
                 "paper_format": "a5",
+                "rewrite": False,
                 "verbose": True,
             },
         )
@@ -1188,6 +1362,7 @@ def test_command_pdf_compress_passes_rebuild_flag(monkeypatch):
                 "quality": 55,
                 "grayscale": True,
                 "rebuild": True,
+                "rewrite": False,
                 "verbose": True,
             },
         )

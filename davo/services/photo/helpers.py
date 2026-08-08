@@ -668,10 +668,12 @@ def command_pdf_merge(
     out: str,
     inf: list,
     verbose: bool = False,
+    rewrite: bool = False,
 ):
     status = pdf.merge_files(
         [_pdf_path(root, file_path) for file_path in inf],
         _pdf_path(root, out),
+        rewrite=rewrite,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -684,11 +686,13 @@ def command_pdf_rotate(
     inf: str,
     direction: str,
     verbose: bool = False,
+    rewrite: bool = False,
 ):
     status = pdf.rotate_pages(
         _pdf_path(root, inf),
         _pdf_path(root, out),
         direction,
+        rewrite=rewrite,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -701,11 +705,13 @@ def command_pdf_delete(
     inf: str,
     pages: list,
     verbose: bool = False,
+    rewrite: bool = False,
 ):
     status = pdf.delete_pages(
         _pdf_path(root, inf),
         _pdf_path(root, out),
         pages,
+        rewrite=rewrite,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -718,11 +724,13 @@ def command_pdf_split(
     inf: str,
     pages: list,
     verbose: bool = False,
+    rewrite: bool = False,
 ):
     status = pdf.split_pages(
         _pdf_path(root, inf),
         _pdf_path(root, out),
         pages,
+        rewrite=rewrite,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -734,9 +742,13 @@ def command_pdf_clean(
     out: str,
     inf: str,
     verbose: bool = False,
+    rewrite: bool = False,
 ):
     status = pdf.clean_file(
-        _pdf_path(root, inf), _pdf_path(root, out), verbose=verbose
+        _pdf_path(root, inf),
+        _pdf_path(root, out),
+        rewrite=rewrite,
+        verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
     logger.info("pdf %s: %s", status_h, out)
@@ -751,6 +763,7 @@ def command_pdf_compress(
     grayscale: bool = False,
     rebuild: bool = False,
     verbose: bool = False,
+    rewrite: bool = False,
 ):
     status = pdf.compress_file(
         _pdf_path(root, inf),
@@ -759,6 +772,7 @@ def command_pdf_compress(
         quality=quality,
         grayscale=grayscale,
         rebuild=rebuild,
+        rewrite=rewrite,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -773,6 +787,7 @@ def command_pdf_extract(
     output_type: str = None,
     whole_page: bool = False,
     verbose: bool = False,
+    rewrite: bool = False,
 ):
     status = pdf.extract_images(
         _pdf_path(root, inf),
@@ -780,6 +795,7 @@ def command_pdf_extract(
         pages=pages,
         output_type=output_type,
         whole_page=whole_page,
+        rewrite=rewrite,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -810,12 +826,14 @@ def command_pdf_scale(
     pages: list = None,
     paper_format: str = "a4",
     verbose: bool = False,
+    rewrite: bool = False,
 ):
     status = pdf.scale_file(
         _pdf_path(root, inf),
         _pdf_path(root, out),
         pages=pages,
         paper_format=paper_format,
+        rewrite=rewrite,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"

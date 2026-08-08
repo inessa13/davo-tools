@@ -34,6 +34,60 @@ def _default_output(input_file: str, suffix: str) -> str:
     return f"{base}{suffix}.pdf"
 
 
+def _paths_refer_to_same_file(path_a: str, path_b: str) -> bool:
+    normalized_a = os.path.normcase(os.path.realpath(os.path.abspath(path_a)))
+    normalized_b = os.path.normcase(os.path.realpath(os.path.abspath(path_b)))
+    if normalized_a == normalized_b:
+        return True
+
+    try:
+        return os.path.samefile(path_a, path_b)
+    except OSError:
+        return False
+
+
+def _allow_output_targets(
+    action: str,
+    input_files: Iterable[str],
+    output_files: Iterable[str],
+    rewrite: bool = False,
+) -> bool:
+    inputs = list(input_files)
+    outputs = list(output_files)
+    for output_file in outputs:
+        if any(
+            _paths_refer_to_same_file(input_file, output_file)
+            for input_file in inputs
+        ):
+            logger.error(
+                "pdf.%s: refusing to overwrite input file: %s",
+                action,
+                output_file,
+            )
+            return False
+
+    existing = [
+        output_file for output_file in outputs if os.path.exists(output_file)
+    ]
+    if existing and not rewrite:
+        logger.error(
+            "pdf.%s: output files already exist: %s; "
+            "use -W/--rewrite to overwrite",
+            action,
+            existing,
+        )
+        return False
+
+    for output_file in existing:
+        if rewrite:
+            logger.warning(
+                "pdf.%s: overwriting existing output file: %s",
+                action,
+                output_file,
+            )
+    return True
+
+
 def _validate_source_pdf(action: str, input_file: str, verbose: bool) -> bool:
     if not os.path.exists(input_file):
         if verbose:
@@ -358,7 +412,10 @@ def _extract_image_dimensions(doc: Any, xref: int) -> Tuple[int, int]:
         return int(image.width), int(image.height)
 
 
-def _inspect_page_raster_placements(doc: Any, page: Any) -> List[Dict[str, Any]]:
+def _inspect_page_raster_placements(
+    doc: Any,
+    page: Any,
+) -> List[Dict[str, Any]]:
     placements: List[Dict[str, Any]] = []
     for xref in _list_page_image_xrefs(page):
         width_px, height_px = _extract_image_dimensions(doc, xref)
@@ -678,6 +735,7 @@ def scale_file(
     pages: Optional[Iterable[int]] = None,
     paper_format: Optional[str] = None,
     verbose: bool = False,
+    rewrite: bool = False,
 ) -> bool:
     fitz = _import_fitz("scaling")
 
@@ -690,6 +748,10 @@ def scale_file(
             input_file,
             f"_scaled_{normalized_format}",
         )
+    if not _allow_output_targets(
+        "scale", [input_file], [output_path], rewrite=rewrite
+    ):
+        return False
 
     try:
         with _open_pdf(fitz, input_file, "scale") as src:
@@ -728,7 +790,8 @@ def scale_file(
                         dest_page.showPDFpage(dest_rect, src, page_idx)
                     else:
                         raise RuntimeError(
-                            "PyMuPDF page object does not support page placement API"
+                            "PyMuPDF page object does not support page "
+                            "placement API"
                         )
 
                 out_doc.save(output_path, garbage=3, deflate=True, clean=True)
@@ -773,6 +836,7 @@ def merge_files(
     input_files: Iterable[str],
     output_path: Optional[str],
     verbose: bool = False,
+    rewrite: bool = False,
 ) -> bool:
     fitz = _import_fitz("merge")
 
@@ -784,6 +848,10 @@ def merge_files(
 
     if output_path is None:
         output_path = os.path.join(os.path.dirname(files[0]), "merged.pdf")
+    if not _allow_output_targets(
+        "merge", files, [output_path], rewrite=rewrite
+    ):
+        return False
 
     with fitz.open() as result_pdf:
         for file_path in files:
@@ -822,6 +890,7 @@ def rotate_pages(
     pages: Optional[Iterable[int]] = None,
     inplace: bool = False,
     verbose: bool = False,
+    rewrite: bool = False,
 ) -> bool:
     fitz = _import_fitz("rotation")
 
@@ -838,6 +907,10 @@ def rotate_pages(
             replace_when_done = True
         else:
             output_path = _default_output(input_file, "_rotated")
+    if not replace_when_done and not _allow_output_targets(
+        "rotate", [input_file], [output_path], rewrite=rewrite
+    ):
+        return False
 
     with _open_pdf(fitz, input_file, "rotate") as doc:
         page_indices = _normalize_rotation_pages(pages, doc.page_count)
@@ -868,6 +941,7 @@ def extract_images(
     output_type: Optional[str] = None,
     whole_page: bool = False,
     verbose: bool = False,
+    rewrite: bool = False,
 ) -> bool:
     normalized_type = _normalize_extract_type(output_type)
     fitz = _import_fitz("image extraction")
@@ -898,15 +972,14 @@ def extract_images(
                 f"{output_prefix}_{i:03d}.{normalized_type}"
                 for i in range(1, len(payloads) + 1)
             ]
-            collisions = [path for path in targets if os.path.exists(path)]
-            if collisions:
-                if verbose:
-                    logger.warning(
-                        "pdf.extract: target files exist, aborting: %s",
-                        collisions,
-                    )
+            if not _allow_output_targets(
+                "extract", [input_file], targets, rewrite=rewrite
+            ):
                 return False
 
+            preexisting = {
+                path for path in targets if os.path.exists(path)
+            }
             created: List[str] = []
             try:
                 for (payload_type, payload_value), target in zip(
@@ -931,7 +1004,7 @@ def extract_images(
             except (OSError, RuntimeError, ValueError):
                 for path in created:
                     try:
-                        if os.path.exists(path):
+                        if path not in preexisting and os.path.exists(path):
                             os.remove(path)
                     except OSError:
                         pass
@@ -948,6 +1021,7 @@ def delete_pages(
     output_path: Optional[str],
     pages: Optional[Iterable[int]] = None,
     verbose: bool = False,
+    rewrite: bool = False,
 ) -> bool:
     fitz = _import_fitz("page deletion")
 
@@ -957,6 +1031,13 @@ def delete_pages(
     if not pages:
         if verbose:
             logger.warning("pdf.delete: no pages provided")
+        return False
+
+    if output_path is None:
+        output_path = _default_output(input_file, "_deleted")
+    if not _allow_output_targets(
+        "delete", [input_file], [output_path], rewrite=rewrite
+    ):
         return False
 
     with _open_pdf(fitz, input_file, "delete") as doc:
@@ -971,9 +1052,6 @@ def delete_pages(
 
         for idx in sorted(set(indices), reverse=True):
             doc.delete_page(idx)
-
-        if output_path is None:
-            output_path = _default_output(input_file, "_deleted")
 
         doc.save(output_path)
 
@@ -1000,6 +1078,7 @@ def split_pages(
     output_path: Optional[str],
     pages: Optional[Iterable[int]] = None,
     verbose: bool = False,
+    rewrite: bool = False,
 ) -> bool:
     fitz = _import_fitz("splitting")
 
@@ -1042,15 +1121,12 @@ def split_pages(
             ext = ".pdf"
 
         targets = [f"{base}_{i + 1}{ext}" for i in range(len(ranges))]
-        collisions = [path for path in targets if os.path.exists(path)]
-        if collisions:
-            if verbose:
-                logger.warning(
-                    "pdf.split: target files exist, aborting: %s",
-                    collisions,
-                )
+        if not _allow_output_targets(
+            "split", [input_file], targets, rewrite=rewrite
+        ):
             return False
 
+        preexisting = {path for path in targets if os.path.exists(path)}
         created: List[str] = []
         try:
             for (start_idx, end_idx), target in zip(ranges, targets):
@@ -1065,7 +1141,7 @@ def split_pages(
         except (OSError, RuntimeError, ValueError):
             for path in created:
                 try:
-                    if os.path.exists(path):
+                    if path not in preexisting and os.path.exists(path):
                         os.remove(path)
                 except OSError:
                     pass
@@ -1078,6 +1154,7 @@ def clean_file(
     input_file: str,
     output_path: Optional[str],
     verbose: bool = False,
+    rewrite: bool = False,
 ) -> bool:
     fitz = _import_fitz("cleanup")
 
@@ -1086,6 +1163,10 @@ def clean_file(
 
     if output_path is None:
         output_path = _default_output(input_file, "_cleaned")
+    if not _allow_output_targets(
+        "clean", [input_file], [output_path], rewrite=rewrite
+    ):
+        return False
 
     try:
         with _open_pdf(fitz, input_file, "clean") as doc:
@@ -1105,6 +1186,7 @@ def compress_file(
     grayscale: bool = False,
     rebuild: bool = False,
     verbose: bool = False,
+    rewrite: bool = False,
 ) -> bool:
     fitz = _import_fitz("compression")
 
@@ -1118,6 +1200,10 @@ def compress_file(
         output_path = _default_output(
             input_file, f"_compressed_{normalized_dpi}dpi"
         )
+    if not _allow_output_targets(
+        "compress", [input_file], [output_path], rewrite=rewrite
+    ):
+        return False
 
     try:
         with _open_pdf(fitz, input_file, "compress") as doc:
