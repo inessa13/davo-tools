@@ -442,10 +442,31 @@ def init_parser(parser=None, subparsers=None, commands=()):
             "diff",
             help="compare image feature vectors and pHashes",
         )
+        cmd.add_argument(
+            "-r",
+            "--recursive",
+            action="store_true",
+            help="scan directories recursively",
+        )
+        cmd.add_argument(
+            "-t",
+            "--table",
+            action="store_true",
+            help="print an ASCII table instead of TSV",
+        )
+        cmd.add_argument(
+            "-a",
+            "--all",
+            action="store_true",
+            help="include pairs with different status",
+        )
         cmd.add_argument("images", metavar="IMAGE", nargs="+")
         cmd.set_defaults(
             func=lambda namespace: helpers.command_fingerprint_diff(
                 images=namespace.images,
+                recursive=namespace.recursive,
+                table=namespace.table,
+                show_all=namespace.all,
             )
         )
 

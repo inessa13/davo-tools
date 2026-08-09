@@ -127,12 +127,14 @@ def _fingerprint_phash_from_image(image: Image.Image) -> str:
     return "{:016x}".format(value)
 
 
-def fingerprint_comparison_features(path: str) -> tuple[list[float], str]:
-    """Return comparison vector and pHash after decoding an image once."""
+def fingerprint_comparison_features(
+    path: str,
+) -> tuple[tuple[int, int], list[float], str]:
+    """Return size, comparison vector, and pHash after one image decode."""
     with _load_image(path) as image:
-        _size, vector = _fingerprint_vector_from_image(image, path)
+        size, vector = _fingerprint_vector_from_image(image, path)
         phash = _fingerprint_phash_from_image(image)
-    return vector, phash
+    return size, vector, phash
 
 
 def format_fingerprint(path: str) -> str:

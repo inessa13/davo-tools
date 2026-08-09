@@ -14,6 +14,7 @@ from PIL import Image
 
 import davo.utils
 from davo import errors
+from davo.utils import format as format_utils
 
 try:
     from . import recover
@@ -661,19 +662,60 @@ def command_fingerprint(image: str):
     print(fingerprint.format_fingerprint(image))
 
 
-def command_fingerprint_diff(images: list[str]):
-    """Print image fingerprint distances for every input pair."""
-    if len(images) < 2:
+def command_fingerprint_diff(
+    images: list[str], recursive=False, table=False, show_all=False
+):
+    """Print image fingerprint distances for every resolved image pair."""
+    resolved_images = []
+    seen_paths = set()
+
+    for image in images:
+        if os.path.isdir(image):
+            candidates = sorted(
+                utils.iter_files(image, recursive=recursive)
+            )
+            skip_invalid = True
+        else:
+            candidates = [image]
+            skip_invalid = False
+
+        for candidate in candidates:
+            canonical_path = os.path.realpath(candidate)
+            if canonical_path in seen_paths:
+                continue
+
+            try:
+                features = fingerprint.fingerprint_comparison_features(
+                    candidate
+                )
+            except errors.UserError:
+                if skip_invalid:
+                    continue
+                raise
+
+            seen_paths.add(canonical_path)
+            (width, height), vector, phash = features
+            display_path = "{} {}*{} {}".format(
+                candidate,
+                width,
+                height,
+                format_utils.humanize_bytes(
+                    os.path.getsize(candidate), format_="{:.1f}{}b"
+                ).replace(" ", ""),
+            )
+            resolved_images.append((display_path, vector, phash))
+
+    if len(resolved_images) < 2:
         raise errors.UserError("At least two images are required for diff")
 
-    features = [
-        fingerprint.fingerprint_comparison_features(image) for image in images
-    ]
-    lines = ["left\tright\tl2_percent\tphash_percent\tstatus"]
-    for left_index, left_path in enumerate(images[:-1]):
-        left_vector, left_phash = features[left_index]
-        for right_index in range(left_index + 1, len(images)):
-            right_vector, right_phash = features[right_index]
+    headers = ("left", "right", "l2_percent", "phash_percent", "status")
+    rows = []
+    for left_index, (left_path, left_vector, left_phash) in enumerate(
+        resolved_images[:-1]
+    ):
+        for right_path, right_vector, right_phash in resolved_images[
+            left_index + 1 :
+        ]:
             l2 = math.sqrt(
                 sum(
                     (left_value - right_value) ** 2
@@ -698,16 +740,62 @@ def command_fingerprint_diff(images: list[str]):
                 status = "differ"
             else:
                 status = "different"
-            lines.append(
-                "{}\t{}\t{:.2f}\t{:.2f}\t{}".format(
+            rows.append(
+                (
                     left_path,
-                    images[right_index],
-                    l2_percent,
-                    phash_percent,
+                    right_path,
+                    f"{l2_percent:.2f}",
+                    f"{phash_percent:.2f}",
                     status,
                 )
             )
-    print("\n".join(lines))
+    statuses = ("identical", "duplicate", "similar", "differ", "different")
+    summary = ", ".join(
+        "{}: {}".format(status, count)
+        for status in statuses
+        if (count := sum(row[-1] == status for row in rows))
+    )
+    visible_rows = rows if show_all or len(rows) == 1 else [
+        row for row in rows if row[-1] != "different"
+    ]
+    if table:
+        report = _format_fingerprint_diff_table(headers, visible_rows)
+    else:
+        report = "\n".join(
+            ("\t".join(headers), *("\t".join(row) for row in visible_rows))
+        )
+    print("{}\ntotal {}".format(report, summary))
+
+
+def _format_fingerprint_diff_table(headers, rows):
+    """Format fingerprint diff rows as an ASCII table."""
+    widths = [
+        max((len(header), *(len(row[index]) for row in rows)))
+        for index, header in enumerate(headers)
+    ]
+    border = "+{}+".format("+".join("-" * (width + 2) for width in widths))
+
+    def format_row(row):
+        return "| {} |".format(
+            " | ".join(
+                (
+                    value.rjust(widths[index])
+                    if index in (2, 3)
+                    else value.ljust(widths[index])
+                )
+                for index, value in enumerate(row)
+            )
+        )
+
+    return "\n".join(
+        (
+            border,
+            format_row(headers),
+            border,
+            *(format_row(row) for row in rows),
+            border,
+        )
+    )
 
 
 def _pdf_path(root: str | None, path: str | None) -> str | None:

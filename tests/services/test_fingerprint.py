@@ -13,6 +13,10 @@ def _values(line):
     return [float(value) for value in line.split(": ", 1)[1].split()]
 
 
+def _display_path(value):
+    return value.rsplit(" ", 2)[0]
+
+
 def test_command_fingerprint_outputs_compact_db_features(tmp_path, capsys):
     path = tmp_path / "pixels.png"
     image = Image.new("RGB", (2, 1))
@@ -135,11 +139,172 @@ def test_fingerprint_diff_reports_zero_for_identical_images(tmp_path, capsys):
     image.save(second)
 
     helpers.command_fingerprint_diff([str(first), str(second)])
+    first_display = "{} 1*2 {}".format(
+        first,
+        helpers.format_utils.humanize_bytes(
+            first.stat().st_size, format_="{:.1f}{}b"
+        ).replace(" ", ""),
+    )
+    second_display = "{} 1*2 {}".format(
+        second,
+        helpers.format_utils.humanize_bytes(
+            second.stat().st_size, format_="{:.1f}{}b"
+        ).replace(" ", ""),
+    )
 
     assert capsys.readouterr().out.splitlines() == [
         "left\tright\tl2_percent\tphash_percent\tstatus",
-        "{}\t{}\t0.00\t0.00\tidentical".format(first, second),
+        "{}\t{}\t0.00\t0.00\tidentical".format(
+            first_display, second_display
+        ),
+        "total identical: 1",
     ]
+
+
+def test_fingerprint_diff_table_output(tmp_path, capsys):
+    first = tmp_path / "a.png"
+    second = tmp_path / "b.png"
+    Image.new("RGB", (1, 1), (255, 0, 0)).save(first)
+    Image.new("RGB", (1, 1), (255, 0, 0)).save(second)
+
+    helpers.command_fingerprint_diff([str(first), str(second)], table=True)
+
+    first_display = "{} 1*1 {}".format(
+        first,
+        helpers.format_utils.humanize_bytes(
+            first.stat().st_size, format_="{:.1f}{}b"
+        ).replace(" ", ""),
+    )
+    second_display = "{} 1*1 {}".format(
+        second,
+        helpers.format_utils.humanize_bytes(
+            second.stat().st_size, format_="{:.1f}{}b"
+        ).replace(" ", ""),
+    )
+    widths = (len(first_display), len(second_display), 10, 13, 9)
+    border = "+{}+".format(
+        "+".join("-" * (width + 2) for width in widths)
+    )
+    expected = [
+        border,
+        "| {:<{}} | {:<{}} | l2_percent | phash_percent | status    |".format(
+            "left", widths[0], "right", widths[1]
+        ),
+        border,
+        "| {} | {} |       0.00 |          0.00 | identical |".format(
+            first_display, second_display
+        ),
+        border,
+        "total identical: 1",
+    ]
+    assert capsys.readouterr().out.splitlines() == expected
+
+
+def test_fingerprint_diff_table_expands_columns_for_long_paths(capsys, mocker):
+    mocker.patch.object(
+        fingerprint,
+        "fingerprint_comparison_features",
+        return_value=((1, 1), (0.0,), "0" * 16),
+    )
+    mocker.patch.object(helpers.os.path, "getsize", return_value=1)
+    long_path = "a-very-long-image-name.png"
+
+    helpers.command_fingerprint_diff([long_path, "b.png"], table=True)
+
+    assert capsys.readouterr().out.splitlines()[0] == (
+        "+{}+".format(
+            "+".join(
+                "-" * (width + 2)
+                for width in (
+                    len("{} 1*1 1.0b".format(long_path)),
+                    len("b.png 1*1 1.0b"),
+                    10,
+                    13,
+                    9,
+                )
+            )
+        )
+    )
+
+
+def test_fingerprint_diff_hides_different_rows_and_counts_all_statuses(
+    capsys, mocker
+):
+    percentages = (0, 0, 1, 10, 40, 61)
+    mocker.patch.object(
+        fingerprint,
+        "fingerprint_comparison_features",
+        side_effect=[
+            ((1, 1), (math.sqrt(2) * percentage / 100,), "0" * 16)
+            for percentage in percentages
+        ],
+    )
+    mocker.patch.object(helpers.os.path, "getsize", return_value=1)
+
+    helpers.command_fingerprint_diff(
+        ["{}.png".format(index) for index in range(6)]
+    )
+
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.split("\t")[-1] for line in lines[1:-1]] == [
+        "identical",
+        "duplicate",
+        "similar",
+        "differ",
+        "duplicate",
+        "similar",
+        "differ",
+        "similar",
+        "differ",
+        "differ",
+        "differ",
+    ]
+    assert lines[-1] == (
+        "total identical: 1, duplicate: 2, similar: 3, differ: 5, different: 4"
+    )
+
+
+def test_fingerprint_diff_shows_single_different_pair_without_all(
+    capsys, mocker
+):
+    mocker.patch.object(
+        fingerprint,
+        "fingerprint_comparison_features",
+        side_effect=[
+            ((1, 1), (0.0,), "0" * 16),
+            ((1, 1), (math.sqrt(2) * 0.6,), "0" * 16),
+        ],
+    )
+    mocker.patch.object(helpers.os.path, "getsize", return_value=2048)
+
+    helpers.command_fingerprint_diff(["first.png", "second.png"])
+
+    assert capsys.readouterr().out.splitlines() == [
+        "left\tright\tl2_percent\tphash_percent\tstatus",
+        "first.png 1*1 2.0Kb\tsecond.png 1*1 2.0Kb\t60.00\t0.00\tdifferent",
+        "total different: 1",
+    ]
+
+
+def test_fingerprint_diff_table_shows_single_different_pair_without_all(
+    capsys, mocker
+):
+    mocker.patch.object(
+        fingerprint,
+        "fingerprint_comparison_features",
+        side_effect=[
+            ((1, 1), (0.0,), "0" * 16),
+            ((1, 1), (math.sqrt(2) * 0.6,), "0" * 16),
+        ],
+    )
+    mocker.patch.object(helpers.os.path, "getsize", return_value=2048)
+
+    helpers.command_fingerprint_diff(["first.png", "second.png"], table=True)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == lines[2] == lines[4]
+    assert "different" in lines[3]
+    assert lines[5:] == ["total different: 1"]
 
 
 def test_fingerprint_diff_reports_all_pairs_in_argument_order(
@@ -154,11 +319,16 @@ def test_fingerprint_diff_reports_all_pairs_in_argument_order(
         Image.new("RGB", (1, 1), (index * 100, 0, 0)).save(path)
     load_image = mocker.spy(fingerprint, "_load_image")
 
-    helpers.command_fingerprint_diff([str(path) for path in paths])
+    helpers.command_fingerprint_diff(
+        [str(path) for path in paths], show_all=True
+    )
 
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == "left\tright\tl2_percent\tphash_percent\tstatus"
-    assert [line.split("\t")[:2] for line in lines[1:]] == [
+    assert [
+        [_display_path(value) for value in line.split("\t")[:2]]
+        for line in lines[1:-1]
+    ] == [
         [str(paths[0]), str(paths[1])],
         [str(paths[0]), str(paths[2])],
         [str(paths[1]), str(paths[2])],
@@ -174,9 +344,9 @@ def test_fingerprint_diff_calculates_percentages_and_status(tmp_path, capsys):
     image.paste((255, 0, 0), (0, 0, 16, 32))
     image.save(right)
 
-    helpers.command_fingerprint_diff([str(left), str(right)])
+    helpers.command_fingerprint_diff([str(left), str(right)], show_all=True)
 
-    _header, row = capsys.readouterr().out.splitlines()
+    _header, row, _summary = capsys.readouterr().out.splitlines()
     _left, _right, l2_percent, phash_percent, status = row.split("\t")
     _left_size, left_vector = fingerprint.fingerprint_vector(str(left))
     _right_size, right_vector = fingerprint.fingerprint_vector(str(right))
@@ -234,10 +404,16 @@ def test_fingerprint_diff_status_uses_unrounded_average(
     mocker.patch.object(
         fingerprint,
         "fingerprint_comparison_features",
-        side_effect=[((0.0,), "0" * 16), ((l2,), "0" * 16)],
+        side_effect=[
+            ((1, 1), (0.0,), "0" * 16),
+            ((1, 1), (l2,), "0" * 16),
+        ],
     )
+    mocker.patch.object(helpers.os.path, "getsize", return_value=1)
 
-    helpers.command_fingerprint_diff(["first.png", "second.png"])
+    helpers.command_fingerprint_diff(
+        ["first.png", "second.png"], show_all=True
+    )
 
     _left, _right, _l2_percent, _phash_percent, status = (
         capsys.readouterr().out.splitlines()[1].split("\t")
@@ -282,3 +458,104 @@ def test_fingerprint_diff_does_not_modify_sources(tmp_path):
     helpers.command_fingerprint_diff([str(path) for path in paths])
 
     assert [path.read_bytes() for path in paths] == originals
+
+
+def test_fingerprint_diff_expands_top_level_directory_in_sorted_order(
+    tmp_path, capsys
+):
+    images = tmp_path / "images"
+    images.mkdir()
+    Image.new("RGB", (1, 1), (255, 0, 0)).save(images / "b.png")
+    Image.new("RGB", (1, 1), (0, 255, 0)).save(images / "a.png")
+    (images / "not-an-image.txt").write_text("not an image")
+
+    helpers.command_fingerprint_diff([str(images)], show_all=True)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert [
+        [_display_path(value) for value in line.split("\t")[:2]]
+        for line in lines[1:-1]
+    ] == [
+        [str(images / "a.png"), str(images / "b.png")]
+    ]
+
+
+def test_fingerprint_diff_expands_nested_directories_only_recursively(
+    tmp_path, capsys
+):
+    images = tmp_path / "images"
+    nested = images / "nested"
+    nested.mkdir(parents=True)
+    Image.new("RGB", (1, 1), (255, 0, 0)).save(images / "top-a.png")
+    Image.new("RGB", (1, 1), (0, 255, 0)).save(images / "top-b.png")
+    Image.new("RGB", (1, 1), (0, 0, 255)).save(nested / "nested.png")
+
+    helpers.command_fingerprint_diff([str(images)])
+
+    assert len(capsys.readouterr().out.splitlines()) == 3
+
+    helpers.command_fingerprint_diff(
+        [str(images)], recursive=True, show_all=True
+    )
+
+    lines = capsys.readouterr().out.splitlines()
+    assert [
+        [_display_path(value) for value in line.split("\t")[:2]]
+        for line in lines[1:-1]
+    ] == [
+        [str(images / "nested" / "nested.png"), str(images / "top-a.png")],
+        [str(images / "nested" / "nested.png"), str(images / "top-b.png")],
+        [str(images / "top-a.png"), str(images / "top-b.png")],
+    ]
+
+
+def test_fingerprint_diff_keeps_relative_directory_paths(
+    tmp_path, capsys, monkeypatch
+):
+    Image.new("RGB", (1, 1), (255, 0, 0)).save(tmp_path / "a.png")
+    Image.new("RGB", (1, 1), (0, 255, 0)).save(tmp_path / "b.png")
+    monkeypatch.chdir(tmp_path)
+
+    helpers.command_fingerprint_diff(["."], show_all=True)
+
+    assert [
+        _display_path(value)
+        for value in capsys.readouterr().out.splitlines()[1].split("\t")[:2]
+    ] == [
+        "./a.png",
+        "./b.png",
+    ]
+
+
+def test_fingerprint_diff_deduplicates_overlapping_paths(
+    tmp_path, capsys, mocker
+):
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.png"
+    Image.new("RGB", (1, 1), (255, 0, 0)).save(first)
+    Image.new("RGB", (1, 1), (0, 255, 0)).save(second)
+    load_image = mocker.spy(fingerprint, "_load_image")
+
+    helpers.command_fingerprint_diff(
+        [str(first), str(tmp_path)], show_all=True
+    )
+
+    output_pairs = [
+        [_display_path(value) for value in line.split("\t")[:2]]
+        for line in capsys.readouterr().out.splitlines()[1:-1]
+    ]
+    assert output_pairs == [[str(first), str(second)]]
+    assert load_image.call_count == 2
+
+
+def test_fingerprint_diff_requires_two_resolved_directory_images(
+    tmp_path, capsys
+):
+    images = tmp_path / "images"
+    images.mkdir()
+    (images / "not-an-image.txt").write_text("not an image")
+
+    with pytest.raises(errors.UserError, match="At least two images"):
+        helpers.command_fingerprint_diff([str(images)])
+
+    assert capsys.readouterr().out == ""

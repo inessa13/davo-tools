@@ -19,12 +19,68 @@ from davo.services.photo import cli as photo_cli
         ["im", "fp", "input.png"],
         ["im", "diff", "first.png", "second.png"],
         ["im", "diff", "first.png", "second.png", "third.png"],
+        ["im", "diff", "-r", "images"],
+        ["im", "diff", "--recursive", "images"],
+        ["im", "diff", "-t", "first.png", "second.png"],
+        ["im", "diff", "--table", "first.png", "second.png"],
+        ["im", "diff", "-a", "first.png", "second.png"],
+        ["im", "diff", "--all", "first.png", "second.png"],
     ],
 )
 def test_parser_accepts_new_command_groups(arguments):
     namespace = cli.init_parser().parse_args(arguments)
 
     assert callable(namespace.func)
+
+
+@pytest.mark.parametrize("option", ["-r", "--recursive"])
+def test_parser_sets_recursive_for_image_diff(option):
+    namespace = cli.init_parser().parse_args(["im", "diff", option, "images"])
+
+    assert namespace.recursive is True
+
+
+@pytest.mark.parametrize("option", ["-t", "--table"])
+def test_parser_sets_table_for_image_diff(option):
+    namespace = cli.init_parser().parse_args(
+        ["im", "diff", option, "first.png", "second.png"]
+    )
+
+    assert namespace.table is True
+
+
+@pytest.mark.parametrize("option", ["-a", "--all"])
+def test_parser_sets_all_for_image_diff(option):
+    namespace = cli.init_parser().parse_args(
+        ["im", "diff", option, "first.png", "second.png"]
+    )
+
+    assert namespace.all is True
+
+
+@pytest.mark.parametrize(
+    ("arguments", "show_all"),
+    [
+        (["--table", "first.png", "second.png"], False),
+        (["--all", "first.png", "second.png"], True),
+    ],
+)
+def test_parser_passes_options_to_image_diff_handler(
+    mocker, arguments, show_all
+):
+    handler = mocker.patch.object(
+        photo_cli.helpers, "command_fingerprint_diff"
+    )
+    namespace = cli.init_parser().parse_args(["im", "diff", *arguments])
+
+    namespace.func(namespace)
+
+    handler.assert_called_once_with(
+        images=["first.png", "second.png"],
+        recursive=False,
+        table=arguments[0] == "--table",
+        show_all=show_all,
+    )
 
 
 @pytest.mark.parametrize(
