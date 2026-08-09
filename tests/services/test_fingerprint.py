@@ -346,9 +346,9 @@ def test_fingerprint_diff_reports_all_pairs_in_argument_order(
 def test_fingerprint_diff_progress_bars_use_interactive_stderr(
     tmp_path, capsys, monkeypatch
 ):
-    paths = [tmp_path / "{}.png".format(index) for index in range(3)]
+    paths = [tmp_path / "{}.png".format(index) for index in range(10)]
     for index, path in enumerate(paths):
-        Image.new("RGB", (1, 1), (index * 100, 0, 0)).save(path)
+        Image.new("RGB", (1, 1), (index * 20, 0, 0)).save(path)
     stderr = _InteractiveStderr()
     monkeypatch.setattr(helpers.utils.sys, "stderr", stderr)
 
@@ -357,11 +357,11 @@ def test_fingerprint_diff_progress_bars_use_interactive_stderr(
     )
 
     progress = stderr.getvalue()
-    assert "files: {}".format(prnt.progress_bar(3, 3)) in progress
-    assert "pairs: {}".format(prnt.progress_bar(3, 3)) in progress
+    assert "files: {}".format(prnt.progress_bar(10, 10)) in progress
+    assert "pairs: {}".format(prnt.progress_bar(45, 45)) in progress
     assert progress.endswith("\n")
     assert progress.count("\n") == 2
-    assert len(capsys.readouterr().out.splitlines()) == 5
+    assert len(capsys.readouterr().out.splitlines()) == 47
 
 
 def test_fingerprint_diff_files_progress_shows_rate_elapsed_and_paths(
@@ -373,14 +373,40 @@ def test_fingerprint_diff_files_progress_shows_rate_elapsed_and_paths(
     nested_file = nested / "nested.png"
     direct_file = tmp_path / "direct.png"
     Image.new("RGB", (1, 1), (255, 0, 0)).save(nested_file)
+    for index in range(8):
+        Image.new("RGB", (1, 1), (index * 20, 0, 0)).save(
+            images / "z-{}.png".format(index)
+        )
     Image.new("RGB", (1, 1), (0, 255, 0)).save(direct_file)
     stderr = _InteractiveStderr()
     monkeypatch.setattr(helpers.utils.sys, "stderr", stderr)
+    mocker.patch.object(helpers.os.path, "getsize", return_value=100)
     mocker.patch.object(
-        helpers.os.path, "getsize", side_effect=[100, 100, 200, 200]
-    )
-    mocker.patch.object(
-        helpers.time, "time", side_effect=[10, 10, 12, 12, 14]
+        helpers.time,
+        "time",
+        side_effect=[
+            10,
+            10,
+            12,
+            12,
+            14,
+            14,
+            16,
+            16,
+            18,
+            18,
+            20,
+            20,
+            22,
+            22,
+            24,
+            24,
+            26,
+            26,
+            28,
+            28,
+            30,
+        ],
     )
 
     helpers.command_fingerprint_diff(
@@ -388,10 +414,21 @@ def test_fingerprint_diff_files_progress_shows_rate_elapsed_and_paths(
     )
 
     progress = stderr.getvalue()
-    assert "Elapsed: 0.00s 0 Bps nested/nested.png" in progress
-    assert "Elapsed: 2.00s 50.00  Bps nested/nested.png" in progress
-    assert "Elapsed: 4.00s 75.00  Bps {}".format(direct_file) in progress
-    assert "pairs: {} Elapsed:".format(prnt.progress_bar(1, 1)) not in progress
+    assert "Elapsed: 0.00s 0 Bps Estimated: n/a nested/nested.png" in progress
+    assert (
+        "Elapsed: 2.00s 50.00  Bps Estimated: 0:00:18 nested/nested.png"
+        in progress
+    )
+    assert (
+        "Elapsed: 20.00s 50.00  Bps Estimated: 0:00:00 {}".format(
+            direct_file
+        )
+        in progress
+    )
+    assert (
+        "pairs: {} Estimated:".format(prnt.progress_bar(1, 1))
+        not in progress
+    )
 
 
 def test_fingerprint_diff_progress_counts_all_expanded_candidates(
@@ -403,6 +440,10 @@ def test_fingerprint_diff_progress_counts_all_expanded_candidates(
     second = images / "second.png"
     Image.new("RGB", (1, 1), (255, 0, 0)).save(first)
     Image.new("RGB", (1, 1), (0, 255, 0)).save(second)
+    for index in range(6):
+        Image.new("RGB", (1, 1), (index * 20, 0, 0)).save(
+            images / "{}.png".format(index)
+        )
     (images / "not-an-image.txt").write_text("not an image")
     stderr = _InteractiveStderr()
     monkeypatch.setattr(helpers.utils.sys, "stderr", stderr)
@@ -410,8 +451,22 @@ def test_fingerprint_diff_progress_counts_all_expanded_candidates(
     helpers.command_fingerprint_diff([str(first), str(images)])
 
     progress = stderr.getvalue()
-    assert "files: {}".format(prnt.progress_bar(4, 4)) in progress
-    assert "pairs: {}".format(prnt.progress_bar(1, 1)) in progress
+    assert "files: {}".format(prnt.progress_bar(10, 10)) in progress
+    assert "pairs: {}".format(prnt.progress_bar(28, 28)) in progress
+
+
+def test_fingerprint_diff_progress_is_disabled_below_threshold(
+    tmp_path, monkeypatch
+):
+    paths = [tmp_path / "{}.png".format(index) for index in range(9)]
+    for index, path in enumerate(paths):
+        Image.new("RGB", (1, 1), (index * 20, 0, 0)).save(path)
+    stderr = _InteractiveStderr()
+    monkeypatch.setattr(helpers.utils.sys, "stderr", stderr)
+
+    helpers.command_fingerprint_diff([str(path) for path in paths])
+
+    assert stderr.getvalue() == ""
 
 
 def test_fingerprint_diff_progress_is_disabled_for_non_tty(tmp_path, capsys):
@@ -650,5 +705,119 @@ def test_fingerprint_diff_requires_two_resolved_directory_images(
 
     with pytest.raises(errors.UserError, match="At least two images"):
         helpers.command_fingerprint_diff([str(images)])
+
+    assert capsys.readouterr().out == ""
+
+
+def test_fingerprint_diff_fast_compares_corrupt_image_sizes(
+    tmp_path, capsys, mocker
+):
+    first = tmp_path / "first.JPG"
+    second = tmp_path / "second.jpg"
+    first.write_bytes(b"broken")
+    second.write_bytes(b"other!")
+    comparison_features = mocker.patch.object(
+        fingerprint, "fingerprint_comparison_features"
+    )
+
+    helpers.command_fingerprint_diff(
+        [str(first), str(second)], fast=True
+    )
+
+    assert capsys.readouterr().out.splitlines() == [
+        "left\tright\tl2_percent\tphash_percent\tstatus",
+        "{} 6.0b\t{} 6.0b\t—\t—\tsame_size".format(first, second),
+        "total same_size: 1",
+    ]
+    comparison_features.assert_not_called()
+
+
+def test_fingerprint_diff_fast_hides_different_pairs_unless_requested(
+    tmp_path, capsys
+):
+    paths = [
+        tmp_path / name for name in ("one.png", "two.png", "three.png")
+    ]
+    paths[0].write_bytes(b"a")
+    paths[1].write_bytes(b"b")
+    paths[2].write_bytes(b"cc")
+
+    helpers.command_fingerprint_diff([str(path) for path in paths], fast=True)
+
+    assert capsys.readouterr().out.splitlines() == [
+        "left\tright\tl2_percent\tphash_percent\tstatus",
+        "{} 1.0b\t{} 1.0b\t—\t—\tsame_size".format(paths[0], paths[1]),
+        "total same_size: 1, different: 2",
+    ]
+
+    helpers.command_fingerprint_diff(
+        [str(path) for path in paths], fast=True, show_all=True
+    )
+
+    assert len(capsys.readouterr().out.splitlines()) == 5
+
+
+@pytest.mark.parametrize("table", (False, True))
+def test_fingerprint_diff_hides_empty_report_headers(tmp_path, capsys, table):
+    paths = [tmp_path / name for name in ("one.png", "two.png", "three.png")]
+    for index, path in enumerate(paths, 1):
+        path.write_bytes(b"x" * index)
+
+    helpers.command_fingerprint_diff(
+        [str(path) for path in paths], fast=True, table=table
+    )
+
+    assert capsys.readouterr().out.splitlines() == ["total different: 3"]
+
+
+def test_fingerprint_diff_fast_shows_single_different_pair_and_table(
+    tmp_path, capsys
+):
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.png"
+    first.write_bytes(b"a")
+    second.write_bytes(b"bb")
+
+    helpers.command_fingerprint_diff(
+        [str(first), str(second)], fast=True, table=True
+    )
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "—" in lines[3]
+    assert "different" in lines[3]
+    assert lines[-1] == "total different: 1"
+
+
+def test_fingerprint_diff_fast_skips_unsupported_directory_files(
+    tmp_path, capsys
+):
+    images = tmp_path / "images"
+    images.mkdir()
+    first = images / "first.jpg"
+    second = images / "second.PNG"
+    first.write_bytes(b"a")
+    second.write_bytes(b"a")
+    (images / "ignored.gif").write_bytes(b"a")
+    (images / "ignored.txt").write_text("a")
+
+    helpers.command_fingerprint_diff([str(images)], fast=True)
+
+    assert capsys.readouterr().out.splitlines()[-1] == "total same_size: 1"
+
+
+@pytest.mark.parametrize("name", ("unsupported.gif", "directory.png"))
+def test_fingerprint_diff_fast_rejects_invalid_direct_files(
+    tmp_path, capsys, name
+):
+    valid = tmp_path / "valid.png"
+    invalid = tmp_path / name
+    valid.write_bytes(b"a")
+    if name == "directory.png":
+        invalid.mkdir()
+    else:
+        invalid.write_bytes(b"a")
+
+    with pytest.raises(errors.UserError):
+        helpers.command_fingerprint_diff([str(valid), str(invalid)], fast=True)
 
     assert capsys.readouterr().out == ""

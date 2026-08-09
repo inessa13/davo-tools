@@ -25,6 +25,8 @@ from davo.services.photo import cli as photo_cli
         ["im", "diff", "--table", "first.png", "second.png"],
         ["im", "diff", "-a", "first.png", "second.png"],
         ["im", "diff", "--all", "first.png", "second.png"],
+        ["im", "diff", "-f", "first.png", "second.png"],
+        ["im", "diff", "--fast", "first.png", "second.png"],
     ],
 )
 def test_parser_accepts_new_command_groups(arguments):
@@ -58,15 +60,25 @@ def test_parser_sets_all_for_image_diff(option):
     assert namespace.all is True
 
 
+@pytest.mark.parametrize("option", ["-f", "--fast"])
+def test_parser_sets_fast_for_image_diff(option):
+    namespace = cli.init_parser().parse_args(
+        ["im", "diff", option, "first.png", "second.png"]
+    )
+
+    assert namespace.fast is True
+
+
 @pytest.mark.parametrize(
-    ("arguments", "show_all"),
+    ("arguments", "show_all", "fast"),
     [
-        (["--table", "first.png", "second.png"], False),
-        (["--all", "first.png", "second.png"], True),
+        (["--table", "first.png", "second.png"], False, False),
+        (["--all", "first.png", "second.png"], True, False),
+        (["--fast", "first.png", "second.png"], False, True),
     ],
 )
 def test_parser_passes_options_to_image_diff_handler(
-    mocker, arguments, show_all
+    mocker, arguments, show_all, fast
 ):
     handler = mocker.patch.object(
         photo_cli.helpers, "command_fingerprint_diff"
@@ -80,6 +92,7 @@ def test_parser_passes_options_to_image_diff_handler(
         recursive=False,
         table=arguments[0] == "--table",
         show_all=show_all,
+        fast=fast,
     )
 
 

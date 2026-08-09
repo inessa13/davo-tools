@@ -26,6 +26,7 @@ from . import clients, fingerprint, pdf, replace_classes, utils
 logger = logging.getLogger(__name__)
 
 P_LIVE = r"(:?IMG_\d{8}_\d{6} \()?IMG_(?P<num>\d+)\)?\.(?P<ext>.*)$"
+FAST_DIFF_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".heic"})
 
 
 def command_tree(root, reverse, commit=False):
@@ -663,9 +664,9 @@ def command_fingerprint(image: str):
 
 
 def command_fingerprint_diff(
-    images: list[str], recursive=False, table=False, show_all=False
+    images: list[str], recursive=False, table=False, show_all=False, fast=False
 ):
-    """Print image fingerprint distances for every resolved image pair."""
+    """Print image fingerprint distances or fast file-size comparisons."""
     candidates = []
     for image in images:
         if os.path.isdir(image):
@@ -681,26 +682,74 @@ def command_fingerprint_diff(
     resolved_images = []
     seen_paths = set()
     files_total = len(candidates)
+    show_progress = files_total >= 10
     bytes_processed = 0
     files_started_at = None
 
     try:
+        def report_files_progress(ready, filename):
+            if not show_progress:
+                return
+            elapsed = time.time() - files_started_at
+            estimated = None
+            if ready:
+                estimated = int(elapsed * (files_total - ready) / ready)
+            utils.stderr_progress(
+                "files",
+                ready,
+                files_total,
+                elapsed=elapsed,
+                bytes_processed=bytes_processed,
+                estimated=estimated,
+                filename=filename,
+            )
+
         for processed, (candidate, skip_invalid, progress_path) in enumerate(
             candidates, 1
         ):
             if files_started_at is None:
                 files_started_at = time.time()
-            utils.stderr_progress(
-                "files",
-                processed - 1,
-                files_total,
-                elapsed=time.time() - files_started_at,
-                bytes_processed=bytes_processed,
-                filename=progress_path,
-            )
+            report_files_progress(processed - 1, progress_path)
             canonical_path = os.path.realpath(candidate)
             try:
                 if canonical_path in seen_paths:
+                    continue
+                if fast:
+                    if not os.path.isfile(candidate):
+                        if skip_invalid:
+                            continue
+                        raise errors.UserError(
+                            "Image is not a regular file: {}".format(
+                                candidate
+                            )
+                        )
+                    if os.path.splitext(candidate)[1].lower() not in (
+                        FAST_DIFF_EXTENSIONS
+                    ):
+                        if skip_invalid:
+                            continue
+                        raise errors.UserError(
+                            "Unsupported image extension: {}".format(
+                                candidate
+                            )
+                        )
+                    try:
+                        size = os.stat(candidate).st_size
+                    except OSError as exc:
+                        if skip_invalid:
+                            continue
+                        raise errors.UserError(
+                            "Cannot stat image {}: {}".format(candidate, exc)
+                        ) from exc
+
+                    seen_paths.add(canonical_path)
+                    display_path = "{} {}".format(
+                        candidate,
+                        format_utils.humanize_bytes(
+                            size, format_="{:.1f}{}b"
+                        ).replace(" ", ""),
+                    )
+                    resolved_images.append((display_path, size))
                     continue
                 try:
                     features = fingerprint.fingerprint_comparison_features(
@@ -727,16 +776,12 @@ def command_fingerprint_diff(
                     bytes_processed += os.path.getsize(candidate)
                 except OSError:
                     pass
-                utils.stderr_progress(
-                    "files",
-                    processed,
-                    files_total,
-                    elapsed=time.time() - files_started_at,
-                    bytes_processed=bytes_processed,
-                    filename=progress_path,
-                )
+                report_files_progress(processed, progress_path)
     finally:
-        utils.stderr_progress("files", files_total, files_total, finish=True)
+        if show_progress:
+            utils.stderr_progress(
+                "files", files_total, files_total, finish=True
+            )
 
     if len(resolved_images) < 2:
         raise errors.UserError("At least two images are required for diff")
@@ -746,50 +791,79 @@ def command_fingerprint_diff(
     pairs_total = len(resolved_images) * (len(resolved_images) - 1) // 2
     processed_pairs = 0
     try:
-        for left_index, (left_path, left_vector, left_phash) in enumerate(
-            resolved_images[:-1]
-        ):
-            for right_path, right_vector, right_phash in resolved_images[
-                left_index + 1 :
-            ]:
-                l2 = math.sqrt(
-                    sum(
-                        (left_value - right_value) ** 2
-                        for left_value, right_value in zip(
-                            left_vector, right_vector
+        for left_index, left_image in enumerate(resolved_images[:-1]):
+            for right_image in resolved_images[left_index + 1 :]:
+                if fast:
+                    left_path, left_size = left_image
+                    right_path, right_size = right_image
+                    status = (
+                        "same_size"
+                        if left_size == right_size
+                        else "different"
+                    )
+                    l2_percent = phash_percent = "—"
+                else:
+                    left_path, left_vector, left_phash = left_image
+                    right_path, right_vector, right_phash = right_image
+                    l2 = math.sqrt(
+                        sum(
+                            (left_value - right_value) ** 2
+                            for left_value, right_value in zip(
+                                left_vector, right_vector
+                            )
                         )
                     )
-                )
-                phash_hamming = (
-                    int(left_phash, 16) ^ int(right_phash, 16)
-                ).bit_count()
-                l2_percent = l2 / math.sqrt(2) * 100
-                phash_percent = phash_hamming / 64 * 100
-                difference_percent = (l2_percent + phash_percent) / 2
-                if difference_percent == 0:
-                    status = "identical"
-                elif difference_percent < 1:
-                    status = "duplicate"
-                elif difference_percent < 10:
-                    status = "similar"
-                elif difference_percent < 25:
-                    status = "differ"
-                else:
-                    status = "different"
+                    phash_hamming = (
+                        int(left_phash, 16) ^ int(right_phash, 16)
+                    ).bit_count()
+                    l2_percent = l2 / math.sqrt(2) * 100
+                    phash_percent = phash_hamming / 64 * 100
+                    difference_percent = (l2_percent + phash_percent) / 2
+                    if difference_percent == 0:
+                        status = "identical"
+                    elif difference_percent < 1:
+                        status = "duplicate"
+                    elif difference_percent < 10:
+                        status = "similar"
+                    elif difference_percent < 25:
+                        status = "differ"
+                    else:
+                        status = "different"
                 rows.append(
                     (
                         left_path,
                         right_path,
-                        f"{l2_percent:.2f}",
-                        f"{phash_percent:.2f}",
+                        (
+                            l2_percent
+                            if fast
+                            else f"{l2_percent:.2f}"
+                        ),
+                        (
+                            phash_percent
+                            if fast
+                            else f"{phash_percent:.2f}"
+                        ),
                         status,
                     )
                 )
                 processed_pairs += 1
-                utils.stderr_progress("pairs", processed_pairs, pairs_total)
+                if show_progress:
+                    utils.stderr_progress(
+                        "pairs", processed_pairs, pairs_total
+                    )
     finally:
-        utils.stderr_progress("pairs", pairs_total, pairs_total, finish=True)
-    statuses = ("identical", "duplicate", "similar", "differ", "different")
+        if show_progress:
+            utils.stderr_progress(
+                "pairs", pairs_total, pairs_total, finish=True
+            )
+    statuses = (
+        "identical",
+        "duplicate",
+        "similar",
+        "differ",
+        "same_size",
+        "different",
+    )
     summary = ", ".join(
         "{}: {}".format(status, count)
         for status in statuses
@@ -798,6 +872,9 @@ def command_fingerprint_diff(
     visible_rows = rows if show_all or len(rows) == 1 else [
         row for row in rows if row[-1] != "different"
     ]
+    if not visible_rows:
+        print("total {}".format(summary))
+        return
     if table:
         report = _format_fingerprint_diff_table(headers, visible_rows)
     else:

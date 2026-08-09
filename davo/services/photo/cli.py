@@ -440,7 +440,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
     if not commands or "diff" in commands:
         cmd = subparsers.add_parser(
             "diff",
-            help="compare image feature vectors and pHashes",
+            help="compare image features or file sizes",
         )
         cmd.add_argument(
             "-r",
@@ -460,6 +460,12 @@ def init_parser(parser=None, subparsers=None, commands=()):
             action="store_true",
             help="include pairs with different status",
         )
+        cmd.add_argument(
+            "-f",
+            "--fast",
+            action="store_true",
+            help="compare image file sizes without reading image contents",
+        )
         cmd.add_argument("images", metavar="IMAGE", nargs="+")
         cmd.set_defaults(
             func=lambda namespace: helpers.command_fingerprint_diff(
@@ -467,6 +473,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
                 recursive=namespace.recursive,
                 table=namespace.table,
                 show_all=namespace.all,
+                fast=namespace.fast,
             )
         )
 

@@ -25,6 +25,7 @@ def stderr_progress(
     finish=False,
     elapsed=None,
     bytes_processed=None,
+    estimated=None,
     filename=None,
 ):
     """Render an interactive progress update without affecting stdout."""
@@ -42,6 +43,12 @@ def stderr_progress(
                     bytes_processed / elapsed
                 ).strip()
             extra += " " + speed
+        if estimated is None and bytes_processed is not None:
+            extra += " Estimated: n/a"
+        elif estimated is not None:
+            extra += " Estimated: {}".format(
+                datetime.timedelta(seconds=estimated)
+            )
         if filename:
             extra += " " + filename
         sys.stderr.write(

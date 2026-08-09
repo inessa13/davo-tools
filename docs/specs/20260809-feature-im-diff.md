@@ -14,12 +14,21 @@ date: 2026-08-09
 Add a readonly command for comparing every unique pair of supplied images:
 
 ```console
-davo im diff [-r|--recursive] [-t|--table] [-a|--all] PATH1 PATH2 [PATH3 ...]
+davo im diff [-r|--recursive] [-t|--table] [-a|--all] [-f|--fast] PATH1 PATH2 [PATH3 ...]
 ```
 
 It calculates each image's existing 96-dimensional normalized fingerprint and
 64-bit pHash directly from the supplied files, then reports percentage-based
 distance metrics and a similarity status for every pair.
+
+`-f` / `--fast` compares only exact file sizes in bytes, without decoding an
+image or calculating its fingerprint or pHash. In this mode, only `.jpg`,
+`.jpeg`, `.png`, `.webp`, and `.heic` files are accepted (case-insensitively).
+Direct files with another extension or that are not regular files are errors;
+unsupported files found while expanding directories are skipped. The `left`
+and `right` columns contain the path and humanized file size, both metric
+columns contain `—`, and pairs with equal sizes have the `same_size` status.
+`same_size` means only that the byte size matches, not that the contents do.
 
 ## Command contract
 
@@ -32,6 +41,9 @@ distance metrics and a similarity status for every pair.
 - Fewer than two resolved images produce a user-facing error without stdout.
 - Each accepted image is decoded once while its vector and pHash are
   calculated.
+- In fast mode, accepted files are validated by extension and regular-file
+  status only, then sized with `stat`; corrupt files with an accepted extension
+  participate in the comparison.
 - The command does not read stored database BLOBs and does not modify source
   files.
 - Inputs are expanded in positional-argument order. Duplicate physical files
@@ -45,8 +57,12 @@ When `stderr` is a terminal, the command shows two dynamic 40-character
 progress bars on `stderr`: `files` while every expanded input candidate is
 processed, then `pairs` while all unique image pairs are calculated. Each bar
 shows its percentage and `ready/total` count, clears its current line, and
-ends with a newline. The `files` bar additionally shows elapsed processing
-time, the average processed-byte rate, and the current candidate path. Paths
+ends with a newline. Progress is shown only when at least 10 input candidates
+were expanded; otherwise neither bar is written. The `files` bar additionally shows elapsed processing
+time, the average processed-byte rate, estimated remaining time, and the
+current candidate path. The estimate is based on the average time per
+completed candidate and the number of candidates remaining; it is `n/a` until
+the first candidate completes. Paths
 from a directory are relative to that directory; direct file arguments retain
 their supplied path. Its timer starts immediately before the first candidate,
 and its average includes completed candidates with an available size (including
@@ -79,6 +95,8 @@ before output.
 `-t` / `--table` prints the same report as a readable ASCII table. Its column
 widths are calculated from the headers and all report values; paths and status
 are left-aligned while percentage columns are right-aligned.
+When no pairs are visible after filtering, both formats print only the `total`
+summary, without a TSV header or an empty ASCII table.
 
 - `l2_percent = l2 / sqrt(2) * 100`, where raw L2 is in `0..sqrt(2)`.
 - `phash_percent = phash_hamming / 64 * 100`, where pHash Hamming distance is
@@ -105,5 +123,6 @@ Implemented.
 - Registered `diff` in the `davo im` command group.
 - Reused the fingerprint module's portrait/RGB normalization and feature
   algorithms with one image decode per input.
+- Added `-f` / `--fast` size-only comparison with the `same_size` status.
 - Added tests for parser wiring, identical images, pair order, both metrics,
   invalid inputs without partial output, and source immutability.
