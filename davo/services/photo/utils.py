@@ -43,7 +43,7 @@ def stderr_progress(
                     bytes_processed / elapsed
                 ).strip()
             extra += " " + speed
-        if estimated is None and bytes_processed is not None:
+        if estimated is None and elapsed is not None:
             extra += " Estimated: n/a"
         elif estimated is not None:
             extra += " Estimated: {}".format(

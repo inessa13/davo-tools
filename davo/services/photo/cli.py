@@ -466,6 +466,12 @@ def init_parser(parser=None, subparsers=None, commands=()):
             action="store_true",
             help="compare image file sizes without reading image contents",
         )
+        cmd.add_argument(
+            "-g",
+            "--group",
+            action="store_true",
+            help="group folders with matching images",
+        )
         cmd.add_argument("images", metavar="IMAGE", nargs="+")
         cmd.set_defaults(
             func=lambda namespace: helpers.command_fingerprint_diff(
@@ -474,6 +480,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
                 table=namespace.table,
                 show_all=namespace.all,
                 fast=namespace.fast,
+                group=namespace.group,
             )
         )
 

@@ -664,7 +664,12 @@ def command_fingerprint(image: str):
 
 
 def command_fingerprint_diff(
-    images: list[str], recursive=False, table=False, show_all=False, fast=False
+    images: list[str],
+    recursive=False,
+    table=False,
+    show_all=False,
+    fast=False,
+    group=False,
 ):
     """Print image fingerprint distances or fast file-size comparisons."""
     candidates = []
@@ -680,6 +685,9 @@ def command_fingerprint_diff(
             candidates.append((image, False, image))
 
     resolved_images = []
+    parent_counts = {}
+    parent_paths = {}
+    parent_order = {}
     seen_paths = set()
     files_total = len(candidates)
     show_progress = files_total >= 10
@@ -749,7 +757,12 @@ def command_fingerprint_diff(
                             size, format_="{:.1f}{}b"
                         ).replace(" ", ""),
                     )
-                    resolved_images.append((display_path, size))
+                    _append_fingerprint_diff_image(
+                        resolved_images,
+                        (parent_counts, parent_paths, parent_order),
+                        (display_path, size),
+                        candidate,
+                    )
                     continue
                 try:
                     features = fingerprint.fingerprint_comparison_features(
@@ -770,7 +783,12 @@ def command_fingerprint_diff(
                         os.path.getsize(candidate), format_="{:.1f}{}b"
                     ).replace(" ", ""),
                 )
-                resolved_images.append((display_path, vector, phash))
+                _append_fingerprint_diff_image(
+                    resolved_images,
+                    (parent_counts, parent_paths, parent_order),
+                    (display_path, vector, phash),
+                    candidate,
+                )
             finally:
                 try:
                     bytes_processed += os.path.getsize(candidate)
@@ -788,14 +806,35 @@ def command_fingerprint_diff(
 
     headers = ("left", "right", "l2_percent", "phash_percent", "status")
     rows = []
+    folder_matches = {}
     pairs_total = len(resolved_images) * (len(resolved_images) - 1) // 2
     processed_pairs = 0
+    pairs_started_at = time.time() if show_progress else None
+
+    def report_pairs_progress(ready):
+        if not show_progress:
+            return
+        elapsed = 0 if not ready else time.time() - pairs_started_at
+        estimated = None
+        if ready:
+            estimated = int(elapsed * (pairs_total - ready) / ready)
+        utils.stderr_progress(
+            "pairs",
+            ready,
+            pairs_total,
+            elapsed=elapsed,
+            estimated=estimated,
+        )
+
     try:
+        report_pairs_progress(0)
         for left_index, left_image in enumerate(resolved_images[:-1]):
-            for right_image in resolved_images[left_index + 1 :]:
+            for right_index, right_image in enumerate(
+                resolved_images[left_index + 1 :], left_index + 1
+            ):
                 if fast:
-                    left_path, left_size = left_image
-                    right_path, right_size = right_image
+                    left_path, left_size, left_parent, _ = left_image
+                    right_path, right_size, right_parent, _ = right_image
                     status = (
                         "same_size"
                         if left_size == right_size
@@ -803,8 +842,20 @@ def command_fingerprint_diff(
                     )
                     l2_percent = phash_percent = "—"
                 else:
-                    left_path, left_vector, left_phash = left_image
-                    right_path, right_vector, right_phash = right_image
+                    (
+                        left_path,
+                        left_vector,
+                        left_phash,
+                        left_parent,
+                        _,
+                    ) = left_image
+                    (
+                        right_path,
+                        right_vector,
+                        right_phash,
+                        right_parent,
+                        _,
+                    ) = right_image
                     l2 = math.sqrt(
                         sum(
                             (left_value - right_value) ** 2
@@ -846,16 +897,36 @@ def command_fingerprint_diff(
                         status,
                     )
                 )
-                processed_pairs += 1
-                if show_progress:
-                    utils.stderr_progress(
-                        "pairs", processed_pairs, pairs_total
+                if (
+                    left_parent != right_parent
+                    and status
+                    in (
+                        {"same_size"}
+                        if fast
+                        else {"identical", "duplicate", "similar"}
                     )
+                ):
+                    if parent_order[left_parent] < parent_order[right_parent]:
+                        pair = (left_parent, right_parent)
+                        match_indexes = (left_index, right_index)
+                    else:
+                        pair = (right_parent, left_parent)
+                        match_indexes = (right_index, left_index)
+                    matches = folder_matches.setdefault(pair, (set(), set()))
+                    matches[0].add(match_indexes[0])
+                    matches[1].add(match_indexes[1])
+                processed_pairs += 1
+                report_pairs_progress(processed_pairs)
     finally:
         if show_progress:
             utils.stderr_progress(
                 "pairs", pairs_total, pairs_total, finish=True
             )
+    if group:
+        _print_fingerprint_diff_groups(
+            folder_matches, parent_counts, parent_paths, parent_order, table
+        )
+        return
     statuses = (
         "identical",
         "duplicate",
@@ -884,7 +955,106 @@ def command_fingerprint_diff(
     print("{}\ntotal {}".format(report, summary))
 
 
-def _format_fingerprint_diff_table(headers, rows):
+def _append_fingerprint_diff_image(
+    resolved_images,
+    parents,
+    image,
+    candidate,
+):
+    """Store an accepted image with its physical and display parent paths."""
+    parent_counts, parent_paths, parent_order = parents
+    parent_path = os.path.dirname(candidate) or "."
+    parent = os.path.realpath(parent_path)
+    if parent not in parent_order:
+        parent_order[parent] = len(parent_order)
+        parent_paths[parent] = parent_path
+        parent_counts[parent] = 0
+    parent_counts[parent] += 1
+    resolved_images.append((*image, parent, parent_path))
+
+
+def _print_fingerprint_diff_groups(
+    folder_matches, parent_counts, parent_paths, parent_order, table
+):
+    """Print folder groups whose matching images pass the threshold."""
+    links = []
+    for (left, right), (left_images, right_images) in folder_matches.items():
+        left_count = len(left_images)
+        right_count = len(right_images)
+        if (
+            left_count * 10 < parent_counts[left] * 3
+            and right_count * 10 < parent_counts[right] * 3
+        ):
+            continue
+        links.append((left, right, left_count, right_count))
+
+    if not links:
+        print("total groups: 0")
+        return
+
+    links.sort(key=lambda link: (parent_order[link[0]], parent_order[link[1]]))
+    parents = {parent for link in links for parent in link[:2]}
+    neighbours = {parent: set() for parent in parents}
+    for left, right, _, _ in links:
+        neighbours[left].add(right)
+        neighbours[right].add(left)
+
+    components = []
+    remaining = set(parents)
+    while remaining:
+        root = min(remaining, key=parent_order.__getitem__)
+        component = set()
+        pending = [root]
+        remaining.remove(root)
+        while pending:
+            parent = pending.pop()
+            component.add(parent)
+            for neighbour in neighbours[parent]:
+                if neighbour in remaining:
+                    remaining.remove(neighbour)
+                    pending.append(neighbour)
+        components.append(component)
+    components.sort(
+        key=lambda component: min(map(parent_order.__getitem__, component))
+    )
+
+    headers = (
+        "group",
+        "left",
+        "right",
+        "left_matches",
+        "right_matches",
+        "left_percent",
+        "right_percent",
+    )
+    rows = []
+    for group_number, component in enumerate(components, 1):
+        for left, right, left_count, right_count in links:
+            if left not in component:
+                continue
+            rows.append(
+                (
+                    str(group_number),
+                    parent_paths[left],
+                    parent_paths[right],
+                    "{}/{}".format(left_count, parent_counts[left]),
+                    "{}/{}".format(right_count, parent_counts[right]),
+                    "{:.2f}".format(left_count / parent_counts[left] * 100),
+                    "{:.2f}".format(right_count / parent_counts[right] * 100),
+                )
+            )
+    if table:
+        report = _format_fingerprint_diff_table(
+            headers, rows, numeric_columns=(3, 4, 5, 6)
+        )
+    else:
+        report = "\n".join(
+            ("\t".join(headers), *("\t".join(row) for row in rows))
+        )
+    print("{}\ntotal groups: {}".format(report, len(components)))
+
+
+def _format_fingerprint_diff_table(headers, rows, numeric_columns=(2, 3)):
     """Format fingerprint diff rows as an ASCII table."""
     widths = [
         max((len(header), *(len(row[index]) for row in rows)))
@@ -897,7 +1067,7 @@ def _format_fingerprint_diff_table(headers, rows):
             " | ".join(
                 (
                     value.rjust(widths[index])
-                    if index in (2, 3)
+                    if index in numeric_columns
                     else value.ljust(widths[index])
                 )
                 for index, value in enumerate(row)

@@ -14,7 +14,7 @@ date: 2026-08-09
 Add a readonly command for comparing every unique pair of supplied images:
 
 ```console
-davo im diff [-r|--recursive] [-t|--table] [-a|--all] [-f|--fast] PATH1 PATH2 [PATH3 ...]
+davo im diff [-r|--recursive] [-t|--table] [-a|--all] [-f|--fast] [-g|--group] PATH1 PATH2 [PATH3 ...]
 ```
 
 It calculates each image's existing 96-dimensional normalized fingerprint and
@@ -29,6 +29,9 @@ unsupported files found while expanding directories are skipped. The `left`
 and `right` columns contain the path and humanized file size, both metric
 columns contain `—`, and pairs with equal sizes have the `same_size` status.
 `same_size` means only that the byte size matches, not that the contents do.
+
+`-g` / `--group` reports matching parent folders instead of individual image
+pairs. It is useful for finding copied folders whose contents later diverged.
 
 ## Command contract
 
@@ -50,24 +53,32 @@ columns contain `—`, and pairs with equal sizes have the `same_size` status.
   from overlapping paths are kept only once, using their first written path in
   the report. Pairs are emitted in that order: `(0,1)`, `(0,2)`, …,
   `(N-2,N-1)`.
+- In group mode, an accepted image belongs to its immediate parent directory.
+  Directories are deduplicated by physical path, while the first supplied
+  spelling is retained for output. A connection between two different folders
+  is reported when their unique matching images make up at least 30% of either
+  folder's accepted images. `identical`, `duplicate`, and `similar` images
+  match; with `--fast`, only `same_size` images match. `differ` and `different`
+  never match, including with `--all`. Connected folder connections form one
+  group, so a folder can join several copies into the same group.
 
 ## Interactive progress
 
 When `stderr` is a terminal, the command shows two dynamic 40-character
 progress bars on `stderr`: `files` while every expanded input candidate is
 processed, then `pairs` while all unique image pairs are calculated. Each bar
-shows its percentage and `ready/total` count, clears its current line, and
-ends with a newline. Progress is shown only when at least 10 input candidates
-were expanded; otherwise neither bar is written. The `files` bar additionally shows elapsed processing
-time, the average processed-byte rate, estimated remaining time, and the
-current candidate path. The estimate is based on the average time per
-completed candidate and the number of candidates remaining; it is `n/a` until
-the first candidate completes. Paths
+shows its percentage, `ready/total` count, elapsed processing time, and
+estimated remaining time; it clears its current line and ends with a newline.
+Progress is shown only when at least 10 input candidates were expanded;
+otherwise neither bar is written. The `files` bar additionally shows the
+average processed-byte rate and current candidate path. The estimate is based
+on the average time per completed candidate or pair and the number remaining;
+it is `n/a` until the first item completes. Paths
 from a directory are relative to that directory; direct file arguments retain
 their supplied path. Its timer starts immediately before the first candidate,
 and its average includes completed candidates with an available size (including
 duplicates and unsuitable directory entries). Before a measurable result, the
-rate is `0 Bps`. The `pairs` bar remains limited to its count and percentage.
+rate is `0 Bps`. The `pairs` timer starts immediately before its first pair.
 The `files` count includes duplicate and unsuitable files encountered while
 expanding directories; the `pairs` count is `N × (N − 1) / 2` for the
 successfully resolved images.
@@ -97,6 +108,19 @@ widths are calculated from the headers and all report values; paths and status
 are left-aligned while percentage columns are right-aligned.
 When no pairs are visible after filtering, both formats print only the `total`
 summary, without a TSV header or an empty ASCII table.
+
+In group mode, ordinary pair rows and status totals are omitted. TSV output
+uses these columns:
+
+```text
+group	left	right	left_matches	right_matches	left_percent	right_percent
+```
+
+`left_matches` and `right_matches` are `matching/total` counts of accepted
+images from the corresponding folder, for example `7/10`. Percentages have
+two digits after the decimal point. `-t` / `--table` renders the same values as
+an ASCII table. The report ends with `total groups: N`; if there are no
+qualifying connections, it prints only `total groups: 0`.
 
 - `l2_percent = l2 / sqrt(2) * 100`, where raw L2 is in `0..sqrt(2)`.
 - `phash_percent = phash_hamming / 64 * 100`, where pHash Hamming distance is

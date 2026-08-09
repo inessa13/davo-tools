@@ -406,6 +406,7 @@ def test_fingerprint_diff_files_progress_shows_rate_elapsed_and_paths(
             28,
             28,
             30,
+            *range(32, 200, 2),
         ],
     )
 
@@ -426,8 +427,22 @@ def test_fingerprint_diff_files_progress_shows_rate_elapsed_and_paths(
         in progress
     )
     assert (
-        "pairs: {} Estimated:".format(prnt.progress_bar(1, 1))
-        not in progress
+        "pairs: {} Estimated: n/a".format(
+            prnt.progress_bar(0, 45, elapsed=0)
+        )
+        in progress
+    )
+    assert (
+        "pairs: {} Estimated: 0:01:28".format(
+            prnt.progress_bar(1, 45, elapsed=2)
+        )
+        in progress
+    )
+    assert (
+        "pairs: {} Estimated: 0:00:00".format(
+            prnt.progress_bar(45, 45, elapsed=90)
+        )
+        in progress
     )
 
 
@@ -821,3 +836,105 @@ def test_fingerprint_diff_fast_rejects_invalid_direct_files(
         helpers.command_fingerprint_diff([str(valid), str(invalid)], fast=True)
 
     assert capsys.readouterr().out == ""
+
+
+def test_fingerprint_diff_group_fast_uses_asymmetric_threshold(
+    tmp_path, capsys
+):
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    for directory, sizes in ((left, (1, 2, 3)), (right, (1, 4, 5, 6))):
+        for index, size in enumerate(sizes):
+            (directory / f"{index}.png").write_bytes(b"x" * size)
+
+    helpers.command_fingerprint_diff(
+        [str(left), str(right)], fast=True, group=True
+    )
+
+    assert capsys.readouterr().out.splitlines() == [
+        (
+            "group\tleft\tright\tleft_matches\tright_matches"
+            "\tleft_percent\tright_percent"
+        ),
+        f"1\t{left}\t{right}\t1/3\t1/4\t33.33\t25.00",
+        "total groups: 1",
+    ]
+
+
+def test_fingerprint_diff_group_counts_unique_images_and_components(
+    tmp_path, capsys
+):
+    folders = [tmp_path / name for name in ("first", "second", "third")]
+    for folder in folders:
+        folder.mkdir()
+    for index in range(3):
+        (folders[0] / f"{index}.png").write_bytes(b"x")
+    (folders[1] / "one.png").write_bytes(b"y")
+    (folders[2] / "one.png").write_bytes(b"z")
+
+    helpers.command_fingerprint_diff(
+        [str(folder) for folder in folders], fast=True, group=True, table=True
+    )
+
+    output = capsys.readouterr().out
+    first_folder_rows = [
+        line for line in output.splitlines() if str(folders[0]) in line
+    ]
+    assert len(first_folder_rows) == 2
+    assert all("100.00" in line for line in first_folder_rows)
+    assert output.count("|          3/3 |           1/1 |") == 2
+    assert output.endswith("total groups: 1\n")
+
+
+def test_fingerprint_diff_group_ignores_different_and_all(tmp_path, capsys):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    (first / "one.png").write_bytes(b"a")
+    (second / "one.png").write_bytes(b"bb")
+
+    helpers.command_fingerprint_diff(
+        [str(first), str(second)], fast=True, group=True, show_all=True
+    )
+
+    assert capsys.readouterr().out == "total groups: 0\n"
+
+
+@pytest.mark.parametrize(
+    ("right_phash", "groups"),
+    [
+        ("0000000000000000", 1),
+        ("0000000000000001", 1),
+        ("0000000000000003", 1),
+        ("00000000000fffff", 0),
+        ("000000ffffffffff", 0),
+    ],
+)
+def test_fingerprint_diff_group_uses_only_matching_image_statuses(
+    tmp_path, capsys, mocker, right_phash, groups
+):
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    (left / "one.png").write_bytes(b"left")
+    (right / "one.png").write_bytes(b"right")
+
+    def comparison_features(path):
+        return (1, 1), (0,), (
+            right_phash if str(path).startswith(str(right)) else "0" * 16
+        )
+
+    mocker.patch.object(
+        fingerprint,
+        "fingerprint_comparison_features",
+        side_effect=comparison_features,
+    )
+
+    helpers.command_fingerprint_diff([str(left), str(right)], group=True)
+
+    output = capsys.readouterr().out.splitlines()
+    assert output[-1] == "total groups: {}".format(groups)
