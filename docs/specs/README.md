@@ -6,6 +6,7 @@ Per-change specifications. Naming and front matter: [`docs/shared/docs/conventio
 
 | Spec | Status |
 | --- | --- |
+| [`20260808-feature-im-histogram.md`](20260808-feature-im-histogram.md) | implemented |
 | [`20260807-feature-pdf-positional-inputs.md`](20260807-feature-pdf-positional-inputs.md) | implemented |
 | [`20260801-feature-pdf-info.md`](20260801-feature-pdf-info.md) | draft |
 | [`20260801-feature-pdf-compress-images.md`](20260801-feature-pdf-compress-images.md) | implemented |

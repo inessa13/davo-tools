@@ -36,7 +36,13 @@ def init_parser():
     cmd = subparsers.add_parser("im", help="image tools")
     services.photo.cli.init_parser(
         cmd,
-        commands=("convert", "thumbs", "recover", "downscale"),
+        commands=(
+            "convert",
+            "thumbs",
+            "recover",
+            "downscale",
+            "histogram",
+        ),
     )
 
     cmd = subparsers.add_parser("pdf", help="pdf tools")

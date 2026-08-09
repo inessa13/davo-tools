@@ -425,6 +425,18 @@ def init_parser(parser=None, subparsers=None, commands=()):
             )
         )
 
+    if not commands or "histogram" in commands:
+        cmd = subparsers.add_parser(
+            "histogram",
+            help="print normalized RGB image histogram (Pillow)",
+        )
+        cmd.add_argument("image", metavar="IMAGE")
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_histogram(
+                image=namespace.image,
+            )
+        )
+
     if not commands or "pdf" in commands:
         init_parser_pdf(
             parser,
