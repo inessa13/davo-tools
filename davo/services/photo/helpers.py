@@ -661,6 +661,55 @@ def command_fingerprint(image: str):
     print(fingerprint.format_fingerprint(image))
 
 
+def command_fingerprint_diff(images: list[str]):
+    """Print image fingerprint distances for every input pair."""
+    if len(images) < 2:
+        raise errors.UserError("At least two images are required for diff")
+
+    features = [
+        fingerprint.fingerprint_comparison_features(image) for image in images
+    ]
+    lines = ["left\tright\tl2_percent\tphash_percent\tstatus"]
+    for left_index, left_path in enumerate(images[:-1]):
+        left_vector, left_phash = features[left_index]
+        for right_index in range(left_index + 1, len(images)):
+            right_vector, right_phash = features[right_index]
+            l2 = math.sqrt(
+                sum(
+                    (left_value - right_value) ** 2
+                    for left_value, right_value in zip(
+                        left_vector, right_vector
+                    )
+                )
+            )
+            phash_hamming = (
+                int(left_phash, 16) ^ int(right_phash, 16)
+            ).bit_count()
+            l2_percent = l2 / math.sqrt(2) * 100
+            phash_percent = phash_hamming / 64 * 100
+            difference_percent = (l2_percent + phash_percent) / 2
+            if difference_percent == 0:
+                status = "identical"
+            elif difference_percent < 1:
+                status = "duplicate"
+            elif difference_percent < 10:
+                status = "similar"
+            elif difference_percent < 25:
+                status = "differ"
+            else:
+                status = "different"
+            lines.append(
+                "{}\t{}\t{:.2f}\t{:.2f}\t{}".format(
+                    left_path,
+                    images[right_index],
+                    l2_percent,
+                    phash_percent,
+                    status,
+                )
+            )
+    print("\n".join(lines))
+
+
 def _pdf_path(root: str | None, path: str | None) -> str | None:
     if path is None or root is None:
         return path

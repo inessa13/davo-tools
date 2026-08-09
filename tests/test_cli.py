@@ -17,6 +17,8 @@ from davo.services.photo import cli as photo_cli
         ["im", "recover"],
         ["im", "downscale"],
         ["im", "fp", "input.png"],
+        ["im", "diff", "first.png", "second.png"],
+        ["im", "diff", "first.png", "second.png", "third.png"],
     ],
 )
 def test_parser_accepts_new_command_groups(arguments):

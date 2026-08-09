@@ -42,6 +42,7 @@ def init_parser():
             "recover",
             "downscale",
             "fp",
+            "diff",
         ),
     )
 

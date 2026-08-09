@@ -437,6 +437,18 @@ def init_parser(parser=None, subparsers=None, commands=()):
             )
         )
 
+    if not commands or "diff" in commands:
+        cmd = subparsers.add_parser(
+            "diff",
+            help="compare image feature vectors and pHashes",
+        )
+        cmd.add_argument("images", metavar="IMAGE", nargs="+")
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_fingerprint_diff(
+                images=namespace.images,
+            )
+        )
+
     if not commands or "pdf" in commands:
         init_parser_pdf(
             parser,

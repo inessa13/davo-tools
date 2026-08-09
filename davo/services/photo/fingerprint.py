@@ -47,23 +47,30 @@ def _load_image(path: str) -> Image.Image:
 def image_fingerprint(path: str) -> tuple[tuple[int, int], list[list[int]]]:
     """Return portrait-oriented RGB histogram counts for one image file."""
     with _load_image(path) as image:
-        counts = image.histogram()
-        size = image.size
+        return _image_histogram(image, path)
 
+
+def _image_histogram(
+    image: Image.Image, path: str
+) -> tuple[tuple[int, int], list[list[int]]]:
+    """Return RGB histogram counts from an already-normalized image."""
+    counts = image.histogram()
     if len(counts) != HISTOGRAM_BINS * CHANNELS:
         raise errors.UserError(
             "Cannot calculate RGB histogram: {}".format(path)
         )
 
-    return size, [
+    return image.size, [
         counts[index : index + HISTOGRAM_BINS]
         for index in range(0, HISTOGRAM_BINS * CHANNELS, HISTOGRAM_BINS)
     ]
 
 
-def fingerprint_vector(path: str) -> tuple[tuple[int, int], list[float]]:
-    """Return a unit-length 96-dimensional vector for image comparison."""
-    (width, height), channels = image_fingerprint(path)
+def _fingerprint_vector_from_image(
+    image: Image.Image, path: str
+) -> tuple[tuple[int, int], list[float]]:
+    """Return the comparison vector from an already-normalized image."""
+    (width, height), channels = _image_histogram(image, path)
     pixels = width * height
     if pixels == 0:
         raise errors.UserError("Image has no pixels: {}".format(path))
@@ -74,6 +81,12 @@ def fingerprint_vector(path: str) -> tuple[tuple[int, int], list[float]]:
             count = sum(channel[start : start + BINS_PER_VECTOR_BIN])
             vector.append(math.sqrt(count / pixels / CHANNELS))
     return (width, height), vector
+
+
+def fingerprint_vector(path: str) -> tuple[tuple[int, int], list[float]]:
+    """Return a unit-length 96-dimensional vector for image comparison."""
+    with _load_image(path) as image:
+        return _fingerprint_vector_from_image(image, path)
 
 
 def fingerprint_uint16(path: str) -> tuple[tuple[int, int], list[int]]:
@@ -95,12 +108,16 @@ def fingerprint_blob(path: str) -> tuple[tuple[int, int], bytes]:
 def fingerprint_phash(path: str) -> str:
     """Return a 64-bit DCT perceptual hash as sixteen lowercase hex digits."""
     with _load_image(path) as image:
-        grayscale = image.convert("L").resize(
-            (PHASH_IMAGE_SIZE, PHASH_IMAGE_SIZE),
-            Image.Resampling.LANCZOS,
-        )
-        pixels = numpy.asarray(grayscale, dtype=numpy.float32)
+        return _fingerprint_phash_from_image(image)
 
+
+def _fingerprint_phash_from_image(image: Image.Image) -> str:
+    """Return a pHash from an already-normalized image."""
+    grayscale = image.convert("L").resize(
+        (PHASH_IMAGE_SIZE, PHASH_IMAGE_SIZE),
+        Image.Resampling.LANCZOS,
+    )
+    pixels = numpy.asarray(grayscale, dtype=numpy.float32)
     dct = DCT_MATRIX @ pixels @ DCT_MATRIX.T
     low_frequency = dct[:PHASH_SIZE, :PHASH_SIZE].flatten()
     median = numpy.median(low_frequency[1:])
@@ -108,6 +125,14 @@ def fingerprint_phash(path: str) -> str:
     for coefficient in low_frequency:
         value = (value << 1) | int(coefficient > median)
     return "{:016x}".format(value)
+
+
+def fingerprint_comparison_features(path: str) -> tuple[list[float], str]:
+    """Return comparison vector and pHash after decoding an image once."""
+    with _load_image(path) as image:
+        _size, vector = _fingerprint_vector_from_image(image, path)
+        phash = _fingerprint_phash_from_image(image)
+    return vector, phash
 
 
 def format_fingerprint(path: str) -> str:

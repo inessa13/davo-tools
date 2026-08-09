@@ -124,3 +124,161 @@ def test_fingerprint_does_not_modify_source(tmp_path):
     fingerprint.format_fingerprint(str(path))
 
     assert path.read_bytes() == original
+
+
+def test_fingerprint_diff_reports_zero_for_identical_images(tmp_path, capsys):
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.png"
+    image = Image.new("RGB", (2, 1))
+    image.putdata([(255, 0, 0), (0, 255, 0)])
+    image.save(first)
+    image.save(second)
+
+    helpers.command_fingerprint_diff([str(first), str(second)])
+
+    assert capsys.readouterr().out.splitlines() == [
+        "left\tright\tl2_percent\tphash_percent\tstatus",
+        "{}\t{}\t0.00\t0.00\tidentical".format(first, second),
+    ]
+
+
+def test_fingerprint_diff_reports_all_pairs_in_argument_order(
+    tmp_path, capsys, mocker
+):
+    paths = [
+        tmp_path / "first.png",
+        tmp_path / "second.png",
+        tmp_path / "third.png",
+    ]
+    for index, path in enumerate(paths):
+        Image.new("RGB", (1, 1), (index * 100, 0, 0)).save(path)
+    load_image = mocker.spy(fingerprint, "_load_image")
+
+    helpers.command_fingerprint_diff([str(path) for path in paths])
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "left\tright\tl2_percent\tphash_percent\tstatus"
+    assert [line.split("\t")[:2] for line in lines[1:]] == [
+        [str(paths[0]), str(paths[1])],
+        [str(paths[0]), str(paths[2])],
+        [str(paths[1]), str(paths[2])],
+    ]
+    assert load_image.call_count == 3
+
+
+def test_fingerprint_diff_calculates_percentages_and_status(tmp_path, capsys):
+    left = tmp_path / "black.png"
+    right = tmp_path / "split.png"
+    Image.new("RGB", (32, 32), (0, 0, 0)).save(left)
+    image = Image.new("RGB", (32, 32), (0, 0, 0))
+    image.paste((255, 0, 0), (0, 0, 16, 32))
+    image.save(right)
+
+    helpers.command_fingerprint_diff([str(left), str(right)])
+
+    _header, row = capsys.readouterr().out.splitlines()
+    _left, _right, l2_percent, phash_percent, status = row.split("\t")
+    _left_size, left_vector = fingerprint.fingerprint_vector(str(left))
+    _right_size, right_vector = fingerprint.fingerprint_vector(str(right))
+    expected_l2 = math.sqrt(
+        sum(
+            (left_value - right_value) ** 2
+            for left_value, right_value in zip(left_vector, right_vector)
+        )
+    )
+    expected_hamming = (
+        int(fingerprint.fingerprint_phash(str(left)), 16)
+        ^ int(fingerprint.fingerprint_phash(str(right)), 16)
+    ).bit_count()
+
+    expected_l2_percent = expected_l2 / math.sqrt(2) * 100
+    expected_phash_percent = expected_hamming / 64 * 100
+
+    assert float(l2_percent) == pytest.approx(expected_l2_percent, abs=0.005)
+    assert float(phash_percent) == pytest.approx(
+        expected_phash_percent, abs=0.005
+    )
+    expected_difference_percent = (
+        expected_l2_percent + expected_phash_percent
+    ) / 2
+    assert status == (
+        "identical"
+        if expected_difference_percent == 0
+        else "duplicate"
+        if expected_difference_percent < 1
+        else "similar"
+        if expected_difference_percent < 10
+        else "differ"
+        if expected_difference_percent < 25
+        else "different"
+    )
+
+
+@pytest.mark.parametrize(
+    ("difference_percent", "expected_status"),
+    [
+        (0, "identical"),
+        (0.9999, "duplicate"),
+        (1, "similar"),
+        (9.9999, "similar"),
+        (10, "differ"),
+        (24.9999, "differ"),
+        (25, "different"),
+    ],
+)
+def test_fingerprint_diff_status_uses_unrounded_average(
+    capsys, mocker, difference_percent, expected_status
+):
+    # Keep pHash equal and set L2 so the average is the requested boundary.
+    l2 = difference_percent * 2 / 100 * math.sqrt(2)
+    mocker.patch.object(
+        fingerprint,
+        "fingerprint_comparison_features",
+        side_effect=[((0.0,), "0" * 16), ((l2,), "0" * 16)],
+    )
+
+    helpers.command_fingerprint_diff(["first.png", "second.png"])
+
+    _left, _right, _l2_percent, _phash_percent, status = (
+        capsys.readouterr().out.splitlines()[1].split("\t")
+    )
+    assert status == expected_status
+
+
+@pytest.mark.parametrize("invalid", ("missing", "directory", "corrupt"))
+def test_fingerprint_diff_invalid_input_has_no_partial_output(
+    tmp_path, capsys, invalid
+):
+    valid = tmp_path / "valid.png"
+    Image.new("RGB", (1, 1), (255, 0, 0)).save(valid)
+    invalid_path = tmp_path / "invalid.png"
+    if invalid == "directory":
+        invalid_path.mkdir()
+    elif invalid == "corrupt":
+        invalid_path.write_bytes(b"not an image")
+
+    with pytest.raises(errors.UserError):
+        helpers.command_fingerprint_diff([str(valid), str(invalid_path)])
+
+    assert capsys.readouterr().out == ""
+
+
+def test_fingerprint_diff_requires_two_images_without_output(tmp_path, capsys):
+    path = tmp_path / "image.png"
+    Image.new("RGB", (1, 1), (255, 0, 0)).save(path)
+
+    with pytest.raises(errors.UserError, match="At least two images"):
+        helpers.command_fingerprint_diff([str(path)])
+
+    assert capsys.readouterr().out == ""
+
+
+def test_fingerprint_diff_does_not_modify_sources(tmp_path):
+    paths = [tmp_path / "first.png", tmp_path / "second.png"]
+    Image.new("RGB", (1, 1), (255, 0, 0)).save(paths[0])
+    Image.new("RGB", (1, 1), (0, 255, 0)).save(paths[1])
+    originals = [path.read_bytes() for path in paths]
+
+    helpers.command_fingerprint_diff([str(path) for path in paths])
+
+    assert [path.read_bytes() for path in paths] == originals
