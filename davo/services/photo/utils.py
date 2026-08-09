@@ -3,6 +3,7 @@ import functools
 import logging
 import os
 import re
+import sys
 import time
 
 import exif
@@ -15,6 +16,43 @@ import davo.utils
 from . import replace_classes
 
 logger = logging.getLogger(__name__)
+
+
+def stderr_progress(
+    stage,
+    ready,
+    total,
+    finish=False,
+    elapsed=None,
+    bytes_processed=None,
+    filename=None,
+):
+    """Render an interactive progress update without affecting stdout."""
+    if not total or not sys.stderr.isatty():
+        return
+    if finish:
+        sys.stderr.write("\n")
+    else:
+        extra = ""
+        if bytes_processed is not None:
+            if not elapsed or not bytes_processed:
+                speed = "0 Bps"
+            else:
+                speed = davo.utils.format.humanize_speed(
+                    bytes_processed / elapsed
+                ).strip()
+            extra += " " + speed
+        if filename:
+            extra += " " + filename
+        sys.stderr.write(
+            "\r{}: {}\033[K".format(
+                stage,
+                davo.utils.prnt.progress_bar(
+                    ready, total, elapsed=elapsed, extra=extra
+                ),
+            )
+        )
+    sys.stderr.flush()
 
 
 def iter_files(root_path, recursive=False, sort=False):

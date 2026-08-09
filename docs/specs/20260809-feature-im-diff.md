@@ -39,6 +39,26 @@ distance metrics and a similarity status for every pair.
   the report. Pairs are emitted in that order: `(0,1)`, `(0,2)`, …,
   `(N-2,N-1)`.
 
+## Interactive progress
+
+When `stderr` is a terminal, the command shows two dynamic 40-character
+progress bars on `stderr`: `files` while every expanded input candidate is
+processed, then `pairs` while all unique image pairs are calculated. Each bar
+shows its percentage and `ready/total` count, clears its current line, and
+ends with a newline. The `files` bar additionally shows elapsed processing
+time, the average processed-byte rate, and the current candidate path. Paths
+from a directory are relative to that directory; direct file arguments retain
+their supplied path. Its timer starts immediately before the first candidate,
+and its average includes completed candidates with an available size (including
+duplicates and unsuitable directory entries). Before a measurable result, the
+rate is `0 Bps`. The `pairs` bar remains limited to its count and percentage.
+The `files` count includes duplicate and unsuitable files encountered while
+expanding directories; the `pairs` count is `N × (N − 1) / 2` for the
+successfully resolved images.
+
+No progress is written when `stderr` is not a TTY. Consequently, the report on
+`stdout` remains suitable for pipes and redirection.
+
 ## Output contract
 
 By default, output is tab-separated and begins with exactly this header:

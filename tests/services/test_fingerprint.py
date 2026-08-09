@@ -1,3 +1,4 @@
+import io
 import math
 import re
 import struct
@@ -7,6 +8,7 @@ from PIL import Image
 
 from davo import errors
 from davo.services.photo import fingerprint, helpers
+from davo.utils import prnt
 
 
 def _values(line):
@@ -15,6 +17,11 @@ def _values(line):
 
 def _display_path(value):
     return value.rsplit(" ", 2)[0]
+
+
+class _InteractiveStderr(io.StringIO):
+    def isatty(self):
+        return True
 
 
 def test_command_fingerprint_outputs_compact_db_features(tmp_path, capsys):
@@ -334,6 +341,92 @@ def test_fingerprint_diff_reports_all_pairs_in_argument_order(
         [str(paths[1]), str(paths[2])],
     ]
     assert load_image.call_count == 3
+
+
+def test_fingerprint_diff_progress_bars_use_interactive_stderr(
+    tmp_path, capsys, monkeypatch
+):
+    paths = [tmp_path / "{}.png".format(index) for index in range(3)]
+    for index, path in enumerate(paths):
+        Image.new("RGB", (1, 1), (index * 100, 0, 0)).save(path)
+    stderr = _InteractiveStderr()
+    monkeypatch.setattr(helpers.utils.sys, "stderr", stderr)
+
+    helpers.command_fingerprint_diff(
+        [str(path) for path in paths], show_all=True
+    )
+
+    progress = stderr.getvalue()
+    assert "files: {}".format(prnt.progress_bar(3, 3)) in progress
+    assert "pairs: {}".format(prnt.progress_bar(3, 3)) in progress
+    assert progress.endswith("\n")
+    assert progress.count("\n") == 2
+    assert len(capsys.readouterr().out.splitlines()) == 5
+
+
+def test_fingerprint_diff_files_progress_shows_rate_elapsed_and_paths(
+    tmp_path, monkeypatch, mocker
+):
+    images = tmp_path / "images"
+    nested = images / "nested"
+    nested.mkdir(parents=True)
+    nested_file = nested / "nested.png"
+    direct_file = tmp_path / "direct.png"
+    Image.new("RGB", (1, 1), (255, 0, 0)).save(nested_file)
+    Image.new("RGB", (1, 1), (0, 255, 0)).save(direct_file)
+    stderr = _InteractiveStderr()
+    monkeypatch.setattr(helpers.utils.sys, "stderr", stderr)
+    mocker.patch.object(
+        helpers.os.path, "getsize", side_effect=[100, 100, 200, 200]
+    )
+    mocker.patch.object(
+        helpers.time, "time", side_effect=[10, 10, 12, 12, 14]
+    )
+
+    helpers.command_fingerprint_diff(
+        [str(images), str(direct_file)], recursive=True, show_all=True
+    )
+
+    progress = stderr.getvalue()
+    assert "Elapsed: 0.00s 0 Bps nested/nested.png" in progress
+    assert "Elapsed: 2.00s 50.00  Bps nested/nested.png" in progress
+    assert "Elapsed: 4.00s 75.00  Bps {}".format(direct_file) in progress
+    assert "pairs: {} Elapsed:".format(prnt.progress_bar(1, 1)) not in progress
+
+
+def test_fingerprint_diff_progress_counts_all_expanded_candidates(
+    tmp_path, monkeypatch
+):
+    images = tmp_path / "images"
+    images.mkdir()
+    first = images / "first.png"
+    second = images / "second.png"
+    Image.new("RGB", (1, 1), (255, 0, 0)).save(first)
+    Image.new("RGB", (1, 1), (0, 255, 0)).save(second)
+    (images / "not-an-image.txt").write_text("not an image")
+    stderr = _InteractiveStderr()
+    monkeypatch.setattr(helpers.utils.sys, "stderr", stderr)
+
+    helpers.command_fingerprint_diff([str(first), str(images)])
+
+    progress = stderr.getvalue()
+    assert "files: {}".format(prnt.progress_bar(4, 4)) in progress
+    assert "pairs: {}".format(prnt.progress_bar(1, 1)) in progress
+
+
+def test_fingerprint_diff_progress_is_disabled_for_non_tty(tmp_path, capsys):
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.png"
+    Image.new("RGB", (1, 1), (255, 0, 0)).save(first)
+    Image.new("RGB", (1, 1), (0, 255, 0)).save(second)
+
+    helpers.command_fingerprint_diff([str(first), str(second)])
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out.splitlines()[0] == (
+        "left\tright\tl2_percent\tphash_percent\tstatus"
+    )
 
 
 def test_fingerprint_diff_calculates_percentages_and_status(tmp_path, capsys):
