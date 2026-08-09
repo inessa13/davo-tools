@@ -5,13 +5,13 @@ slug: im-histogram
 date: 2026-08-08
 ---
 
-# Feature: add `davo im histogram` command
+# Feature: add `davo im fp` command
 
 **Roadmap:** implemented and removed from the active roadmap.
 
 ## Summary
 
-Add a readonly `davo im histogram` command that calculates an image colour
+Add a readonly `davo im fp` command that calculates an image colour
 histogram and prints it to stdout.
 
 The initial command is a building block for later image similarity search and
@@ -30,30 +30,31 @@ ones.
 
 Implemented.
 
-- `davo im histogram IMAGE` is registered in the `im` command group.
-- The command prints a four-line, normalized RGB histogram report to stdout.
+- `davo im fp IMAGE` is registered in the `im` command group.
+- The command prints a compact histogram BLOB as hexadecimal text and a 64-bit
+  pHash to stdout.
 - Pillow applies EXIF orientation; landscape images are then rotated to
   portrait before the report is formed.
-- Focused tests cover CLI wiring, histogram values and formatting, source
-  modes, orientation, errors, and source-file immutability.
+- Focused tests cover CLI wiring, compact histogram and pHash formatting,
+  source modes, orientation, errors, and source-file immutability.
 
 ## Command contract
 
-- Command name: `davo im histogram`
-- Usage: `davo im histogram IMAGE`
+- Command name: `davo im fp`
+- Usage: `davo im fp IMAGE`
 - `IMAGE` is one required positional path to an image file.
 - The command writes the histogram to stdout and does not create, modify, or
   delete any files.
 - The command does not scan directories and has no recursive, commit, input
   flag, or output-file flags in the MVP.
-- The command should use Pillow, which is already the image backend used by
-  this project, rather than adding an image-processing dependency.
+- The command should use the existing Pillow and NumPy dependencies; do not add
+  an image-processing dependency for this feature.
 
 Examples:
 
 ```console
-davo im histogram photo.jpg
-davo im histogram /photos/photo.png
+davo im fp photo.jpg
+davo im fp /photos/photo.png
 ```
 
 ## Histogram semantics
@@ -64,13 +65,19 @@ davo im histogram /photos/photo.png
 - Normalize the resulting pixel data to `RGB` before calculating the
   histogram.
 - Compute three independent 8-bit channel histograms: `red`, `green`, and
-  `blue`.
-- Each channel has exactly 256 bins.  Bin `N` (`0` through `255`) contains the
-  count of pixels whose corresponding normalized RGB channel value is `N`.
-- Normalize every bin count by the total number of pixels. Each emitted value
-  is therefore a number in the inclusive range `0` through `1`, and the 256
-  values of each channel sum to `1` before output rounding. This makes
-  histograms from images of different dimensions directly comparable.
+  `blue`; each initially contains 256 bins.
+- Build the output vector by summing each consecutive group of eight source
+  bins. This produces 32 bins per channel and 96 dimensions in total.
+- Order dimensions as `red[0..31]`, `green[0..31]`, then `blue[0..31]`.
+- Divide each grouped bin count by the image pixel count and by three, then
+  take its square root. The resulting 96-dimensional vector has L2 norm `1`;
+  L2 distance between two such vectors is suitable for histogram comparison.
+- Quantize each component as
+  `round(component * 65535 * sqrt(3))`. The 96 resulting values are unsigned
+  16-bit integers and are the values emitted by the command. To store them in
+  a database BLOB, pack them in this order as big-endian `uint16` values;
+  this consumes exactly 192 bytes per image. Divide stored values by
+  `65535 * sqrt(3)` before comparing them as the normalized vector.
 - Ignore any alpha channel while calculating the MVP histogram.  For images
   with transparency, use their RGB colour values regardless of alpha.
 - Palette, grayscale, CMYK, and other Pillow-supported source modes must be
@@ -85,24 +92,26 @@ this feature.
 
 ## Output contract
 
-- Write exactly four newline-terminated records, in this order:
+- Write exactly three newline-terminated records, in this order:
   1. `size: <width>x<height>`
-  2. `red: <256 space-separated normalized values>`
-  3. `green: <256 space-separated normalized values>`
-  4. `blue: <256 space-separated normalized values>`
-- Channel names are lowercase ASCII and use the literal `: ` separator shown
-  above.
-- Bin order is ascending from `0` to `255`; do not omit zero-valued bins.
-- Format every normalized value in fixed-point decimal notation with ten digits
-  after the decimal separator, using `.` regardless of locale. For example,
-  zero is `0.0000000000` and one is `1.0000000000`.
-- Do not print progress bars, success messages, labels beyond these four
+  2. `fingerprint_blob: <384 lowercase hexadecimal digits>`
+  3. `phash: <16 lowercase hexadecimal digits>`
+- `fingerprint_blob` and `phash` are lowercase ASCII and use the literal `: `
+  separator shown above.
+- Preserve all zero-valued dimensions and the required RGB/channel-bin order.
+- `fingerprint_blob` is the 192-byte big-endian `uint16` sequence encoded as 384
+  lowercase hexadecimal digits. `phash` represents the 64-bit hash in
+  big-endian hexadecimal form and can be packed into eight bytes.
+- Compute pHash from the same portrait-oriented image by converting it to
+  grayscale, resizing it to `32x32`, applying a 2D DCT with NumPy, and
+  thresholding the top-left `8x8` low-frequency coefficients against their
+  median (excluding the DC coefficient).
+- Do not print progress bars, success messages, labels beyond these three
   records, or diagnostic logging to stdout.  User-facing failures should go
   through the project's established CLI error handling (normally stderr).
 
-For a one-pixel pure-red image, the channel records therefore have these
-non-zero bins: `red[255] = 1.0000000000`,
-`green[0] = 1.0000000000`, and `blue[0] = 1.0000000000`.
+For a one-pixel pure-red image, the decoded BLOB values at `red[31]`,
+`green[0]`, and `blue[0]` are `65535`; every other value is zero.
 
 ## Expected behaviour and errors
 
@@ -119,7 +128,7 @@ non-zero bins: `red[255] = 1.0000000000`,
 
 ## Implementation notes
 
-- Register `histogram` in the `commands=(...)` list used by the `im` command
+- Register `fp` in the `commands=(...)` list used by the `im` command
   group in `davo/cli.py` and add its parser branch in
   `davo/services/photo/cli.py`.
 - Keep CLI wiring thin and put decoding/counting/formatting in a testable
@@ -134,11 +143,12 @@ non-zero bins: `red[255] = 1.0000000000`,
 
 Add focused automated tests for:
 
-- parser wiring: `davo im histogram sample.png` resolves to a callable command
-- a known small RGB fixture produces four records in the required order
-- every channel emits exactly 256 normalized bins, including zero-valued bins
-- known pixels are counted in their correct RGB bins
-- the per-channel values sum to `1` before output rounding
+- parser wiring: `davo im fp sample.png` resolves to a callable command
+- a known small RGB fixture produces three records in the required order
+- the histogram BLOB is exactly 192 bytes and decodes to 96 `uint16` values
+- known pixels contribute to their correct grouped RGB bins
+- every histogram value is within the `uint16` range
+- pHash is deterministic and formatted as sixteen lowercase hexadecimal digits
 - grayscale and palette fixtures are converted to the expected RGB counts
 - RGBA input ignores alpha values
 - an EXIF-rotated or landscape fixture is oriented to portrait before the
@@ -150,11 +160,11 @@ Add focused automated tests for:
 Manual spot check:
 
 ```console
-davo im histogram sample.jpg
+davo im fp sample.jpg
 ```
 
-Confirm that the command prints `size` and three 256-bin channel rows, and
-that changing a pixel's colour changes the corresponding channel bins.
+Confirm that the command prints `size`, one 192-byte `fingerprint_blob` hex row,
+and one pHash row, and that changing a pixel's colour changes the histogram.
 
 ## Out of scope
 
@@ -162,5 +172,4 @@ that changing a pixel's colour changes the corresponding channel bins.
 - Searching a directory for similar images
 - Persisting histograms, JSON/CSV output, or an output-file option
 - Grayscale, HSV, Lab, luminance, alpha, or multi-dimensional histograms
-- Bin-count configuration, resizing, perceptual hashing, or additional
-  colour-management policy changes
+- Bin-count configuration or additional colour-management policy changes

@@ -425,14 +425,14 @@ def init_parser(parser=None, subparsers=None, commands=()):
             )
         )
 
-    if not commands or "histogram" in commands:
+    if not commands or "fp" in commands:
         cmd = subparsers.add_parser(
-            "histogram",
-            help="print normalized RGB image histogram (Pillow)",
+            "fp",
+            help="print image feature vector and pHash",
         )
         cmd.add_argument("image", metavar="IMAGE")
         cmd.set_defaults(
-            func=lambda namespace: helpers.command_histogram(
+            func=lambda namespace: helpers.command_fingerprint(
                 image=namespace.image,
             )
         )

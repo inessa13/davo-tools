@@ -16,7 +16,7 @@ from davo.services.photo import cli as photo_cli
         ["im", "thumbs"],
         ["im", "recover"],
         ["im", "downscale"],
-        ["im", "histogram", "input.png"],
+        ["im", "fp", "input.png"],
     ],
 )
 def test_parser_accepts_new_command_groups(arguments):

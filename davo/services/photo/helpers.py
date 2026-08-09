@@ -20,7 +20,7 @@ try:
 except ImportError:
     pass
 
-from . import clients, histogram, pdf, replace_classes, utils
+from . import clients, fingerprint, pdf, replace_classes, utils
 
 logger = logging.getLogger(__name__)
 
@@ -657,8 +657,8 @@ def command_downscale(
             cv2.imwrite(file_name, downscaled)
 
 
-def command_histogram(image: str):
-    print(histogram.format_histogram(image))
+def command_fingerprint(image: str):
+    print(fingerprint.format_fingerprint(image))
 
 
 def _pdf_path(root: str | None, path: str | None) -> str | None:

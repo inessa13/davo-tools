@@ -41,7 +41,7 @@ def init_parser():
             "thumbs",
             "recover",
             "downscale",
-            "histogram",
+            "fp",
         ),
     )
 
