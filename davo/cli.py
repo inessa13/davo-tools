@@ -2,6 +2,7 @@
 import argparse
 import logging
 import logging.config
+import os
 
 from . import services, settings, utils, version
 
@@ -22,6 +23,29 @@ def init_parser():
 
     cmd = subparsers.add_parser("conf", help="conf tools")
     services.common.init_parser(cmd, commands=("keyring",))
+
+    cmd = subparsers.add_parser("arch", help="archive tools")
+    arch_subparsers = cmd.add_subparsers(title="list of commands")
+    fns_rename = arch_subparsers.add_parser(
+        "fns-rename", help="name FNS receipt HTML files"
+    )
+    fns_rename.add_argument("path", nargs="?", default=os.getcwd())
+    fns_rename.add_argument(
+        "-c", "--commit", action="store_true", help="apply changes"
+    )
+    fns_rename.add_argument(
+        "-R",
+        "--rename",
+        action="store_true",
+        help="rename source files instead of copying them",
+    )
+    fns_rename.set_defaults(
+        func=lambda namespace: services.arch.command_fns_rename(
+            root=namespace.path,
+            commit=namespace.commit,
+            rename=namespace.rename,
+        )
+    )
 
     cmd = subparsers.add_parser("file", help="file tools")
     cmd, _subparsers = services.photo.cli.init_parser(

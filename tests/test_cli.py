@@ -8,6 +8,7 @@ from davo.services.photo import cli as photo_cli
     "arguments",
     [
         ["clips", "convert"],
+        ["arch", "fns-rename"],
         ["clips", "split", "input.mp4", "00:00:10"],
         ["clips", "trim"],
         ["clips", "web"],
