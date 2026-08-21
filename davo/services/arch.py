@@ -83,7 +83,9 @@ def plan_fns_rename(root):
         try:
             candidates.append((path, extract_fns_name(path)))
         except (OSError, ValueError) as exc:
-            logger.warning("fns-rename: skip %s: %s", path, exc)
+            logger.warning(
+                "fns-rename: skip %s: %s", _display_path(path, root), exc
+            )
 
     names = _number_names(candidates)
     return [
@@ -98,6 +100,10 @@ def _copy_without_overwrite(source, target):
     shutil.copystat(source, target)
 
 
+def _display_path(path, root):
+    return path.relative_to(root)
+
+
 def command_fns_rename(root, commit=False, rename=False):
     """Plan or apply names for FNS receipt HTML files in one directory."""
     root = Path(root)
@@ -108,14 +114,20 @@ def command_fns_rename(root, commit=False, rename=False):
     plan = plan_fns_rename(root)
     collisions = {item.target for item in plan if item.target.exists()}
     for target in sorted(collisions):
-        logger.warning("fns-rename: target already exists: %s", target)
+        logger.warning(
+            "fns-rename: target already exists: %s",
+            _display_path(target, root),
+        )
 
     action = "rename" if rename else "copy"
     for item in plan:
         if item.target in collisions:
             continue
         logger.info(
-            "fns-rename: %s %s -> %s", action, item.source, item.target
+            "fns-rename: %s %s -> %s",
+            action,
+            _display_path(item.source, root),
+            _display_path(item.target, root),
         )
         if not commit:
             continue
@@ -130,5 +142,6 @@ def command_fns_rename(root, commit=False, rename=False):
                 _copy_without_overwrite(item.source, item.target)
         except FileExistsError:
             logger.warning(
-                "fns-rename: target already exists: %s", item.target
+                "fns-rename: target already exists: %s",
+                _display_path(item.target, root),
             )

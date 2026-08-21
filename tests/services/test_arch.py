@@ -70,7 +70,8 @@ def test_dry_run_only_plans_copy(tmp_path, caplog):
 
     assert source.exists()
     assert not target.exists()
-    assert "copy" in caplog.text
+    assert "copy receipt.html -> 20260808 Ч ozon.ru.html" in caplog.text
+    assert str(tmp_path) not in caplog.text
 
 
 def test_commit_copies_unless_rename_requested(tmp_path):
@@ -104,7 +105,8 @@ def test_collision_is_not_overwritten(tmp_path, caplog):
 
     assert source.exists()
     assert target.read_text(encoding="utf-8") == "existing"
-    assert "target already exists" in caplog.text
+    assert "target already exists: 20260808 Ч ozon.ru.html" in caplog.text
+    assert str(tmp_path) not in caplog.text
 
 
 def test_invalid_and_nested_html_are_skipped(tmp_path, caplog):
