@@ -1231,6 +1231,13 @@ def command_pdf_form(
     )
     status_h = "prepared" if status else "failed"
     logger.info("pdf %s: %s", status_h, out or inf[0])
+    if status:
+        output_path = _pdf_path(root, out)
+        if output_path is None:
+            output_path = pdf._default_output(  # pylint: disable=W0212
+                _pdf_path(root, inf[0]), "_formed"
+            )
+        command_pdf_info(None, output_path, verbose=verbose)
 
 
 def command_pdf_extract(
@@ -1261,16 +1268,19 @@ def command_pdf_info(
     inf: str,
     pages: list = None,
     verbose: bool = False,
+    pt: bool = False,
+    table: bool = False,
 ):
     rows = pdf.inspect_pages(
         _pdf_path(root, inf),
         pages=pages,
         verbose=verbose,
+        pt=pt,
     )
     if rows is None:
         return
 
-    print(pdf.format_page_info_report(rows))
+    print(pdf.format_page_info_report(rows, table=table))
 
 
 def command_pdf_scale(

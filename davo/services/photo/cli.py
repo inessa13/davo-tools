@@ -956,12 +956,25 @@ def init_parser_pdf(
             type=int,
             help="pages to inspect, 1-based",
         )
+        cmd.add_argument(
+            "--pt",
+            action="store_true",
+            help="show non-standard page sizes in points",
+        )
+        cmd.add_argument(
+            "-t",
+            "--table",
+            action="store_true",
+            help="print an ASCII table",
+        )
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_info(  # noqa
                 root=root(namespace),
                 inf=namespace.inf,
                 pages=namespace.pages,
                 verbose=namespace.verbose,
+                pt=namespace.pt,
+                table=namespace.table,
             )
         )
 

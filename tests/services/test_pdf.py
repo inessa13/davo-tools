@@ -1147,14 +1147,29 @@ def test_inspect_pages_classifies_raster_and_formats_metadata(fake_fitz):
         {
             "page": 1,
             "type": "raster",
-            "resolution": "300x300 dpi",
+            "resolution": "300 dpi",
             "image_size_px": "2480x3508 px",
-            "x_resolution": 300,
-            "y_resolution": 300,
             "orientation": "portrait",
-            "page_size": "595x842 pt (210x297 mm)",
+            "page_size": "a4",
         }
     ]
+
+
+def test_inspect_pages_formats_different_dpi_per_axis(fake_fitz):
+    page_rect = FakeRect(72, 72)
+    fake_fitz["/scan.pdf"] = FakeDoc(
+        page_count=1,
+        pages=[
+            FakePage(
+                images=[(11,)], image_rects={11: [page_rect]}, rect=page_rect
+            )
+        ],
+        extracted_images={11: {"width": 300, "height": 200}},
+    )
+
+    rows = pdf.inspect_pages("/scan.pdf")
+
+    assert rows[0]["resolution"] == "300x200 dpi"
 
 
 def test_inspect_pages_uses_visible_bbox_and_reused_xref_for_multi_raster(
@@ -1181,12 +1196,10 @@ def test_inspect_pages_uses_visible_bbox_and_reused_xref_for_multi_raster(
         {
             "page": 1,
             "type": "multi-raster",
-            "resolution": "300x300 dpi",
+            "resolution": "300 dpi",
             "image_size_px": "1500x1500 px",
-            "x_resolution": 300,
-            "y_resolution": 300,
             "orientation": "portrait",
-            "page_size": "595x842 pt (210x297 mm)",
+            "page_size": "a4",
         }
     ]
 
@@ -1201,10 +1214,8 @@ def test_command_pdf_info_prints_report(monkeypatch, capsys):
                 "type": "empty",
                 "resolution": "-",
                 "image_size_px": "-",
-                "x_resolution": None,
-                "y_resolution": None,
                 "orientation": "portrait",
-                "page_size": "595x842 pt (210x297 mm)",
+                "page_size": "210x297 mm",
             }
         ],
     )
@@ -1215,7 +1226,114 @@ def test_command_pdf_info_prints_report(monkeypatch, capsys):
     assert "Page" in output
     assert "ImageSizePx" in output
     assert "empty" in output
-    assert "595x842 pt (210x297 mm)" in output
+    assert "210x297 mm" in output
+    assert "XResolution" not in output
+    assert "YResolution" not in output
+
+
+@pytest.mark.parametrize(
+    ("width_mm", "height_mm", "expected"),
+    [
+        (297, 420, "a3"),
+        (420, 297, "a3"),
+        (210, 297, "a4"),
+        (297, 210, "a4"),
+        (148, 210, "a5"),
+        (210, 148, "a5"),
+        (105, 148, "a6"),
+        (148, 105, "a6"),
+        (212, 297, "212x297 mm"),
+    ],
+)
+def test_format_page_size_recognizes_iso_sizes_in_both_orientations(
+    width_mm, height_mm, expected
+):
+    rect = FakeRect(width_mm * 72.0 / 25.4, height_mm * 72.0 / 25.4)
+
+    assert pdf._format_page_size(rect) == expected  # pylint: disable=W0212
+    if expected.startswith("a"):
+        assert pdf._format_page_size(rect, pt=True) == expected  # pylint: disable=W0212
+
+
+def test_format_page_info_report_supports_points_and_ascii_table():
+    rows = [
+        {
+            "page": 2,
+            "type": "raster",
+            "resolution": "300x200 dpi",
+            "image_size_px": "100x200 px",
+            "orientation": "portrait",
+            "page_size": "612x792 pt",
+        }
+    ]
+
+    report = pdf.format_page_info_report(rows, table=True)
+
+    assert report.splitlines()[0].startswith("+")
+    assert "| Page" in report
+    assert "300x200 dpi" in report
+    assert "XResolution" not in report
+    assert report.splitlines()[-1] == report.splitlines()[0]
+
+
+def test_init_parser_pdf_info_passes_display_options(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        helpers, "command_pdf_info", lambda **kwargs: calls.append(kwargs)
+    )
+    parser = argparse.ArgumentParser()
+    photo_cli.init_parser_pdf(parser)
+
+    namespace = parser.parse_args(["info", "scan.pdf", "--pt", "-t"])
+    namespace.func(namespace)
+
+    assert calls == [
+        {
+            "root": None,
+            "inf": "scan.pdf",
+            "pages": None,
+            "verbose": False,
+            "pt": True,
+            "table": True,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("out", "expected_output"),
+    [
+        ("formed.pdf", "/root/formed.pdf"),
+        (None, "/root/scan_formed.pdf"),
+    ],
+)
+def test_command_pdf_form_reports_actual_output_after_success(
+    monkeypatch, out, expected_output
+):
+    monkeypatch.setattr(pdf, "form_files", lambda *_args, **_kwargs: True)
+    calls = []
+    monkeypatch.setattr(
+        helpers, "command_pdf_info", lambda root, inf, **kwargs: calls.append(
+            (root, inf, kwargs)
+        )
+    )
+
+    helpers.command_pdf_form("/root", out, ["scan.pdf"], paper_format="a4")
+
+    assert calls == [(None, expected_output, {"verbose": False})]
+
+
+def test_command_pdf_form_does_not_report_failed_output(monkeypatch):
+    monkeypatch.setattr(pdf, "form_files", lambda *_args, **_kwargs: False)
+    calls = []
+    monkeypatch.setattr(
+        helpers, "command_pdf_info", lambda *_args, **_kwargs: calls.append(1)
+    )
+
+    helpers.command_pdf_form(
+        "/root", "formed.pdf", ["scan.pdf"], paper_format="a4"
+    )
+
+    assert calls == []
 
 
 def test_scale_file_uses_default_output_name_and_a4_portrait(fake_fitz):

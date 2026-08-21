@@ -14,6 +14,12 @@ _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
 _EXTRACT_OUTPUT_TYPES = {"jpg", "png"}
 _COMPRESS_DPI_PRESETS = {72, 96, 150, 200, 300, 400}
 _COMPRESS_JPEG_QUALITY = 80
+_ISO_PAGE_FORMATS_MM = {
+    "a3": (297.0, 420.0),
+    "a4": (210.0, 297.0),
+    "a5": (148.0, 210.0),
+    "a6": (105.0, 148.0),
+}
 _PAPER_FORMATS = {
     "a4": (210.0 * 72.0 / 25.4, 297.0 * 72.0 / 25.4),
     "a5": (148.0 * 72.0 / 25.4, 210.0 * 72.0 / 25.4),
@@ -471,22 +477,27 @@ def _classify_page_type(
     return "mixed"
 
 
-def _format_resolution_value(value: Optional[int]) -> str:
-    if value is None:
-        return "-"
-    return str(value)
-
-
-def _format_page_size(rect: Any) -> str:
+def _format_page_size(rect: Any, pt: bool = False) -> str:
+    """Format a page size, preferring a recognized ISO A paper name."""
     width_pt, height_pt = _rect_dimensions(rect)
-    width_pt_h = int(round(width_pt))
-    height_pt_h = int(round(height_pt))
-    width_mm = int(round(width_pt * 25.4 / 72.0))
-    height_mm = int(round(height_pt * 25.4 / 72.0))
-    return (
-        f"{width_pt_h}x{height_pt_h} pt "
-        f"({width_mm}x{height_mm} mm)"
-    )
+    width_mm = width_pt * 25.4 / 72.0
+    height_mm = height_pt * 25.4 / 72.0
+
+    for paper_format, (paper_width_mm, paper_height_mm) in (
+        _ISO_PAGE_FORMATS_MM.items()
+    ):
+        if (
+            abs(width_mm - paper_width_mm) <= 1
+            and abs(height_mm - paper_height_mm) <= 1
+        ) or (
+            abs(width_mm - paper_height_mm) <= 1
+            and abs(height_mm - paper_width_mm) <= 1
+        ):
+            return paper_format
+
+    if pt:
+        return f"{int(round(width_pt))}x{int(round(height_pt))} pt"
+    return f"{int(round(width_mm))}x{int(round(height_mm))} mm"
 
 
 def inspect_pages(
@@ -494,6 +505,7 @@ def inspect_pages(
     pages: Optional[Iterable[int]] = None,
     verbose: bool = False,
     raster_coverage_threshold: float = 0.9,
+    pt: bool = False,
 ) -> Optional[List[Dict[str, Any]]]:
     fitz = _import_fitz("page inspection")
 
@@ -532,7 +544,10 @@ def inspect_pages(
                 if dominant is not None:
                     x_resolution = int(round(dominant["x_dpi"]))
                     y_resolution = int(round(dominant["y_dpi"]))
-                    resolution = f"{x_resolution}x{y_resolution} dpi"
+                    if x_resolution == y_resolution:
+                        resolution = f"{x_resolution} dpi"
+                    else:
+                        resolution = f"{x_resolution}x{y_resolution} dpi"
                     image_size_px = (
                         f'{dominant["width_px"]}x{dominant["height_px"]} px'
                     )
@@ -551,10 +566,8 @@ def inspect_pages(
                         "type": page_type,
                         "resolution": resolution,
                         "image_size_px": image_size_px,
-                        "x_resolution": x_resolution,
-                        "y_resolution": y_resolution,
                         "orientation": orientation,
-                        "page_size": _format_page_size(page_rect),
+                        "page_size": _format_page_size(page_rect, pt=pt),
                     }
                 )
     except (OSError, RuntimeError, ValueError) as exc:
@@ -564,14 +577,14 @@ def inspect_pages(
     return rows
 
 
-def format_page_info_report(rows: Sequence[Dict[str, Any]]) -> str:
+def format_page_info_report(
+    rows: Sequence[Dict[str, Any]], table: bool = False
+) -> str:
     headers = [
         "Page",
         "Type",
         "Resolution",
         "ImageSizePx",
-        "XResolution",
-        "YResolution",
         "Orientation",
         "PageSize",
     ]
@@ -581,8 +594,6 @@ def format_page_info_report(rows: Sequence[Dict[str, Any]]) -> str:
             row["type"],
             row["resolution"],
             row["image_size_px"],
-            _format_resolution_value(row["x_resolution"]),
-            _format_resolution_value(row["y_resolution"]),
             row["orientation"],
             row["page_size"],
         ]
@@ -593,6 +604,25 @@ def format_page_info_report(rows: Sequence[Dict[str, Any]]) -> str:
     for row in table_rows:
         for idx, value in enumerate(row):
             widths[idx] = max(widths[idx], len(value))
+
+    if table:
+        border = "+{}+".format(
+            "+".join("-" * (width + 2) for width in widths)
+        )
+
+        def format_row(row: Sequence[str]) -> str:
+            return "| {} |".format(
+                " | ".join(
+                    value.rjust(widths[index]) if index == 0
+                    else value.ljust(widths[index])
+                    for index, value in enumerate(row)
+                )
+            )
+
+        return "\n".join(
+            (border, format_row(headers), border,
+             *(format_row(row) for row in table_rows), border)
+        )
 
     rendered_rows = [
         "  ".join(
