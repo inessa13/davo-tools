@@ -11,5 +11,6 @@ Per-change specifications. Naming and front matter: [`docs/shared/docs/conventio
 | [`20260807-feature-pdf-positional-inputs.md`](20260807-feature-pdf-positional-inputs.md) | implemented |
 | [`20260801-feature-pdf-info.md`](20260801-feature-pdf-info.md) | draft |
 | [`20260801-feature-pdf-compress-images.md`](20260801-feature-pdf-compress-images.md) | implemented |
+| [`20260821-feature-pdf-form.md`](20260821-feature-pdf-form.md) | implemented |
 | [`20260725-feature-pdf-extract-images.md`](20260725-feature-pdf-extract-images.md) | implemented |
 | [`20260512-bug-replace-upload-cache.md`](20260512-bug-replace-upload-cache.md) | draft |

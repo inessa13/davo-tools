@@ -35,3 +35,18 @@ make lint         # ruff, isort (check-only), pylint
 ```
 
 With an activated venv: `source .venv/bin/activate`, then `make test` or `python -m pytest`.
+
+## PDF page formatting
+
+`davo pdf form` creates a PDF from PDF, JPEG, PNG, and BMP inputs, fitting each
+page onto the requested paper size without cropping.  A source page's
+orientation is preserved; use `-W` to replace an existing output file.
+
+```bash
+davo pdf form -4M file.jpg
+davo pdf form -5 *.pdf
+davo pdf form -s 21 29.7 -o result.pdf *.jpg
+```
+
+The image-DPI presets are `-H` (400), `-Q` (300), `-M` (200), `-l` (150), and
+`-L` (96); `--dpi N` accepts values from 72 to 800.

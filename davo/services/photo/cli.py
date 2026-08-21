@@ -13,6 +13,16 @@ from . import helpers
 logger = logging.getLogger(__name__)
 
 
+def _form_dpi(value):
+    try:
+        dpi = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("DPI must be an integer") from exc
+    if not 72 <= dpi <= 800:
+        raise argparse.ArgumentTypeError("DPI must be from 72 to 800")
+    return dpi
+
+
 def init_parser(parser=None, subparsers=None, commands=()):
     if parser is None:
         parser = argparse.ArgumentParser()
@@ -823,6 +833,70 @@ def init_parser_pdf(
                 quality=namespace.quality,
                 grayscale=namespace.grayscale,
                 rebuild=True,
+                rewrite=namespace.rewrite,
+                verbose=namespace.verbose,
+            )
+        )
+
+    if not commands or "form" in commands:
+        cmd = subparsers.add_parser(
+            "{}form".format(prefix),
+            parents=write_parents,
+            help="form PDF and image pages to a paper size (PyMuPDF)",
+        )
+        cmd.add_argument("-o", "--out", action="store")
+        format_group = cmd.add_mutually_exclusive_group(required=True)
+        format_group.add_argument(
+            "-4", dest="paper_format", action="store_const", const="a4",
+            help="A4 paper size",
+        )
+        format_group.add_argument(
+            "-5", dest="paper_format", action="store_const", const="a5",
+            help="A5 paper size",
+        )
+        format_group.add_argument(
+            "-6", dest="paper_format", action="store_const", const="a6",
+            help="A6 paper size",
+        )
+        format_group.add_argument(
+            "-s", "--size", nargs=2, type=float, metavar=("WIDTH", "HEIGHT"),
+            help="custom paper size in centimetres",
+        )
+        dpi_group = cmd.add_mutually_exclusive_group()
+        dpi_group.add_argument(
+            "-H", dest="dpi", action="store_const", const=400,
+            help="target image DPI: 400",
+        )
+        dpi_group.add_argument(
+            "-Q", dest="dpi", action="store_const", const=300,
+            help="target image DPI: 300",
+        )
+        dpi_group.add_argument(
+            "-M", dest="dpi", action="store_const", const=200,
+            help="target image DPI: 200",
+        )
+        dpi_group.add_argument(
+            "-l", dest="dpi", action="store_const", const=150,
+            help="target image DPI: 150",
+        )
+        dpi_group.add_argument(
+            "-L", dest="dpi", action="store_const", const=96,
+            help="target image DPI: 96",
+        )
+        dpi_group.add_argument(
+            "--dpi", type=_form_dpi, metavar="N",
+            help="target image DPI, from 72 to 800",
+        )
+        add_input_argument(cmd, multiple=True)
+        cmd.set_defaults(
+            dpi=300,
+            func=lambda namespace: helpers.command_pdf_form(  # noqa
+                root=root(namespace),
+                out=namespace.out,
+                inf=namespace.inf,
+                paper_format=namespace.paper_format,
+                size_cm=namespace.size,
+                dpi=namespace.dpi,
                 rewrite=namespace.rewrite,
                 verbose=namespace.verbose,
             )

@@ -417,6 +417,57 @@ def test_compress_file_rewrites_images_and_saves(fake_fitz):
     ]
 
 
+def test_form_files_places_pdf_pages_without_enlarging(fake_fitz):
+    fake_fitz["/multi.pdf"] = FakeDoc(
+        page_count=2,
+        pages=[
+            FakePage(rect=FakeRect(100, 200)),
+            FakePage(rect=FakeRect(400, 200)),
+        ],
+    )
+
+    status = pdf.form_files(
+        ["/multi.pdf"],
+        "/out.pdf",
+        paper_format="a6",
+    )
+
+    assert status is True
+    result = fake_fitz["__created__"][0]
+    portrait, landscape = result.new_pages
+    a6_width, a6_height = pdf._PAPER_FORMATS["a6"]
+    assert (portrait.width, portrait.height) == (a6_width, a6_height)
+    assert (landscape.width, landscape.height) == (a6_height, a6_width)
+    first_rect = portrait.shown[0][0]
+    assert first_rect == pytest.approx(
+        ((a6_width - 100) / 2, (a6_height - 200) / 2,
+         (a6_width + 100) / 2, (a6_height + 200) / 2)
+    )
+    second_rect = landscape.shown[0][0]
+    assert second_rect == pytest.approx(
+        (
+            (a6_height - 400) / 2,
+            (a6_width - 200) / 2,
+            (a6_height + 400) / 2,
+            (a6_width + 200) / 2,
+        )
+    )
+    assert result.saved == [
+        ("/out.pdf", {"garbage": 3, "deflate": True, "clean": True})
+    ]
+
+
+def test_form_files_rejects_unsupported_source_before_creating_result(
+    fake_fitz,
+):
+    status = pdf.form_files(
+        ["/a.txt"], "/out.pdf", paper_format="a4"
+    )
+
+    assert status is False
+    assert fake_fitz["__created__"] == []
+
+
 @pytest.mark.parametrize("dpi", [72, 96])
 def test_compress_file_supports_low_dpi_presets(fake_fitz, dpi):
     fake_fitz["/a.pdf"] = FakeDoc(page_count=1)

@@ -139,6 +139,52 @@ def test_parser_keeps_pdf_commands(command):
     assert callable(namespace.func)
 
 
+@pytest.mark.parametrize(
+    ("arguments", "dpi"),
+    [
+        (["-H"], 400),
+        (["-Q"], 300),
+        (["-M"], 200),
+        (["-l"], 150),
+        (["-L"], 96),
+        (["--dpi", "800"], 800),
+    ],
+)
+def test_parser_accepts_pdf_form_sizes_and_dpi(arguments, dpi):
+    namespace = cli.init_parser().parse_args(
+        ["pdf", "form", "-4", *arguments, "input.jpg"]
+    )
+
+    assert callable(namespace.func)
+    assert namespace.paper_format == "a4"
+    assert namespace.dpi == dpi
+    assert namespace.inf == ["input.jpg"]
+
+
+def test_parser_accepts_compact_pdf_form_flags():
+    namespace = cli.init_parser().parse_args(
+        ["pdf", "form", "-4M", "input.jpg"]
+    )
+
+    assert namespace.paper_format == "a4"
+    assert namespace.dpi == 200
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["pdf", "form", "input.jpg"],
+        ["pdf", "form", "-4", "-5", "input.jpg"],
+        ["pdf", "form", "-4", "-M", "--dpi", "200", "input.jpg"],
+        ["pdf", "form", "-4", "--dpi", "71", "input.jpg"],
+        ["pdf", "form", "-4", "--dpi", "801", "input.jpg"],
+    ],
+)
+def test_parser_rejects_invalid_pdf_form_options(arguments):
+    with pytest.raises(SystemExit):
+        cli.init_parser().parse_args(arguments)
+
+
 def test_file_keeps_compare():
     namespace = cli.init_parser().parse_args(["file", "compare"])
 

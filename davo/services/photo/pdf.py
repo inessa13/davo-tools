@@ -17,6 +17,7 @@ _COMPRESS_JPEG_QUALITY = 80
 _PAPER_FORMATS = {
     "a4": (210.0 * 72.0 / 25.4, 297.0 * 72.0 / 25.4),
     "a5": (148.0 * 72.0 / 25.4, 210.0 * 72.0 / 25.4),
+    "a6": (105.0 * 72.0 / 25.4, 148.0 * 72.0 / 25.4),
 }
 
 
@@ -659,6 +660,245 @@ def _fit_rect_within(
         x0 + fitted_width,
         y0 + fitted_height,
     )
+
+
+def _fit_dimensions_within(
+    fitz: Any,
+    source_width: float,
+    source_height: float,
+    target_width: float,
+    target_height: float,
+    allow_upscale: bool = False,
+) -> Any:
+    """Return a centered rectangle preserving the source aspect ratio."""
+    if source_width <= 0 or source_height <= 0:
+        raise RuntimeError("source has invalid bounds")
+
+    scale = min(target_width / source_width, target_height / source_height)
+    if not allow_upscale:
+        scale = min(scale, 1.0)
+    fitted_width = source_width * scale
+    fitted_height = source_height * scale
+    x0 = (target_width - fitted_width) / 2.0
+    y0 = (target_height - fitted_height) / 2.0
+    return _build_rect(
+        fitz, x0, y0, x0 + fitted_width, y0 + fitted_height
+    )
+
+
+def _resolve_form_page_size(
+    page_size: Tuple[float, float],
+    source_width: float,
+    source_height: float,
+) -> Tuple[float, float]:
+    width, height = page_size
+    if source_width > source_height:
+        return height, width
+    return width, height
+
+
+def _image_source_dimensions(
+    input_file: str,
+) -> Tuple[int, int, Optional[Tuple[float, float]]]:
+    """Return image pixels and its physical DPI when it is trustworthy."""
+    from PIL import Image  # noqa pylint: disable=C0415
+
+    with Image.open(input_file) as image:
+        width, height = image.size
+        dpi = image.info.get("dpi")
+        if not dpi or len(dpi) < 2:
+            return width, height, None
+        x_dpi, y_dpi = dpi[:2]
+        if x_dpi <= 0 or y_dpi <= 0:
+            return width, height, None
+        return width, height, (float(x_dpi), float(y_dpi))
+
+
+def _validate_form_sources(
+    fitz: Any,
+    input_files: Sequence[str],
+    verbose: bool,
+) -> bool:
+    """Check every source before a result document can be created."""
+    from PIL import Image  # noqa pylint: disable=C0415
+
+    for input_file in input_files:
+        if not os.path.exists(input_file):
+            if verbose:
+                logger.warning("pdf.form: file not found: %s", input_file)
+            return False
+
+        ext = os.path.splitext(input_file)[1].lower()
+        if ext == ".pdf":
+            try:
+                with _open_pdf(fitz, input_file, "form"):
+                    pass
+            except (OSError, RuntimeError, ValueError):
+                logger.error("pdf.form: failed to open pdf: %s", input_file)
+                return False
+        elif ext in _IMAGE_EXTENSIONS:
+            try:
+                with Image.open(input_file) as image:
+                    image.verify()
+            except (OSError, ValueError):
+                logger.error("pdf.form: invalid image: %s", input_file)
+                return False
+        else:
+            if verbose:
+                logger.warning("pdf.form: file not supported: %s", input_file)
+            return False
+    return True
+
+
+def _document_has_images_over_dpi(doc: Any, dpi: int) -> bool:
+    for page_idx in range(doc.page_count):
+        page = doc.load_page(page_idx)
+        for placement in _inspect_page_raster_placements(doc, page):
+            if max(placement["x_dpi"], placement["y_dpi"]) > dpi:
+                return True
+    return False
+
+
+def form_files(
+    input_files: Iterable[str],
+    output_path: Optional[str],
+    page_size: Optional[Tuple[float, float]] = None,
+    paper_format: Optional[str] = None,
+    dpi: Any = 300,
+    verbose: bool = False,
+    rewrite: bool = False,
+) -> bool:
+    """Place PDF pages and images on consistently sized, oriented sheets."""
+    files = list(input_files)
+    if not files:
+        if verbose:
+            logger.warning("pdf.form: no input files provided")
+        return False
+
+    try:
+        normalized_dpi = int(dpi)
+        if not 72 <= normalized_dpi <= 800:
+            raise ValueError("dpi must be between 72 and 800")
+        if page_size is None:
+            normalized_format = _normalize_scale_format(paper_format)
+            page_size = _PAPER_FORMATS[normalized_format]
+        base_width, base_height = page_size
+        if base_width <= 0 or base_height <= 0:
+            raise ValueError("page size must be positive")
+    except (TypeError, ValueError) as exc:
+        logger.error("pdf.form: invalid option: %s", exc)
+        return False
+
+    if output_path is None:
+        output_path = _default_output(files[0], "_formed")
+    if not _allow_output_targets(
+        "form", files, [output_path], rewrite=rewrite
+    ):
+        return False
+
+    fitz = _import_fitz("form creation")
+    if not _validate_form_sources(fitz, files, verbose):
+        return False
+
+    try:
+        with fitz.open() as out_doc:
+            for input_file in files:
+                ext = os.path.splitext(input_file)[1].lower()
+                if ext == ".pdf":
+                    with _open_pdf(fitz, input_file, "form") as src:
+                        for page_idx in range(src.page_count):
+                            source_page = src.load_page(page_idx)
+                            source_rect = _get_page_rect(source_page)
+                            source_width, source_height = _rect_dimensions(
+                                source_rect
+                            )
+                            target_size = _resolve_form_page_size(
+                                (base_width, base_height),
+                                source_width,
+                                source_height,
+                            )
+                            target_width, target_height = target_size
+                            dest_page = out_doc.new_page(
+                                width=target_width, height=target_height
+                            )
+                            dest_rect = _fit_dimensions_within(
+                                fitz,
+                                source_width,
+                                source_height,
+                                target_width,
+                                target_height,
+                            )
+                            if hasattr(dest_page, "show_pdf_page"):
+                                dest_page.show_pdf_page(
+                                    dest_rect, src, page_idx,
+                                    keep_proportion=True,
+                                )
+                            elif hasattr(dest_page, "showPDFpage"):
+                                dest_page.showPDFpage(dest_rect, src, page_idx)
+                            else:
+                                raise RuntimeError(
+                                    "PyMuPDF page object does not support "
+                                    "page placement API"
+                                )
+                    continue
+
+                width_px, height_px, image_dpi = _image_source_dimensions(
+                    input_file
+                )
+                target_width, target_height = _resolve_form_page_size(
+                    (base_width, base_height), width_px, height_px
+                )
+                if image_dpi is None:
+                    # Pixels have no physical size in this case, so fitting is
+                    # the useful default rather than treating them as 72 DPI.
+                    source_width, source_height = width_px, height_px
+                    allow_upscale = True
+                else:
+                    x_dpi, y_dpi = image_dpi
+                    source_width = width_px * 72.0 / x_dpi
+                    source_height = height_px * 72.0 / y_dpi
+                    allow_upscale = False
+                dest_page = out_doc.new_page(
+                    width=target_width, height=target_height
+                )
+                dest_rect = _fit_dimensions_within(
+                    fitz, source_width, source_height,
+                    target_width, target_height, allow_upscale=allow_upscale,
+                )
+                if hasattr(dest_page, "insert_image"):
+                    dest_page.insert_image(
+                        dest_rect, filename=input_file, keep_proportion=False
+                    )
+                elif hasattr(dest_page, "insertImage"):
+                    dest_page.insertImage(dest_rect, filename=input_file)
+                else:
+                    raise RuntimeError(
+                        "PyMuPDF page object does not support image "
+                        "insertion API"
+                    )
+
+            if _document_has_images_over_dpi(out_doc, normalized_dpi):
+                if not hasattr(out_doc, "rewrite_images"):
+                    raise RuntimeError(
+                        "PyMuPDF document does not support image rewrite API"
+                    )
+                out_doc.rewrite_images(
+                    dpi_threshold=normalized_dpi + 1,
+                    dpi_target=normalized_dpi,
+                    quality=_COMPRESS_JPEG_QUALITY,
+                    lossy=True,
+                    lossless=True,
+                    bitonal=True,
+                    color=True,
+                    gray=True,
+                    set_to_gray=False,
+                )
+            out_doc.save(output_path, garbage=3, deflate=True, clean=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.error("pdf.form: failed to form pdf %s", str(exc))
+        return False
+
+    return True
 
 
 def _render_page_jpeg_bytes(

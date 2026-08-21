@@ -1207,6 +1207,32 @@ def command_pdf_compress(
     logger.info("pdf %s: %s", status_h, out or inf)
 
 
+def command_pdf_form(
+    root,
+    out: str,
+    inf: list,
+    paper_format: str = None,
+    size_cm: list = None,
+    dpi: int = 300,
+    verbose: bool = False,
+    rewrite: bool = False,
+):
+    if size_cm is not None:
+        page_size = tuple(value * 72.0 / 2.54 for value in size_cm)
+    else:
+        page_size = pdf._PAPER_FORMATS[paper_format]  # pylint: disable=W0212
+    status = pdf.form_files(
+        [_pdf_path(root, file_path) for file_path in inf],
+        _pdf_path(root, out),
+        page_size=page_size,
+        dpi=dpi,
+        rewrite=rewrite,
+        verbose=verbose,
+    )
+    status_h = "prepared" if status else "failed"
+    logger.info("pdf %s: %s", status_h, out or inf[0])
+
+
 def command_pdf_extract(
     root,
     inf: str,
