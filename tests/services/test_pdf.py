@@ -468,6 +468,34 @@ def test_form_files_rejects_unsupported_source_before_creating_result(
     assert fake_fitz["__created__"] == []
 
 
+def test_form_image_bytes_downsamples_jpeg_to_placed_dpi(tmp_path):
+    source = tmp_path / "wide.jpg"
+    Image.new("RGB", (2000, 1000), "red").save(source, quality=95)
+
+    payload = pdf._form_image_bytes(  # pylint: disable=W0212
+        str(source), FakeRect(144, 72), dpi=200, quality=37
+    )
+
+    with Image.open(io.BytesIO(payload)) as image:
+        assert image.format == "JPEG"
+        assert image.size == (400, 200)
+
+
+def test_form_image_bytes_does_not_enlarge_and_preserves_png_alpha(tmp_path):
+    source = tmp_path / "transparent.png"
+    Image.new("RGBA", (10, 20), (255, 0, 0, 100)).save(source)
+
+    payload = pdf._form_image_bytes(  # pylint: disable=W0212
+        str(source), FakeRect(144, 288), dpi=200, quality=80
+    )
+
+    with Image.open(io.BytesIO(payload)) as image:
+        assert image.format == "PNG"
+        assert image.size == (10, 20)
+        assert image.mode == "RGBA"
+        assert image.getpixel((0, 0))[3] == 100
+
+
 @pytest.mark.parametrize("dpi", [72, 96])
 def test_compress_file_supports_low_dpi_presets(fake_fitz, dpi):
     fake_fitz["/a.pdf"] = FakeDoc(page_count=1)
@@ -1155,6 +1183,21 @@ def test_inspect_pages_classifies_raster_and_formats_metadata(fake_fitz):
     ]
 
 
+def test_inspect_pages_classifies_single_partial_image_as_raster(fake_fitz):
+    fake_fitz["/scan.pdf"] = FakeDoc(
+        page_count=1,
+        pages=[
+            FakePage(
+                images=[(11,)],
+                image_rects={11: [FakeRect(100, 100, x0=20, y0=20)]},
+            )
+        ],
+        extracted_images={11: {"width": 400, "height": 400}},
+    )
+
+    assert pdf.inspect_pages("/scan.pdf")[0]["type"] == "raster"
+
+
 def test_inspect_pages_formats_different_dpi_per_axis(fake_fitz):
     page_rect = FakeRect(72, 72)
     fake_fitz["/scan.pdf"] = FakeDoc(
@@ -1334,6 +1377,21 @@ def test_command_pdf_form_does_not_report_failed_output(monkeypatch):
     )
 
     assert calls == []
+
+
+def test_command_pdf_form_forwards_quality(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        pdf,
+        "form_files",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or False,
+    )
+
+    helpers.command_pdf_form(
+        "/root", "formed.pdf", ["scan.pdf"], paper_format="a4", quality=37
+    )
+
+    assert calls[0][1]["quality"] == 37
 
 
 def test_scale_file_uses_default_output_name_and_a4_portrait(fake_fitz):

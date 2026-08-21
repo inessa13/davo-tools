@@ -12,8 +12,11 @@ pages fit an explicitly requested A4, A5, A6, or centimetre-based paper size.
 - Each source page selects portrait or landscape independently, keeps its
   aspect ratio, is centered, and is never cropped. PDF and DPI-tagged images
   are not enlarged.
-- PDF source pages remain vector placements. Embedded rasters above the chosen
-  target DPI are downsampled with JPEG quality 80.
+- PDF source pages remain vector placements. JPEG, PNG, and BMP inputs are
+  resized before insertion to no more than the selected DPI at their actual
+  placed size; low-resolution inputs are never enlarged. JPEG quality defaults
+  to 80 and can be set with `-q/--quality 0..100`; transparent PNGs retain
+  their alpha channel.
 - `-H`, `-Q`, `-M`, `-l`, and `-L` select 400, 300, 200, 150, and 96 DPI;
   `--dpi` accepts 72 through 800 and defaults to 300.
 - The default output is `[first-input]_formed.pdf`. Existing outputs need

@@ -468,12 +468,8 @@ def _classify_page_type(
     if not has_text and not has_vector and raster_count > 1:
         return "multi-raster"
     if not has_text and not has_vector and raster_count == 1:
-        dominant_area = raster_placements[0]["area_pt"]
-        coverage = 0.0
-        if page_area > 0:
-            coverage = dominant_area / page_area
-        if coverage >= raster_coverage_threshold:
-            return "raster"
+        # Margins around a single scan do not make the page mixed.
+        return "raster"
     return "mixed"
 
 
@@ -744,6 +740,50 @@ def _image_source_dimensions(
         return width, height, (float(x_dpi), float(y_dpi))
 
 
+def _form_image_bytes(
+    input_file: str,
+    dest_rect: Any,
+    dpi: int,
+    quality: int,
+) -> bytes:
+    """Encode an image no larger than its placed size at ``dpi``."""
+    from PIL import Image  # noqa pylint: disable=C0415
+
+    width_pt, height_pt = _rect_dimensions(dest_rect)
+    max_width = max(1, int(width_pt * dpi / 72.0))
+    max_height = max(1, int(height_pt * dpi / 72.0))
+    ext = os.path.splitext(input_file)[1].lower()
+
+    with Image.open(input_file) as source:
+        image = source.copy()
+        source_width, source_height = image.size
+        scale = min(
+            1.0,
+            max_width / float(source_width),
+            max_height / float(source_height),
+        )
+        target_size = (
+            max(1, int(source_width * scale)),
+            max(1, int(source_height * scale)),
+        )
+        if target_size != image.size:
+            try:
+                resample = Image.Resampling.LANCZOS
+            except AttributeError:  # pragma: no cover - old Pillow
+                resample = Image.LANCZOS
+            image = image.resize(target_size, resample=resample)
+
+        output = io.BytesIO()
+        if ext in (".jpg", ".jpeg"):
+            if image.mode not in ("RGB", "L", "CMYK"):
+                image = image.convert("RGB")
+            image.save(output, format="JPEG", quality=quality)
+        else:
+            # PNG encoding retains alpha for transparent PNG inputs.
+            image.save(output, format="PNG")
+        return output.getvalue()
+
+
 def _validate_form_sources(
     fitz: Any,
     input_files: Sequence[str],
@@ -795,6 +835,7 @@ def form_files(
     page_size: Optional[Tuple[float, float]] = None,
     paper_format: Optional[str] = None,
     dpi: Any = 300,
+    quality: Any = None,
     verbose: bool = False,
     rewrite: bool = False,
 ) -> bool:
@@ -809,6 +850,7 @@ def form_files(
         normalized_dpi = int(dpi)
         if not 72 <= normalized_dpi <= 800:
             raise ValueError("dpi must be between 72 and 800")
+        normalized_quality = _normalize_compress_quality(quality)
         if page_size is None:
             normalized_format = _normalize_scale_format(paper_format)
             page_size = _PAPER_FORMATS[normalized_format]
@@ -897,10 +939,21 @@ def form_files(
                 )
                 if hasattr(dest_page, "insert_image"):
                     dest_page.insert_image(
-                        dest_rect, filename=input_file, keep_proportion=False
+                        dest_rect,
+                        stream=_form_image_bytes(
+                            input_file, dest_rect, normalized_dpi,
+                            normalized_quality,
+                        ),
+                        keep_proportion=False,
                     )
                 elif hasattr(dest_page, "insertImage"):
-                    dest_page.insertImage(dest_rect, filename=input_file)
+                    dest_page.insertImage(
+                        dest_rect,
+                        stream=_form_image_bytes(
+                            input_file, dest_rect, normalized_dpi,
+                            normalized_quality,
+                        ),
+                    )
                 else:
                     raise RuntimeError(
                         "PyMuPDF page object does not support image "
@@ -915,7 +968,7 @@ def form_files(
                 out_doc.rewrite_images(
                     dpi_threshold=normalized_dpi + 1,
                     dpi_target=normalized_dpi,
-                    quality=_COMPRESS_JPEG_QUALITY,
+                    quality=normalized_quality,
                     lossy=True,
                     lossless=True,
                     bitonal=True,

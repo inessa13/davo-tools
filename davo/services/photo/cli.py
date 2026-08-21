@@ -887,6 +887,14 @@ def init_parser_pdf(
             "--dpi", type=_form_dpi, metavar="N",
             help="target image DPI, from 72 to 800",
         )
+        cmd.add_argument(
+            "-q", "--quality",
+            action="store",
+            type=int,
+            metavar="0..100",
+            default=80,
+            help="jpeg recompression quality 0..100, default %(default)s",
+        )
         add_input_argument(cmd, multiple=True)
         cmd.set_defaults(
             dpi=300,
@@ -897,6 +905,7 @@ def init_parser_pdf(
                 paper_format=namespace.paper_format,
                 size_cm=namespace.size,
                 dpi=namespace.dpi,
+                quality=namespace.quality,
                 rewrite=namespace.rewrite,
                 verbose=namespace.verbose,
             )

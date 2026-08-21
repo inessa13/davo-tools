@@ -1214,6 +1214,7 @@ def command_pdf_form(
     paper_format: str = None,
     size_cm: list = None,
     dpi: int = 300,
+    quality: int = 80,
     verbose: bool = False,
     rewrite: bool = False,
 ):
@@ -1226,6 +1227,7 @@ def command_pdf_form(
         _pdf_path(root, out),
         page_size=page_size,
         dpi=dpi,
+        quality=quality,
         rewrite=rewrite,
         verbose=verbose,
     )

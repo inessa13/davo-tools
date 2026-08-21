@@ -170,6 +170,16 @@ def test_parser_accepts_compact_pdf_form_flags():
     assert namespace.dpi == 200
 
 
+def test_parser_accepts_pdf_form_quality_and_default():
+    default = cli.init_parser().parse_args(["pdf", "form", "-4", "in.jpg"])
+    custom = cli.init_parser().parse_args(
+        ["pdf", "form", "-4", "-q", "37", "in.jpg"]
+    )
+
+    assert default.quality == 80
+    assert custom.quality == 37
+
+
 @pytest.mark.parametrize(
     "arguments",
     [

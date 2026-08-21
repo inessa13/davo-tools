@@ -49,4 +49,6 @@ davo pdf form -s 21 29.7 -o result.pdf *.jpg
 ```
 
 The image-DPI presets are `-H` (400), `-Q` (300), `-M` (200), `-l` (150), and
-`-L` (96); `--dpi N` accepts values from 72 to 800.
+`-L` (96); `--dpi N` accepts values from 72 to 800. Raster inputs are reduced
+to that DPI at their placed size (never enlarged); `-q/--quality 0..100`
+controls JPEG quality and defaults to 80.
