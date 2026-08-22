@@ -900,6 +900,11 @@ def init_parser_pdf(
             action="store_true",
             help="fill page margins with magenta for layout debugging",
         )
+        cmd.add_argument(
+            "-R", "--rename-processed",
+            action="store_true",
+            help="rename each source with a _processed suffix after success",
+        )
         add_input_argument(cmd, multiple=True)
         cmd.set_defaults(
             dpi=300,
@@ -912,6 +917,7 @@ def init_parser_pdf(
                 dpi=namespace.dpi,
                 quality=namespace.quality,
                 debug_fill=namespace.debug_fill,
+                rename_processed=namespace.rename_processed,
                 rewrite=namespace.rewrite,
                 verbose=namespace.verbose,
             )

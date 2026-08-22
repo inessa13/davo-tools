@@ -190,6 +190,17 @@ def test_parser_accepts_pdf_form_debug_fill_and_defaults_to_false():
     assert debug.debug_fill is True
 
 
+@pytest.mark.parametrize("option", ["-R", "--rename-processed"])
+def test_parser_accepts_pdf_form_rename_processed(option):
+    default = cli.init_parser().parse_args(["pdf", "form", "-4", "in.jpg"])
+    renamed = cli.init_parser().parse_args(
+        ["pdf", "form", "-4", option, "in.jpg"]
+    )
+
+    assert default.rename_processed is False
+    assert renamed.rename_processed is True
+
+
 @pytest.mark.parametrize(
     "arguments",
     [

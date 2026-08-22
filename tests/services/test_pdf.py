@@ -2,6 +2,7 @@
 import argparse
 import io
 import types
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -525,6 +526,126 @@ def test_form_files_rejects_unsupported_source_before_creating_result(
 
     assert status is False
     assert fake_fitz["__created__"] == []
+
+
+@pytest.mark.parametrize("extension", [".pdf", ".jpg", ".png", ".bmp"])
+def test_form_files_renames_processed_sources_after_saving(
+    fake_fitz, monkeypatch, tmp_path, extension
+):
+    source = tmp_path / f"input{extension}"
+    if extension == ".pdf":
+        source.write_bytes(b"pdf")
+        fake_fitz[str(source)] = FakeDoc()
+    else:
+        Image.new("RGB", (8, 8), "red").save(source)
+    output = tmp_path / "formed.pdf"
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+
+    status = pdf.form_files(
+        [str(source)], str(output), paper_format="a4", rename_processed=True
+    )
+
+    assert status is True
+    assert fake_fitz["__created__"][0].saved == [
+        (str(output), {"garbage": 3, "deflate": True, "clean": True})
+    ]
+    assert not source.exists()
+    assert source.with_stem(f"{source.stem}_processed").exists()
+
+
+def test_form_files_rejects_already_processed_source_before_creating_result(
+    fake_fitz, tmp_path
+):
+    source = tmp_path / "input_processed.jpg"
+
+    assert not pdf.form_files(
+        [str(source)], str(tmp_path / "formed.pdf"), paper_format="a4",
+        rename_processed=True,
+    )
+    assert fake_fitz["__created__"] == []
+
+
+@pytest.mark.parametrize("rewrite", [False, True])
+def test_form_files_rejects_existing_processed_target_before_saving(
+    fake_fitz, monkeypatch, tmp_path, rewrite
+):
+    source = tmp_path / "input.jpg"
+    target = tmp_path / "input_processed.jpg"
+    source.write_bytes(b"input")
+    target.write_bytes(b"existing")
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+
+    assert not pdf.form_files(
+        [str(source)], str(tmp_path / "formed.pdf"), paper_format="a4",
+        rename_processed=True, rewrite=rewrite,
+    )
+    assert source.read_bytes() == b"input"
+    assert target.read_bytes() == b"existing"
+    assert fake_fitz["__created__"] == []
+
+
+def test_form_files_rejects_processed_target_that_is_output(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "input.jpg"
+    source.write_bytes(b"input")
+    output = tmp_path / "input_processed.jpg"
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+
+    assert not pdf.form_files(
+        [str(source)], str(output), paper_format="a4", rename_processed=True
+    )
+    assert fake_fitz["__created__"] == []
+
+
+def test_form_files_renames_duplicate_source_once(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "input.jpg"
+    Image.new("RGB", (8, 8), "red").save(source)
+    output = tmp_path / "formed.pdf"
+    duplicate_path = f"{tmp_path}/./{source.name}"
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+
+    assert pdf.form_files(
+        [str(source), duplicate_path], str(output), paper_format="a4",
+        rename_processed=True,
+    )
+
+    assert len(fake_fitz["__created__"][0].new_pages) == 2
+    assert not source.exists()
+    assert (tmp_path / "input_processed.jpg").exists()
+
+
+def test_form_files_keeps_source_when_safe_rename_fails(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "input.jpg"
+    Image.new("RGB", (8, 8), "red").save(source)
+    output = tmp_path / "formed.pdf"
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+    monkeypatch.setattr(pdf.os, "link", lambda *_args: (_ for _ in ()).throw(
+        OSError("target changed")
+    ))
+
+    assert not pdf.form_files(
+        [str(source)], str(output), paper_format="a4", rename_processed=True
+    )
+    assert fake_fitz["__created__"][0].saved == [
+        (str(output), {"garbage": 3, "deflate": True, "clean": True})
+    ]
+    assert source.exists()
+    assert not (tmp_path / "input_processed.jpg").exists()
 
 
 def test_form_image_bytes_downsamples_jpeg_to_placed_dpi(tmp_path):
@@ -1467,6 +1588,22 @@ def test_command_pdf_form_forwards_debug_fill(monkeypatch):
     )
 
     assert calls[0][1]["debug_fill"] is True
+
+
+def test_command_pdf_form_forwards_rename_processed(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        pdf,
+        "form_files",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or False,
+    )
+
+    helpers.command_pdf_form(
+        "/root", "formed.pdf", ["scan.pdf"], paper_format="a4",
+        rename_processed=True,
+    )
+
+    assert calls[0][1]["rename_processed"] is True
 
 
 def test_scale_file_uses_default_output_name_and_a4_portrait(fake_fitz):

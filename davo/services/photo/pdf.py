@@ -829,6 +829,70 @@ def _document_has_images_over_dpi(doc: Any, dpi: int) -> bool:
     return False
 
 
+def _processed_form_path(input_file: str) -> str:
+    """Return the name used to mark a form source as processed."""
+    stem, ext = os.path.splitext(input_file)
+    return f"{stem}_processed{ext}"
+
+
+def _plan_form_processed_renames(
+    input_files: Iterable[str], output_path: str
+) -> Optional[List[Tuple[str, str]]]:
+    """Validate and de-duplicate form source renames before saving output."""
+    planned = []
+    seen_sources = set()
+    for input_file in input_files:
+        source_key = os.path.normcase(
+            os.path.realpath(os.path.abspath(input_file))
+        )
+        if source_key in seen_sources:
+            continue
+        seen_sources.add(source_key)
+
+        stem, _ = os.path.splitext(input_file)
+        if stem.endswith("_processed"):
+            logger.error(
+                "pdf.form: source is already marked as processed: %s",
+                input_file,
+            )
+            return None
+
+        processed_path = _processed_form_path(input_file)
+        if os.path.exists(processed_path):
+            logger.error(
+                "pdf.form: processed target already exists: %s",
+                processed_path,
+            )
+            return None
+        if _paths_refer_to_same_file(processed_path, output_path):
+            logger.error(
+                "pdf.form: processed target conflicts with output: %s",
+                processed_path,
+            )
+            return None
+        planned.append((input_file, processed_path))
+    return planned
+
+
+def _rename_processed_form_sources(
+    renames: Iterable[Tuple[str, str]]
+) -> bool:
+    """Atomically claim every processed name without overwriting it."""
+    for source_path, processed_path in renames:
+        try:
+            os.link(source_path, processed_path)
+            os.unlink(source_path)
+        except OSError as exc:
+            logger.error(
+                "pdf.form: failed to rename processed source %s to %s: %s",
+                source_path,
+                processed_path,
+                exc,
+            )
+            return False
+    return True
+
+
 def form_files(
     input_files: Iterable[str],
     output_path: Optional[str],
@@ -837,6 +901,7 @@ def form_files(
     dpi: Any = 300,
     quality: Any = None,
     debug_fill: bool = False,
+    rename_processed: bool = False,
     verbose: bool = False,
     rewrite: bool = False,
 ) -> bool:
@@ -868,6 +933,12 @@ def form_files(
         "form", files, [output_path], rewrite=rewrite
     ):
         return False
+
+    renames = []
+    if rename_processed:
+        renames = _plan_form_processed_renames(files, output_path)
+        if renames is None:
+            return False
 
     fitz = _import_fitz("form creation")
     if not _validate_form_sources(fitz, files, verbose):
@@ -989,6 +1060,9 @@ def form_files(
             out_doc.save(output_path, garbage=3, deflate=True, clean=True)
     except (OSError, RuntimeError, ValueError) as exc:
         logger.error("pdf.form: failed to form pdf %s", str(exc))
+        return False
+
+    if rename_processed and not _rename_processed_form_sources(renames):
         return False
 
     return True

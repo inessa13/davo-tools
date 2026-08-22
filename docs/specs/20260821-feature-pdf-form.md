@@ -23,6 +23,9 @@ pages fit an explicitly requested A4, A5, A6, or centimetre-based paper size.
   making page margins and transparent PNG areas visible.
 - The default output is `[first-input]_formed.pdf`. Existing outputs need
   `-W/--rewrite`; output may never be an input file.
+- `-R/--rename-processed` renames each unique input to add `_processed` before
+  its extension only after the output PDF has been saved. Existing processed
+  names, already processed inputs, and output-name conflicts are rejected.
 - All inputs are validated before the result document is created.
 
 Examples:
@@ -32,4 +35,5 @@ davo pdf form -4M file.jpg
 davo pdf form -5 *.pdf
 davo pdf form -s 21 29.7 -o result.pdf *.jpg
 davo pdf form -4 --debug-fill file.jpg
+davo pdf form -4 -R file.jpg
 ```
