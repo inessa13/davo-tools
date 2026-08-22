@@ -83,3 +83,15 @@ Without `-o`, the output is named from the first input (for example,
 magenta. `--smart` detects a strong edge overlap between each adjacent pair;
 it supports only equal widths for vertical stacks and equal heights for
 horizontal rows.
+
+## Image metadata
+
+`davo im info` reads image metadata without changing the source files. It
+accepts one or more direct image paths in the supplied order.
+Without paths, it inspects the current directory as if `*` had been passed.
+
+```bash
+davo im info photo.jpg
+davo im info -e photo.jpg                 # Date and Camera columns
+davo im info --exif-full photo.jpg        # all readable EXIF tags
+```

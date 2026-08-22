@@ -67,6 +67,7 @@ def init_parser():
             "downscale",
             "fp",
             "diff",
+            "info",
             "merge",
         ),
     )

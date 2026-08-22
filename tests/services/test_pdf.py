@@ -1143,7 +1143,6 @@ def test_init_parser_pdf_accepts_positional_inputs_and_options(
         "clean",
         "compress",
         "extract",
-        "info",
         "scale",
     ],
 )
@@ -1676,6 +1675,48 @@ def test_init_parser_pdf_info_passes_all_inputs_and_pages(monkeypatch):
             "compact": True,
         }
     ]
+
+
+def test_init_parser_pdf_info_accepts_no_input_files(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        helpers, "command_pdf_info", lambda **kwargs: calls.append(kwargs)
+    )
+    parser = argparse.ArgumentParser()
+    photo_cli.init_parser_pdf(parser)
+
+    namespace = parser.parse_args(["info"])
+    namespace.func(namespace)
+
+    assert calls == [
+        {
+            "root": None,
+            "inf": [],
+            "pages": None,
+            "verbose": False,
+            "pt": False,
+            "table": False,
+            "compact": False,
+        }
+    ]
+
+
+def test_command_pdf_info_expands_empty_input_to_current_directory(
+    monkeypatch,
+):
+    inspected = []
+    monkeypatch.setattr(
+        helpers.glob, "glob", lambda _pattern: ["b.pdf", "a.pdf"]
+    )
+    monkeypatch.setattr(
+        pdf,
+        "inspect_pages",
+        lambda path, **_kwargs: inspected.append(path) or None,
+    )
+
+    helpers.command_pdf_info(None, [])
+
+    assert inspected == ["a.pdf", "b.pdf"]
 
 
 def test_command_pdf_info_prints_named_reports_in_order(monkeypatch, capsys):

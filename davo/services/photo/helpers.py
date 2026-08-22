@@ -1,4 +1,5 @@
 import datetime
+import glob
 import logging
 import math
 import os
@@ -22,7 +23,7 @@ try:
 except ImportError:
     pass
 
-from . import clients, fingerprint, pdf, replace_classes, utils
+from . import clients, fingerprint, image_info, pdf, replace_classes, utils
 
 logger = logging.getLogger(__name__)
 
@@ -664,6 +665,91 @@ def command_downscale(
 
 def command_fingerprint(image: str):
     print(fingerprint.format_fingerprint(image))
+
+
+def command_image_info(
+    images: list[str],
+    verbose: bool = False,
+    table: bool = False,
+    compact: bool = False,
+    exif: bool = False,
+    exif_full: bool = False,
+):
+    """Print readonly Pillow metadata for image paths in argv order."""
+    if not images:
+        images = sorted(glob.glob("*"))
+
+    inspections = []
+    total_images = len(images)
+    for index, input_file in enumerate(images, start=1):
+        row = image_info.inspect_image(input_file, verbose=verbose)
+        if row is not None:
+            row["image"] = index
+            row["total_images"] = total_images
+            inspections.append((input_file, row))
+
+    if not inspections:
+        return
+
+    image_number_width = max(
+        len(str(total_images)),
+        len(str(max(row["image"] for _, row in inspections))),
+    )
+    include_exif = exif
+
+    if compact and not exif_full:
+        print(
+            image_info.format_image_info_report(
+                [row for _, row in inspections],
+                table=table,
+                compact=True,
+                include_exif=include_exif,
+                image_number_width=image_number_width,
+            )
+        )
+        return
+
+    if compact and table and exif_full:
+        report = image_info.format_image_info_report(
+            [row for _, row in inspections],
+            table=True,
+            compact=True,
+            image_number_width=image_number_width,
+        )
+        blocks = []
+        for _, row in inspections:
+            exif_block = image_info.format_exif_block(row)
+            if exif_block:
+                width = image_number_width
+                number = "{image:0{width}d}/{total:0{width}d}".format(
+                    image=row["image"],
+                    total=row["total_images"],
+                    width=width,
+                )
+                blocks.append("{}\n{}".format(number, exif_block))
+        print("\n".join((report, *blocks)))
+        return
+
+    reports = []
+    for input_file, row in inspections:
+        report = image_info.format_image_info_report(
+            [row],
+            table=table,
+            compact=compact,
+            include_exif=include_exif,
+            image_number_width=image_number_width,
+        )
+        if not compact:
+            report = "{}\n{}".format(
+                os.path.relpath(input_file, os.getcwd()), report
+            )
+        if exif_full:
+            exif_block = image_info.format_exif_block(row)
+            if exif_block:
+                report = "{}\n{}".format(report, exif_block)
+        reports.append(report)
+
+    print(("\n" if compact else "\n\n").join(reports))
 
 
 def command_image_merge(
@@ -1469,7 +1555,9 @@ def command_pdf_info(
     compact: bool = False,
     show_paths: bool = True,
 ):
-    input_files = [inf] if isinstance(inf, str) else inf
+    input_files = [inf] if isinstance(inf, str) else inf or []
+    if not input_files:
+        input_files = sorted(glob.glob("*"))
     inspections = []
     for input_file in input_files:
         input_path = _pdf_path(root, input_file)

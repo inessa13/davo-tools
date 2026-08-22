@@ -494,6 +494,49 @@ def init_parser(parser=None, subparsers=None, commands=()):
             )
         )
 
+    if not commands or "info" in commands:
+        cmd = subparsers.add_parser(
+            "info",
+            help="show image metadata (Pillow)",
+        )
+        cmd.add_argument("-v", "--verbose", action="store_true")
+        cmd.add_argument(
+            "-t",
+            "--table",
+            action="store_true",
+            help="print an ASCII table",
+        )
+        cmd.add_argument(
+            "-c",
+            "--compact",
+            action="store_true",
+            help="print image rows without file names or column headers",
+        )
+        exif_group = cmd.add_mutually_exclusive_group()
+        exif_group.add_argument(
+            "-e",
+            "--exif",
+            action="store_true",
+            help="include basic EXIF date and camera columns",
+        )
+        exif_group.add_argument(
+            "-E",
+            "--exif-full",
+            action="store_true",
+            help="print all available EXIF tags after each image",
+        )
+        cmd.add_argument("images", metavar="IMAGE", nargs="*")
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_image_info(
+                images=namespace.images,
+                verbose=namespace.verbose,
+                table=namespace.table,
+                compact=namespace.compact,
+                exif=namespace.exif,
+                exif_full=namespace.exif_full,
+            )
+        )
+
     if not commands or "merge" in commands:
         cmd = subparsers.add_parser(
             "merge",
@@ -1021,7 +1064,10 @@ def init_parser_pdf(
             parents=parents,
             help="pdf: show page metadata (PyMuPDF)",
         )
-        add_input_argument(cmd, multiple=not legacy)
+        if legacy:
+            add_input_argument(cmd, multiple=True)
+        else:
+            cmd.add_argument("inf", nargs="*", metavar="INPUT")
         cmd.add_argument(
             "-p",
             "--pages",

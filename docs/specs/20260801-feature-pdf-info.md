@@ -25,8 +25,9 @@ and page size without writing a new PDF file.
 ## Command contract
 
 - Command name: `davo pdf info`
-- Required positional argument:
-  - `INPUT` for the source PDF file
+- Optional positional arguments:
+  - `INPUT [INPUT ...]` for source PDF files. With no inputs, inspect the
+    current directory contents as if `*` had been passed.
 - Optional flags:
   - `-p N1 N2 ... NX` for explicit source PDF page numbers to inspect
   - `--pt` to show non-standard page sizes in points instead of millimetres
