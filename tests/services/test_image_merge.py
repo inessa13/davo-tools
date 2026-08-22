@@ -1,3 +1,4 @@
+import numpy
 import pytest
 from PIL import Image
 
@@ -183,13 +184,105 @@ def test_smart_merge_rejects_no_overlap_without_output(tmp_path, vertical):
     assert not output.exists()
 
 
-@pytest.mark.parametrize("vertical", [True, False])
-def test_smart_merge_rejects_mismatched_cross_axis(tmp_path, vertical):
-    first = _image(tmp_path / "first.png", (32, 64), "red", "RGB")
-    second = _image(tmp_path / "second.png", (64, 32), "blue", "RGB")
-
-    with pytest.raises(errors.UserError, match="equal"):
-        helpers.command_image_merge(
-            [str(first), str(second)], vertical, str(tmp_path / "out.png"),
-            smart=True,
+def _scaled_overlap_images(tmp_path, vertical, cross_shift, scale=1.06):
+    """Create two views of one noisy scene with known scale and offset."""
+    random = numpy.random.default_rng(42)
+    scene = Image.fromarray(
+        random.integers(0, 256, size=(340, 340, 3), dtype="uint8"), "RGB"
+    )
+    if vertical:
+        first = scene.crop((110, 0, 230, 170))
+        canonical_second = scene.crop(
+            (110 + cross_shift, 130, 110 + cross_shift + 106, 290)
         )
+    else:
+        first = scene.crop((0, 110, 170, 230))
+        canonical_second = scene.crop(
+            (130, 110 + cross_shift, 290, 110 + cross_shift + 106)
+        )
+    source_second = canonical_second.resize(
+        (round(canonical_second.width / scale),
+         round(canonical_second.height / scale)),
+        Image.Resampling.LANCZOS,
+    )
+    first_path = tmp_path / "first.png"
+    second_path = tmp_path / "second.png"
+    first.save(first_path)
+    source_second.save(second_path)
+    return first_path, second_path
+
+
+@pytest.mark.skipif(helpers.cv2 is None, reason="OpenCV is not installed")
+@pytest.mark.parametrize("vertical", [True, False])
+@pytest.mark.parametrize("cross_shift", [-10, 10])
+def test_smart_merge_aligns_scale_and_cross_axis_shift(
+    tmp_path, vertical, cross_shift
+):
+    first, second = _scaled_overlap_images(tmp_path, vertical, cross_shift)
+    output = tmp_path / "result.png"
+
+    helpers.command_image_merge(
+        [str(first), str(second)], vertical, str(output), smart=True
+    )
+
+    with Image.open(output) as result:
+        if vertical:
+            assert result.size == (
+                (130, 290) if cross_shift < 0 else (120, 290)
+            )
+        elif cross_shift < 0:
+            assert result.size == (290, 130)
+        else:
+            assert result.size == (290, 120)
+        assert result.getchannel("A").getbbox() == (0, 0, *result.size)
+
+
+@pytest.mark.skipif(helpers.cv2 is None, reason="OpenCV is not installed")
+def test_smart_merge_accumulates_three_scaled_frame_offsets(tmp_path):
+    random = numpy.random.default_rng(84)
+    scene = Image.fromarray(
+        random.integers(0, 256, size=(340, 500, 3), dtype="uint8"), "RGB"
+    )
+    first = scene.crop((0, 110, 170, 230))
+    second = scene.crop((130, 120, 290, 226))
+    third = scene.crop((250, 115, 410, 221))
+    source_frames = [
+        frame.resize(
+            (round(frame.width / 1.06), round(frame.height / 1.06)),
+            Image.Resampling.LANCZOS,
+        )
+        for frame in (second, third)
+    ]
+    paths = []
+    for index, frame in enumerate((first, *source_frames)):
+        path = tmp_path / "frame-{}.png".format(index)
+        frame.save(path)
+        paths.append(str(path))
+    output = tmp_path / "result.png"
+
+    helpers.command_image_merge(paths, False, str(output), smart=True)
+
+    with Image.open(output) as result:
+        assert result.size == (410, 120)
+        assert result.getchannel("A").getbbox() == (0, 0, 410, 120)
+
+
+@pytest.mark.skipif(helpers.cv2 is None, reason="OpenCV is not installed")
+@pytest.mark.parametrize(
+    ("cross_shift", "scale"),
+    [(20, 1.06), (0, 1.13)],
+)
+def test_smart_merge_rejects_excessive_shift_or_scale(
+    tmp_path, cross_shift, scale
+):
+    first, second = _scaled_overlap_images(
+        tmp_path, False, cross_shift, scale=scale
+    )
+    output = tmp_path / "result.png"
+
+    with pytest.raises(errors.UserError, match="No strong overlap"):
+        helpers.command_image_merge(
+            [str(first), str(second)], False, str(output), smart=True
+        )
+
+    assert not output.exists()

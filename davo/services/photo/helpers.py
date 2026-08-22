@@ -770,7 +770,9 @@ def command_image_merge(
     _validate_merge_output(output_path, images)
 
     if smart:
-        offsets, size = _smart_merge_layout(loaded_images, vertical)
+        loaded_images, offsets, size = _smart_merge_layout(
+            loaded_images, vertical
+        )
     else:
         offsets, size = _plain_merge_layout(loaded_images, vertical)
 
@@ -876,55 +878,179 @@ def _plain_merge_layout(images, vertical):
 
 
 def _smart_merge_layout(images, vertical):
-    cross_axis = [
-        image.width if vertical else image.height for image in images
-    ]
-    if len(set(cross_axis)) != 1:
-        axis = "width" if vertical else "height"
-        raise errors.UserError(
-            "Smart {} merge requires images with equal {}".format(
-                "vertical" if vertical else "horizontal", axis
-            )
-        )
     if cv2 is None:
         raise errors.UserError("Smart merge requires OpenCV")
 
+    aligned_images = [images[0]]
     offsets = [(0, 0)]
-    position = 0
-    for previous, current in zip(images, images[1:]):
-        overlap = _find_merge_overlap(previous, current, vertical)
-        if overlap is None:
+    for current in images[1:]:
+        previous = aligned_images[-1]
+        registration = _find_merge_registration(previous, current, vertical)
+        if registration is None:
             raise errors.UserError(
                 "No strong overlap found between adjacent images"
             )
-        position += (previous.height if vertical else previous.width) - overlap
-        offsets.append((0, position) if vertical else (position, 0))
+        scaled, translation = registration
+        previous_offset = offsets[-1]
+        offsets.append(
+            (
+                previous_offset[0] + translation[0],
+                previous_offset[1] + translation[1],
+            )
+        )
+        aligned_images.append(scaled)
 
-    if vertical:
-        return offsets, (images[0].width, position + images[-1].height)
-    return offsets, (position + images[-1].width, images[0].height)
+    left = min(offset[0] for offset in offsets)
+    top = min(offset[1] for offset in offsets)
+    right = max(
+        offset[0] + image.width
+        for image, offset in zip(aligned_images, offsets)
+    )
+    bottom = max(
+        offset[1] + image.height
+        for image, offset in zip(aligned_images, offsets)
+    )
+    normalized_offsets = [
+        (offset[0] - left, offset[1] - top) for offset in offsets
+    ]
+    return aligned_images, normalized_offsets, (right - left, bottom - top)
 
 
-def _find_merge_overlap(previous, current, vertical):
+def _find_merge_registration(previous, current, vertical):
+    """Return a scaled current image and its origin relative to *previous*."""
+    best = _find_merge_scale(
+        previous, current, vertical, _merge_scale_values()
+    )
+    if best is None:
+        return None
+
+    scale, _score, _translation, _scaled = best
+    refinement = _merge_scale_values(scale - 0.01, scale + 0.01, 0.002)
+    refined = _find_merge_scale(previous, current, vertical, refinement)
+    if refined is not None:
+        best = refined
+    _scale, _score, translation, scaled = best
+    return scaled, translation
+
+
+def _merge_scale_values(start=0.90, stop=1.10, step=0.01):
+    values = []
+    value = max(0.90, start)
+    while value <= min(1.10, stop) + 0.000001:
+        values.append(round(value, 3))
+        value += step
+    return values
+
+
+def _find_merge_scale(previous, current, vertical, scales):
     previous_gray = _merge_gray(previous)
-    current_gray = _merge_gray(current)
-    axis_length = min(
-        previous.height if vertical else previous.width,
-        current.height if vertical else current.width,
+    best = None
+    best_score = -1
+    for scale in scales:
+        scaled = _scale_merge_image(current, scale)
+        registration = _find_merge_translation(
+            previous_gray, _merge_gray(scaled), vertical
+        )
+        if registration is None:
+            continue
+        score, translation = registration
+        if score > best_score:
+            best = (scale, score, translation, scaled)
+            best_score = score
+    return best
+
+
+def _scale_merge_image(image, scale):
+    size = (
+        max(1, round(image.width * scale)),
+        max(1, round(image.height * scale)),
     )
-    probe = min(64, axis_length)
-    if probe < 16:
+    return image.resize(size, Image.Resampling.LANCZOS)
+
+
+def _find_merge_translation(previous, current, vertical):
+    """Find a consensus edge translation using three independent probes."""
+    previous_main = previous.shape[0] if vertical else previous.shape[1]
+    current_main = current.shape[0] if vertical else current.shape[1]
+    previous_cross = previous.shape[1] if vertical else previous.shape[0]
+    current_cross = current.shape[1] if vertical else current.shape[0]
+    # A 16-pixel probe permits the deliberately small overlaps this command is
+    # intended for.  Several cross-axis probes provide the needed
+    # protection against a coincidental short match.
+    probe_main = min(16, current_main, previous_main)
+    if probe_main < 16 or min(previous_cross, current_cross) < 16:
         return None
 
-    template = current_gray[:probe, :] if vertical else current_gray[:, :probe]
-    match = cv2.matchTemplate(
-        previous_gray, template, cv2.TM_CCOEFF_NORMED
-    )
-    _minimum, score, _minimum_location, location = cv2.minMaxLoc(match)
-    if score < 0.98:
+    matches = []
+    for start, end in _merge_probe_ranges(current_cross):
+        template = (
+            current[:probe_main, start:end]
+            if vertical
+            else current[start:end, :probe_main]
+        )
+        if (
+            template.shape[0] > previous.shape[0]
+            or template.shape[1] > previous.shape[1]
+        ):
+            continue
+        _minimum, score, _minimum_location, location = cv2.minMaxLoc(
+            cv2.matchTemplate(previous, template, cv2.TM_CCOEFF_NORMED)
+        )
+        if not numpy.isfinite(score) or score < 0.90:
+            continue
+        translation = (
+            location[0] - (start if vertical else 0),
+            location[1] - (0 if vertical else start),
+        )
+        matches.append((score, translation))
+
+    if len(matches) < 3:
         return None
-    start = location[1] if vertical else location[0]
-    return (previous.height if vertical else previous.width) - start
+    translations = [translation for _score, translation in matches]
+    median = tuple(
+        int(
+            round(
+                numpy.median(
+                    [translation[axis] for translation in translations]
+                )
+            )
+        )
+        for axis in (0, 1)
+    )
+    matches = [
+        (score, translation)
+        for score, translation in matches
+        if (
+            abs(translation[0] - median[0]) <= 2
+            and abs(translation[1] - median[1]) <= 2
+        )
+    ]
+    if len(matches) < 3:
+        return None
+
+    main_translation = median[1] if vertical else median[0]
+    cross_translation = median[0] if vertical else median[1]
+    cross_limit = min(256, max(previous_cross, current_cross) // 10)
+    if (
+        main_translation <= 0
+        or main_translation >= previous_main
+        or abs(cross_translation) > cross_limit
+    ):
+        return None
+    return numpy.mean([score for score, _translation in matches]), median
+
+
+def _merge_probe_ranges(cross_axis):
+    probe = max(8, cross_axis // 4)
+    probe = min(probe, cross_axis)
+    maximum_start = cross_axis - probe
+    return [
+        (
+            round(maximum_start * fraction),
+            round(maximum_start * fraction) + probe,
+        )
+        for fraction in (0.1, 0.3, 0.5, 0.7, 0.9)
+    ]
 
 
 def _merge_gray(image):

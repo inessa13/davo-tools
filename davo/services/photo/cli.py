@@ -562,9 +562,10 @@ def init_parser(parser=None, subparsers=None, commands=()):
             help="fill unused and transparent areas with magenta",
         )
         cmd.add_argument(
+            "-S",
             "--smart",
             action="store_true",
-            help="remove strong overlaps between adjacent images",
+            help="align adjacent overlaps, sideways shifts, and scale",
         )
         cmd.add_argument("images", metavar="IMAGE", nargs="+")
         cmd.set_defaults(

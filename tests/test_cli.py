@@ -131,6 +131,18 @@ def test_parser_passes_options_to_image_merge_handler(mocker):
     )
 
 
+@pytest.mark.parametrize("smart_option", ["-S", "--smart"])
+def test_parser_accepts_each_smart_merge_option(mocker, smart_option):
+    handler = mocker.patch.object(photo_cli.helpers, "command_image_merge")
+    namespace = cli.init_parser().parse_args(
+        ["im", "merge", "-V", smart_option, "first.png", "second.png"]
+    )
+
+    namespace.func(namespace)
+
+    assert handler.call_args.kwargs["smart"] is True
+
+
 @pytest.mark.parametrize(
     "arguments",
     [

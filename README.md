@@ -75,14 +75,15 @@ for a horizontal row. Smaller images are centred in the unused cross-axis area.
 davo im merge -V first.png second.png
 davo im merge -H -o panorama.jpg left.jpg right.jpg
 davo im merge -V --debug-fill -o review.png *.png
-davo im merge -V --smart screenshot-1.png screenshot-2.png
+davo im merge -V -S screenshot-1.png screenshot-2.png
 ```
 
 Without `-o`, the output is named from the first input (for example,
 `first_merged.png`). `--debug-fill` paints unused and transparent areas
-magenta. `--smart` detects a strong edge overlap between each adjacent pair;
-it supports only equal widths for vertical stacks and equal heights for
-horizontal rows.
+magenta. `-S/--smart` detects a strong edge overlap between each adjacent
+pair, allowing a small sideways shift and a uniform scale difference of up to
+10%. It preserves all outer edges on a transparently padded canvas (or a white
+one for JPEG output).
 
 ## Image metadata
 
