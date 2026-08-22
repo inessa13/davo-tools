@@ -13,6 +13,16 @@ from . import helpers
 logger = logging.getLogger(__name__)
 
 
+def _form_dpi(value):
+    try:
+        dpi = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("DPI must be an integer") from exc
+    if not 72 <= dpi <= 800:
+        raise argparse.ArgumentTypeError("DPI must be from 72 to 800")
+    return dpi
+
+
 def init_parser(parser=None, subparsers=None, commands=()):
     if parser is None:
         parser = argparse.ArgumentParser()
@@ -44,7 +54,6 @@ def init_parser(parser=None, subparsers=None, commands=()):
     p_root.add_argument("path", nargs="?", default=os.getcwd())
 
     p_common = [p_root, p_recursive, p_commit, p_silent]
-    p_prcvs = [p_root, p_recursive, p_commit, p_verbose, p_silent]
 
     if subparsers is None:
         subparsers = parser.add_subparsers(title="list of commands")
@@ -162,7 +171,9 @@ def init_parser(parser=None, subparsers=None, commands=()):
 
     if not commands or "thumbnail" in commands:
         cmd = subparsers.add_parser(
-            "thumbnail", parents=p_common, help="prepare thumbnails"
+            "thumbnail",
+            parents=[p_root, p_recursive, p_commit],
+            help="prepare thumbnails",
         )
         cmd.add_argument(
             "-s",
@@ -263,83 +274,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
         )
 
     if not commands or "clips" in commands:
-        cmd = subparsers.add_parser(
-            "clips-convert", parents=p_prcvs, help="convert video (ffmpeg)"
-        )
-        cmd.add_argument("-R", "--replace-pattern", default="[source].[Ext]")
-        cmd.add_argument("-t", "--thumbnail", type=int)
-        cmd.set_defaults(
-            func=lambda namespace: helpers.command_convert_video(
-                root=namespace.path,
-                replace=namespace.replace_pattern,
-                recursive=namespace.recursive,
-                thumbnail=namespace.thumbnail,
-                verbose=namespace.verbose,
-                silent=namespace.silent,
-                commit=namespace.commit,
-            )
-        )
-
-        cmd = subparsers.add_parser(
-            "clips-split",
-            parents=[p_commit, p_silent, p_verbose],
-            help="split video to clips (ffmpeg)",
-        )
-        cmd.add_argument("path")
-        cmd.add_argument("-e", "--ext", action="store")
-        cmd.add_argument("points", nargs="+")
-        cmd.set_defaults(
-            func=lambda namespace: helpers.command_clips_split(
-                root=namespace.path,
-                points=namespace.points,
-                ext=namespace.ext,
-                verbose=namespace.verbose,
-                silent=namespace.silent,
-                commit=namespace.commit,
-            )
-        )
-
-        cmd = subparsers.add_parser(
-            "clips-trim", parents=p_prcvs, help="trim video (ffmpeg)"
-        )
-        cmd.add_argument("--ss", action="store")
-        cmd.add_argument("--to", action="store")
-        cmd.set_defaults(
-            func=lambda namespace: helpers.command_clips_trim(
-                root=namespace.path,
-                recursive=namespace.recursive,
-                ss=namespace.ss,
-                to=namespace.to,
-                verbose=namespace.verbose,
-                commit=namespace.commit,
-            )
-        )
-
-        cmd = subparsers.add_parser(
-            "clips-web", parents=p_prcvs, help="encode +faststart (ffmpeg)"
-        )
-        cmd.set_defaults(
-            func=lambda namespace: helpers.command_clips_web(
-                root=namespace.path,
-                recursive=namespace.recursive,
-                verbose=namespace.verbose,
-                silent=namespace.silent,
-                commit=namespace.commit,
-            )
-        )
-
-        cmd = subparsers.add_parser(
-            "clips-isweb",
-            parents=[p_root, p_recursive, p_silent],
-            help="check is video encoded with +faststart (ffmpeg)",
-        )
-        cmd.set_defaults(
-            func=lambda namespace: helpers.command_clips_check_web(
-                root=namespace.path,
-                recursive=namespace.recursive,
-                silent=namespace.silent,
-            )
-        )
+        init_parser_clips(parser, subparsers, prefix="clips-")
 
     if not commands or "iphone-clean-live" in commands:
         cmd = subparsers.add_parser(
@@ -500,6 +435,65 @@ def init_parser(parser=None, subparsers=None, commands=()):
             )
         )
 
+    if not commands or "fp" in commands:
+        cmd = subparsers.add_parser(
+            "fp",
+            help="print image feature vector and pHash",
+        )
+        cmd.add_argument("image", metavar="IMAGE")
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_fingerprint(
+                image=namespace.image,
+            )
+        )
+
+    if not commands or "diff" in commands:
+        cmd = subparsers.add_parser(
+            "diff",
+            help="compare image features or file sizes",
+        )
+        cmd.add_argument(
+            "-r",
+            "--recursive",
+            action="store_true",
+            help="scan directories recursively",
+        )
+        cmd.add_argument(
+            "-t",
+            "--table",
+            action="store_true",
+            help="print an ASCII table instead of TSV",
+        )
+        cmd.add_argument(
+            "-a",
+            "--all",
+            action="store_true",
+            help="include pairs with different status",
+        )
+        cmd.add_argument(
+            "-f",
+            "--fast",
+            action="store_true",
+            help="compare image file sizes without reading image contents",
+        )
+        cmd.add_argument(
+            "-g",
+            "--group",
+            action="store_true",
+            help="group folders with matching images",
+        )
+        cmd.add_argument("images", metavar="IMAGE", nargs="+")
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_fingerprint_diff(
+                images=namespace.images,
+                recursive=namespace.recursive,
+                table=namespace.table,
+                show_all=namespace.all,
+                fast=namespace.fast,
+                group=namespace.group,
+            )
+        )
+
     if not commands or "pdf" in commands:
         init_parser_pdf(
             parser,
@@ -514,6 +508,122 @@ def init_parser(parser=None, subparsers=None, commands=()):
         )
 
     return parser, subparsers
+
+
+def init_parser_clips(parser=None, subparsers=None, prefix=""):
+    """Register video commands with either grouped or legacy names."""
+    if parser is None:
+        parser = argparse.ArgumentParser()
+
+    p_recursive = argparse.ArgumentParser(add_help=False)
+    p_recursive.add_argument(
+        "-r", "--recursive", action="store_true", help="recursive scan"
+    )
+
+    p_commit = argparse.ArgumentParser(add_help=False)
+    p_commit.add_argument(
+        "-c", "--commit", action="store_true", help="commit mode"
+    )
+
+    p_verbose = argparse.ArgumentParser(add_help=False)
+    p_verbose.add_argument("-v", "--verbose", action="store_true")
+
+    p_silent = argparse.ArgumentParser(add_help=False)
+    p_silent.add_argument("-s", "--silent", action="store_true")
+
+    p_root = argparse.ArgumentParser(add_help=False)
+    p_root.add_argument("path", nargs="?", default=os.getcwd())
+    p_prcvs = [p_root, p_recursive, p_commit, p_verbose, p_silent]
+
+    if subparsers is None:
+        subparsers = parser.add_subparsers(title="list of commands")
+
+    def command_name(name):
+        return "{}{}".format(prefix, name)
+
+    cmd = subparsers.add_parser(
+        command_name("convert"),
+        parents=p_prcvs,
+        help="convert video (ffmpeg)",
+    )
+    cmd.add_argument("-R", "--replace-pattern", default="[source].[Ext]")
+    cmd.add_argument("-t", "--thumbnail", type=int)
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_convert_video(
+            root=namespace.path,
+            replace=namespace.replace_pattern,
+            recursive=namespace.recursive,
+            thumbnail=namespace.thumbnail,
+            verbose=namespace.verbose,
+            silent=namespace.silent,
+            commit=namespace.commit,
+        )
+    )
+
+    cmd = subparsers.add_parser(
+        command_name("split"),
+        parents=[p_commit, p_silent, p_verbose],
+        help="split video to clips (ffmpeg)",
+    )
+    cmd.add_argument("path")
+    cmd.add_argument("-e", "--ext", action="store")
+    cmd.add_argument("points", nargs="+")
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_clips_split(
+            root=namespace.path,
+            points=namespace.points,
+            ext=namespace.ext,
+            verbose=namespace.verbose,
+            silent=namespace.silent,
+            commit=namespace.commit,
+        )
+    )
+
+    cmd = subparsers.add_parser(
+        command_name("trim"),
+        parents=p_prcvs,
+        help="trim video (ffmpeg)",
+    )
+    cmd.add_argument("--ss", action="store")
+    cmd.add_argument("--to", action="store")
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_clips_trim(
+            root=namespace.path,
+            recursive=namespace.recursive,
+            ss=namespace.ss,
+            to=namespace.to,
+            verbose=namespace.verbose,
+            commit=namespace.commit,
+        )
+    )
+
+    cmd = subparsers.add_parser(
+        command_name("web"),
+        parents=p_prcvs,
+        help="encode +faststart (ffmpeg)",
+    )
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_clips_web(
+            root=namespace.path,
+            recursive=namespace.recursive,
+            verbose=namespace.verbose,
+            silent=namespace.silent,
+            commit=namespace.commit,
+        )
+    )
+
+    cmd = subparsers.add_parser(
+        command_name("isweb"),
+        parents=[p_root, p_recursive, p_silent],
+        help="check is video encoded with +faststart (ffmpeg)",
+    )
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_clips_check_web(
+            root=namespace.path,
+            recursive=namespace.recursive,
+            silent=namespace.silent,
+        )
+    )
 
 
 def init_parser_pdf(
@@ -728,6 +838,91 @@ def init_parser_pdf(
             )
         )
 
+    if not commands or "form" in commands:
+        cmd = subparsers.add_parser(
+            "{}form".format(prefix),
+            parents=write_parents,
+            help="form PDF and image pages to a paper size (PyMuPDF)",
+        )
+        cmd.add_argument("-o", "--out", action="store")
+        format_group = cmd.add_mutually_exclusive_group(required=True)
+        format_group.add_argument(
+            "-4", dest="paper_format", action="store_const", const="a4",
+            help="A4 paper size",
+        )
+        format_group.add_argument(
+            "-5", dest="paper_format", action="store_const", const="a5",
+            help="A5 paper size",
+        )
+        format_group.add_argument(
+            "-6", dest="paper_format", action="store_const", const="a6",
+            help="A6 paper size",
+        )
+        format_group.add_argument(
+            "-s", "--size", nargs=2, type=float, metavar=("WIDTH", "HEIGHT"),
+            help="custom paper size in centimetres",
+        )
+        dpi_group = cmd.add_mutually_exclusive_group()
+        dpi_group.add_argument(
+            "-H", dest="dpi", action="store_const", const=400,
+            help="target image DPI: 400",
+        )
+        dpi_group.add_argument(
+            "-Q", dest="dpi", action="store_const", const=300,
+            help="target image DPI: 300",
+        )
+        dpi_group.add_argument(
+            "-M", dest="dpi", action="store_const", const=200,
+            help="target image DPI: 200",
+        )
+        dpi_group.add_argument(
+            "-l", dest="dpi", action="store_const", const=150,
+            help="target image DPI: 150",
+        )
+        dpi_group.add_argument(
+            "-L", dest="dpi", action="store_const", const=96,
+            help="target image DPI: 96",
+        )
+        dpi_group.add_argument(
+            "--dpi", type=_form_dpi, metavar="N",
+            help="target image DPI, from 72 to 800",
+        )
+        cmd.add_argument(
+            "-q", "--quality",
+            action="store",
+            type=int,
+            metavar="0..100",
+            default=80,
+            help="jpeg recompression quality 0..100, default %(default)s",
+        )
+        cmd.add_argument(
+            "--debug-fill",
+            action="store_true",
+            help="fill page margins with magenta for layout debugging",
+        )
+        cmd.add_argument(
+            "-R", "--rename-processed",
+            action="store_true",
+            help="rename each source with a _processed suffix after success",
+        )
+        add_input_argument(cmd, multiple=True)
+        cmd.set_defaults(
+            dpi=300,
+            func=lambda namespace: helpers.command_pdf_form(  # noqa
+                root=root(namespace),
+                out=namespace.out,
+                inf=namespace.inf,
+                paper_format=namespace.paper_format,
+                size_cm=namespace.size,
+                dpi=namespace.dpi,
+                quality=namespace.quality,
+                debug_fill=namespace.debug_fill,
+                rename_processed=namespace.rename_processed,
+                rewrite=namespace.rewrite,
+                verbose=namespace.verbose,
+            )
+        )
+
     if not commands or "extract" in commands:
         cmd = subparsers.add_parser(
             "{}extract".format(prefix),
@@ -782,12 +977,25 @@ def init_parser_pdf(
             type=int,
             help="pages to inspect, 1-based",
         )
+        cmd.add_argument(
+            "--pt",
+            action="store_true",
+            help="show non-standard page sizes in points",
+        )
+        cmd.add_argument(
+            "-t",
+            "--table",
+            action="store_true",
+            help="print an ASCII table",
+        )
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_info(  # noqa
                 root=root(namespace),
                 inf=namespace.inf,
                 pages=namespace.pages,
                 verbose=namespace.verbose,
+                pt=namespace.pt,
+                table=namespace.table,
             )
         )
 
@@ -830,7 +1038,7 @@ def init_parser_pdf(
 
 def main():
     logging.config.dictConfig(davo.settings.LOGGING)
-    parser = init_parser()
+    parser, _subparsers = init_parser()
     davo.utils.cli.run_parser(parser, use_completion=True)
 
 

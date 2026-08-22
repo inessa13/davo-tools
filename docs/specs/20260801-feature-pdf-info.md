@@ -12,9 +12,8 @@ date: 2026-08-01
 Add a new readonly `davo pdf info` command that prints one metadata row per
 selected PDF page.
 
-The command should report page type, effective raster resolution,
-`XResolution`, `YResolution`, orientation, and page size without writing a new
-PDF file.
+The command should report page type, effective raster resolution, orientation,
+and page size without writing a new PDF file.
 
 ## Scope
 
@@ -26,10 +25,12 @@ PDF file.
 ## Command contract
 
 - Command name: `davo pdf info`
-- Required input flag:
-  - `-i` for the source PDF file
+- Required positional argument:
+  - `INPUT` for the source PDF file
 - Optional flags:
   - `-p N1 N2 ... NX` for explicit source PDF page numbers to inspect
+  - `--pt` to show non-standard page sizes in points instead of millimetres
+  - `-t` / `--table` for an ASCII-table rendering
   - `-v` / `--verbose` for warnings consistent with sibling PDF commands
 - No output file flag in the MVP; the command writes the report to stdout only.
 - No `davo file pdf-info` alias is required for the MVP.
@@ -41,20 +42,19 @@ PDF file.
   - `Page`
   - `Type`
   - `Resolution`
-  - `XResolution`
-  - `YResolution`
+  - `ImageSizePx`
   - `Orientation`
   - `PageSize`
 - Page numbering in output is 1-based.
-- `Resolution` is a convenience string formatted as
-  `<XResolution>x<YResolution> dpi` when raster data exists.
-- `XResolution` and `YResolution` are numeric effective DPI values rounded to
-  whole numbers.
-- For pages with no raster content, `Resolution`, `XResolution`, and
-  `YResolution` should render as `-`.
-- `PageSize` should be reported as physical dimensions from the PDF page
-  rectangle, using a stable human-readable format such as
-  `595x842 pt (210x297 mm)`.
+- `Resolution` is formatted as `<DPI> dpi` when rounded horizontal and
+  vertical DPI match, otherwise `<XDPI>x<YDPI> dpi`.
+- For pages with no raster content, `Resolution` should render as `-`.
+- `PageSize` defaults to millimetres, such as `210x297 mm`; `--pt` switches
+  non-standard sizes to points. ISO A3, A4, A5, and A6 pages (in either
+  orientation and within 1 mm on each side) render as `a3`, `a4`, `a5`, or
+  `a6`, including with `--pt`.
+- Without `--table`, use the aligned text report. With it, use the project's
+  bordered ASCII table style.
 - The report itself is the primary success output; avoid adding a synthetic
   per-file success line after the table in the MVP.
 
@@ -104,12 +104,11 @@ effective raster DPI from placed image content.
   clipping, not the source image's nominal size.
 - Treat each displayed placement independently even when the same embedded image
   object is reused multiple times on the page.
-- Choose the page-level `XResolution` / `YResolution` from the dominant raster
-  placement, where "dominant" means the displayed raster with the largest area
-  on the page.
+- Choose the page-level DPI pair from the dominant raster placement, where
+  "dominant" means the displayed raster with the largest area on the page.
 - If a page has multiple raster images, classify the page as `multi-raster`
   and still emit a single DPI pair using the dominant placement.
-- If a page has no displayed raster images, emit `-` for resolution fields.
+- If a page has no displayed raster images, emit `-` for resolution.
 - Do not use full-page render DPI as the reported page resolution in the MVP.
 
 ## Orientation semantics
@@ -148,13 +147,13 @@ effective raster DPI from placed image content.
   - `empty` classification
   - `mixed` classification
   - dominant-image DPI selection for pages with multiple raster images
-  - `-` resolution fields for non-raster pages
+  - `-` resolution for non-raster pages
   - orientation derivation for portrait and landscape pages
   - page size formatting
   - missing / non-PDF input handling
 - Manual spot check:
-  - run `davo pdf info -i sample.pdf`
-  - run `davo pdf info -i sample.pdf -p 1 3`
+  - run `davo pdf info sample.pdf`
+  - run `davo pdf info sample.pdf -p 1 3`
   - confirm scanned pages report non-empty DPI values
   - confirm text-first pages report `Type=text` and `Resolution=-`
   - confirm pages with several raster images report `Type=multi-raster`

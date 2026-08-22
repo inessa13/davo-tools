@@ -1,0 +1,152 @@
+---
+status: implemented
+type: feature
+slug: im-diff
+date: 2026-08-09
+---
+
+# Feature: add `davo im diff` command
+
+**Roadmap:** implemented and removed from the active roadmap.
+
+## Summary
+
+Add a readonly command for comparing every unique pair of supplied images:
+
+```console
+davo im diff [-r|--recursive] [-t|--table] [-a|--all] [-f|--fast] [-g|--group] PATH1 PATH2 [PATH3 ...]
+```
+
+It calculates each image's existing 96-dimensional normalized fingerprint and
+64-bit pHash directly from the supplied files, then reports percentage-based
+distance metrics and a similarity status for every pair.
+
+`-f` / `--fast` compares only exact file sizes in bytes, without decoding an
+image or calculating its fingerprint or pHash. In this mode, only `.jpg`,
+`.jpeg`, `.png`, `.webp`, and `.heic` files are accepted (case-insensitively).
+Direct files with another extension or that are not regular files are errors;
+unsupported files found while expanding directories are skipped. The `left`
+and `right` columns contain the path and humanized file size, both metric
+columns contain `—`, and pairs with equal sizes have the `same_size` status.
+`same_size` means only that the byte size matches, not that the contents do.
+
+`-g` / `--group` reports matching parent folders instead of individual image
+pairs. It is useful for finding copied folders whose contents later diverged.
+
+## Command contract
+
+- `PATH` is a positional argument accepting files and directories. Directories
+  contribute their immediate files by default; `-r` / `--recursive` includes
+  all nested files. Directory results are sorted for deterministic output.
+- A direct file is decoded and validated strictly. A missing, non-regular, or
+  corrupt direct file produces no partial stdout report. Files encountered
+  while expanding a directory that Pillow cannot decode are skipped.
+- Fewer than two resolved images produce a user-facing error without stdout.
+- Each accepted image is decoded once while its vector and pHash are
+  calculated.
+- In fast mode, accepted files are validated by extension and regular-file
+  status only, then sized with `stat`; corrupt files with an accepted extension
+  participate in the comparison.
+- The command does not read stored database BLOBs and does not modify source
+  files.
+- Inputs are expanded in positional-argument order. Duplicate physical files
+  from overlapping paths are kept only once, using their first written path in
+  the report. Pairs are emitted in that order: `(0,1)`, `(0,2)`, …,
+  `(N-2,N-1)`.
+- In group mode, an accepted image belongs to its immediate parent directory.
+  Directories are deduplicated by physical path, while the first supplied
+  spelling is retained for output. A connection between two different folders
+  is reported when their unique matching images make up at least 30% of either
+  folder's accepted images. `identical`, `duplicate`, and `similar` images
+  match; with `--fast`, only `same_size` images match. `differ` and `different`
+  never match, including with `--all`. Connected folder connections form one
+  group, so a folder can join several copies into the same group.
+
+## Interactive progress
+
+When `stderr` is a terminal, the command shows two dynamic 40-character
+progress bars on `stderr`: `files` while every expanded input candidate is
+processed, then `pairs` while all unique image pairs are calculated. Each bar
+shows its percentage, `ready/total` count, elapsed processing time, and
+estimated remaining time; it clears its current line and ends with a newline.
+Progress is shown only when at least 10 input candidates were expanded;
+otherwise neither bar is written. The `files` bar additionally shows the
+average processed-byte rate and current candidate path. The estimate is based
+on the average time per completed candidate or pair and the number remaining;
+it is `n/a` until the first item completes. Paths
+from a directory are relative to that directory; direct file arguments retain
+their supplied path. Its timer starts immediately before the first candidate,
+and its average includes completed candidates with an available size (including
+duplicates and unsuitable directory entries). Before a measurable result, the
+rate is `0 Bps`. The `pairs` timer starts immediately before its first pair.
+The `files` count includes duplicate and unsuitable files encountered while
+expanding directories; the `pairs` count is `N × (N − 1) / 2` for the
+successfully resolved images.
+
+No progress is written when `stderr` is not a TTY. Consequently, the report on
+`stdout` remains suitable for pipes and redirection.
+
+## Output contract
+
+By default, output is tab-separated and begins with exactly this header:
+
+```text
+left	right	l2_percent	phash_percent	status
+```
+
+Each following row contains the two supplied paths with their portrait-oriented
+pixel dimensions and humanized file size (for example, `path.jpg 1600*2000
+2.1Mb`), `l2_percent` and `phash_percent` formatted with two digits after the
+decimal point, and a similarity `status`. By default, pairs whose status is
+`different` are hidden;
+`-a` / `--all` includes them. If only one pair was calculated, it is always
+shown regardless of its status or this flag. All pairs are still calculated
+before output.
+
+`-t` / `--table` prints the same report as a readable ASCII table. Its column
+widths are calculated from the headers and all report values; paths and status
+are left-aligned while percentage columns are right-aligned.
+When no pairs are visible after filtering, both formats print only the `total`
+summary, without a TSV header or an empty ASCII table.
+
+In group mode, ordinary pair rows and status totals are omitted. TSV output
+uses these columns:
+
+```text
+group	left	right	left_matches	right_matches	left_percent	right_percent
+```
+
+`left_matches` and `right_matches` are `matching/total` counts of accepted
+images from the corresponding folder, for example `7/10`. Percentages have
+two digits after the decimal point. `-t` / `--table` renders the same values as
+an ASCII table. The report ends with `total groups: N`; if there are no
+qualifying connections, it prints only `total groups: 0`.
+
+- `l2_percent = l2 / sqrt(2) * 100`, where raw L2 is in `0..sqrt(2)`.
+- `phash_percent = phash_hamming / 64 * 100`, where pHash Hamming distance is
+  in `0..64`.
+- The status uses the unrounded average of those percentages: `identical` for
+  exactly `0%`, `duplicate` below `1%`, `similar` below `10%`, `differ` below
+  `25%`, and `different` otherwise.
+- The report is immediately followed by a summary beginning with `total `.
+  It contains statuses with non-zero counts, including every calculated pair
+  (including hidden `different` pairs):
+
+  ```text
+  total identical: N, similar: N, different: N
+  ```
+
+  In table mode, the summary is outside the ASCII table, after its lower
+  border. If no rows are visible, the normal empty report header/table is
+  still printed.
+
+## Implementation status
+
+Implemented.
+
+- Registered `diff` in the `davo im` command group.
+- Reused the fingerprint module's portrait/RGB normalization and feature
+  algorithms with one image decode per input.
+- Added `-f` / `--fast` size-only comparison with the `same_size` status.
+- Added tests for parser wiring, identical images, pair order, both metrics,
+  invalid inputs without partial output, and source immutability.

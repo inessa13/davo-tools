@@ -2,6 +2,7 @@
 import argparse
 import io
 import types
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -29,17 +30,26 @@ class FakeOutputPage:
         self.height = height
         self.shown = []
         self.inserted = []
+        self.drawn = []
+        self.operations = []
+
+    def draw_rect(self, rect, color=None, fill=None, overlay=True):
+        self.drawn.append((rect, color, fill, overlay))
+        self.operations.append("draw_rect")
 
     def show_pdf_page(
         self, rect, doc, page_idx, keep_proportion=True
     ):
         self.shown.append((rect, doc, page_idx, keep_proportion))
+        self.operations.append("show_pdf_page")
 
     def insert_image(self, rect, stream, keep_proportion=True):
         self.inserted.append((rect, stream, keep_proportion))
+        self.operations.append("insert_image")
 
     def insertImage(self, rect, stream):
         self.inserted.append((rect, stream, True))
+        self.operations.append("insertImage")
 
 
 class FakePage:
@@ -415,6 +425,255 @@ def test_compress_file_rewrites_images_and_saves(fake_fitz):
     assert fake_fitz["/a.pdf"].saved == [
         ("/out.pdf", {"garbage": 3, "deflate": True, "clean": True})
     ]
+
+
+def test_form_files_places_pdf_pages_without_enlarging(fake_fitz):
+    fake_fitz["/multi.pdf"] = FakeDoc(
+        page_count=2,
+        pages=[
+            FakePage(rect=FakeRect(100, 200)),
+            FakePage(rect=FakeRect(400, 200)),
+        ],
+    )
+
+    status = pdf.form_files(
+        ["/multi.pdf"],
+        "/out.pdf",
+        paper_format="a6",
+    )
+
+    assert status is True
+    result = fake_fitz["__created__"][0]
+    portrait, landscape = result.new_pages
+    a6_width, a6_height = pdf._PAPER_FORMATS["a6"]
+    assert (portrait.width, portrait.height) == (a6_width, a6_height)
+    assert (landscape.width, landscape.height) == (a6_height, a6_width)
+    first_rect = portrait.shown[0][0]
+    assert first_rect == pytest.approx(
+        ((a6_width - 100) / 2, (a6_height - 200) / 2,
+         (a6_width + 100) / 2, (a6_height + 200) / 2)
+    )
+    second_rect = landscape.shown[0][0]
+    assert second_rect == pytest.approx(
+        (
+            (a6_height - 400) / 2,
+            (a6_width - 200) / 2,
+            (a6_height + 400) / 2,
+            (a6_width + 200) / 2,
+        )
+    )
+    assert result.saved == [
+        ("/out.pdf", {"garbage": 3, "deflate": True, "clean": True})
+    ]
+
+
+def test_form_files_debug_fill_precedes_pdf_placement(fake_fitz):
+    fake_fitz["/multi.pdf"] = FakeDoc(
+        pages=[FakePage(rect=FakeRect(100, 200))]
+    )
+
+    status = pdf.form_files(
+        ["/multi.pdf"], "/out.pdf", paper_format="a6", debug_fill=True
+    )
+
+    assert status is True
+    page = fake_fitz["__created__"][0].new_pages[0]
+    a6_width, a6_height = pdf._PAPER_FORMATS["a6"]
+    assert page.drawn == [
+        ((0, 0, a6_width, a6_height), None, (1, 0, 1), False)
+    ]
+    assert page.operations == ["draw_rect", "show_pdf_page"]
+
+
+def test_form_files_debug_fill_precedes_raster_placement(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "input.png"
+    Image.new("RGBA", (100, 50), (255, 0, 0, 0)).save(source)
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: path == str(source)
+    )
+    status = pdf.form_files(
+        [str(source)], str(tmp_path / "out.pdf"), paper_format="a6",
+        debug_fill=True,
+    )
+
+    assert status is True
+    page = fake_fitz["__created__"][0].new_pages[0]
+    a6_width, a6_height = pdf._PAPER_FORMATS["a6"]
+    assert page.drawn == [
+        ((0, 0, a6_height, a6_width), None, (1, 0, 1), False)
+    ]
+    assert page.operations == ["draw_rect", "insert_image"]
+
+
+def test_form_files_does_not_draw_debug_fill_by_default(fake_fitz):
+    fake_fitz["/multi.pdf"] = FakeDoc(
+        pages=[FakePage(rect=FakeRect(100, 200))]
+    )
+
+    assert pdf.form_files(["/multi.pdf"], "/out.pdf", paper_format="a6")
+
+    assert fake_fitz["__created__"][0].new_pages[0].drawn == []
+
+
+def test_form_files_rejects_unsupported_source_before_creating_result(
+    fake_fitz,
+):
+    status = pdf.form_files(
+        ["/a.txt"], "/out.pdf", paper_format="a4"
+    )
+
+    assert status is False
+    assert fake_fitz["__created__"] == []
+
+
+@pytest.mark.parametrize("extension", [".pdf", ".jpg", ".png", ".bmp"])
+def test_form_files_renames_processed_sources_after_saving(
+    fake_fitz, monkeypatch, tmp_path, extension
+):
+    source = tmp_path / f"input{extension}"
+    if extension == ".pdf":
+        source.write_bytes(b"pdf")
+        fake_fitz[str(source)] = FakeDoc()
+    else:
+        Image.new("RGB", (8, 8), "red").save(source)
+    output = tmp_path / "formed.pdf"
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+
+    status = pdf.form_files(
+        [str(source)], str(output), paper_format="a4", rename_processed=True
+    )
+
+    assert status is True
+    assert fake_fitz["__created__"][0].saved == [
+        (str(output), {"garbage": 3, "deflate": True, "clean": True})
+    ]
+    assert not source.exists()
+    assert source.with_stem(f"{source.stem}_processed").exists()
+
+
+def test_form_files_rejects_already_processed_source_before_creating_result(
+    fake_fitz, tmp_path
+):
+    source = tmp_path / "input_processed.jpg"
+
+    assert not pdf.form_files(
+        [str(source)], str(tmp_path / "formed.pdf"), paper_format="a4",
+        rename_processed=True,
+    )
+    assert fake_fitz["__created__"] == []
+
+
+@pytest.mark.parametrize("rewrite", [False, True])
+def test_form_files_rejects_existing_processed_target_before_saving(
+    fake_fitz, monkeypatch, tmp_path, rewrite
+):
+    source = tmp_path / "input.jpg"
+    target = tmp_path / "input_processed.jpg"
+    source.write_bytes(b"input")
+    target.write_bytes(b"existing")
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+
+    assert not pdf.form_files(
+        [str(source)], str(tmp_path / "formed.pdf"), paper_format="a4",
+        rename_processed=True, rewrite=rewrite,
+    )
+    assert source.read_bytes() == b"input"
+    assert target.read_bytes() == b"existing"
+    assert fake_fitz["__created__"] == []
+
+
+def test_form_files_rejects_processed_target_that_is_output(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "input.jpg"
+    source.write_bytes(b"input")
+    output = tmp_path / "input_processed.jpg"
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+
+    assert not pdf.form_files(
+        [str(source)], str(output), paper_format="a4", rename_processed=True
+    )
+    assert fake_fitz["__created__"] == []
+
+
+def test_form_files_renames_duplicate_source_once(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "input.jpg"
+    Image.new("RGB", (8, 8), "red").save(source)
+    output = tmp_path / "formed.pdf"
+    duplicate_path = f"{tmp_path}/./{source.name}"
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+
+    assert pdf.form_files(
+        [str(source), duplicate_path], str(output), paper_format="a4",
+        rename_processed=True,
+    )
+
+    assert len(fake_fitz["__created__"][0].new_pages) == 2
+    assert not source.exists()
+    assert (tmp_path / "input_processed.jpg").exists()
+
+
+def test_form_files_keeps_source_when_safe_rename_fails(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "input.jpg"
+    Image.new("RGB", (8, 8), "red").save(source)
+    output = tmp_path / "formed.pdf"
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+    monkeypatch.setattr(pdf.os, "link", lambda *_args: (_ for _ in ()).throw(
+        OSError("target changed")
+    ))
+
+    assert not pdf.form_files(
+        [str(source)], str(output), paper_format="a4", rename_processed=True
+    )
+    assert fake_fitz["__created__"][0].saved == [
+        (str(output), {"garbage": 3, "deflate": True, "clean": True})
+    ]
+    assert source.exists()
+    assert not (tmp_path / "input_processed.jpg").exists()
+
+
+def test_form_image_bytes_downsamples_jpeg_to_placed_dpi(tmp_path):
+    source = tmp_path / "wide.jpg"
+    Image.new("RGB", (2000, 1000), "red").save(source, quality=95)
+
+    payload = pdf._form_image_bytes(  # pylint: disable=W0212
+        str(source), FakeRect(144, 72), dpi=200, quality=37
+    )
+
+    with Image.open(io.BytesIO(payload)) as image:
+        assert image.format == "JPEG"
+        assert image.size == (400, 200)
+
+
+def test_form_image_bytes_does_not_enlarge_and_preserves_png_alpha(tmp_path):
+    source = tmp_path / "transparent.png"
+    Image.new("RGBA", (10, 20), (255, 0, 0, 100)).save(source)
+
+    payload = pdf._form_image_bytes(  # pylint: disable=W0212
+        str(source), FakeRect(144, 288), dpi=200, quality=80
+    )
+
+    with Image.open(io.BytesIO(payload)) as image:
+        assert image.format == "PNG"
+        assert image.size == (10, 20)
+        assert image.mode == "RGBA"
+        assert image.getpixel((0, 0))[3] == 100
 
 
 @pytest.mark.parametrize("dpi", [72, 96])
@@ -1096,14 +1355,44 @@ def test_inspect_pages_classifies_raster_and_formats_metadata(fake_fitz):
         {
             "page": 1,
             "type": "raster",
-            "resolution": "300x300 dpi",
+            "resolution": "300 dpi",
             "image_size_px": "2480x3508 px",
-            "x_resolution": 300,
-            "y_resolution": 300,
             "orientation": "portrait",
-            "page_size": "595x842 pt (210x297 mm)",
+            "page_size": "a4",
         }
     ]
+
+
+def test_inspect_pages_classifies_single_partial_image_as_raster(fake_fitz):
+    fake_fitz["/scan.pdf"] = FakeDoc(
+        page_count=1,
+        pages=[
+            FakePage(
+                images=[(11,)],
+                image_rects={11: [FakeRect(100, 100, x0=20, y0=20)]},
+            )
+        ],
+        extracted_images={11: {"width": 400, "height": 400}},
+    )
+
+    assert pdf.inspect_pages("/scan.pdf")[0]["type"] == "raster"
+
+
+def test_inspect_pages_formats_different_dpi_per_axis(fake_fitz):
+    page_rect = FakeRect(72, 72)
+    fake_fitz["/scan.pdf"] = FakeDoc(
+        page_count=1,
+        pages=[
+            FakePage(
+                images=[(11,)], image_rects={11: [page_rect]}, rect=page_rect
+            )
+        ],
+        extracted_images={11: {"width": 300, "height": 200}},
+    )
+
+    rows = pdf.inspect_pages("/scan.pdf")
+
+    assert rows[0]["resolution"] == "300x200 dpi"
 
 
 def test_inspect_pages_uses_visible_bbox_and_reused_xref_for_multi_raster(
@@ -1130,12 +1419,10 @@ def test_inspect_pages_uses_visible_bbox_and_reused_xref_for_multi_raster(
         {
             "page": 1,
             "type": "multi-raster",
-            "resolution": "300x300 dpi",
+            "resolution": "300 dpi",
             "image_size_px": "1500x1500 px",
-            "x_resolution": 300,
-            "y_resolution": 300,
             "orientation": "portrait",
-            "page_size": "595x842 pt (210x297 mm)",
+            "page_size": "a4",
         }
     ]
 
@@ -1150,10 +1437,8 @@ def test_command_pdf_info_prints_report(monkeypatch, capsys):
                 "type": "empty",
                 "resolution": "-",
                 "image_size_px": "-",
-                "x_resolution": None,
-                "y_resolution": None,
                 "orientation": "portrait",
-                "page_size": "595x842 pt (210x297 mm)",
+                "page_size": "210x297 mm",
             }
         ],
     )
@@ -1164,7 +1449,161 @@ def test_command_pdf_info_prints_report(monkeypatch, capsys):
     assert "Page" in output
     assert "ImageSizePx" in output
     assert "empty" in output
-    assert "595x842 pt (210x297 mm)" in output
+    assert "210x297 mm" in output
+    assert "XResolution" not in output
+    assert "YResolution" not in output
+
+
+@pytest.mark.parametrize(
+    ("width_mm", "height_mm", "expected"),
+    [
+        (297, 420, "a3"),
+        (420, 297, "a3"),
+        (210, 297, "a4"),
+        (297, 210, "a4"),
+        (148, 210, "a5"),
+        (210, 148, "a5"),
+        (105, 148, "a6"),
+        (148, 105, "a6"),
+        (212, 297, "212x297 mm"),
+    ],
+)
+def test_format_page_size_recognizes_iso_sizes_in_both_orientations(
+    width_mm, height_mm, expected
+):
+    rect = FakeRect(width_mm * 72.0 / 25.4, height_mm * 72.0 / 25.4)
+
+    assert pdf._format_page_size(rect) == expected  # pylint: disable=W0212
+    if expected.startswith("a"):
+        assert pdf._format_page_size(rect, pt=True) == expected  # pylint: disable=W0212
+
+
+def test_format_page_info_report_supports_points_and_ascii_table():
+    rows = [
+        {
+            "page": 2,
+            "type": "raster",
+            "resolution": "300x200 dpi",
+            "image_size_px": "100x200 px",
+            "orientation": "portrait",
+            "page_size": "612x792 pt",
+        }
+    ]
+
+    report = pdf.format_page_info_report(rows, table=True)
+
+    assert report.splitlines()[0].startswith("+")
+    assert "| Page" in report
+    assert "300x200 dpi" in report
+    assert "XResolution" not in report
+    assert report.splitlines()[-1] == report.splitlines()[0]
+
+
+def test_init_parser_pdf_info_passes_display_options(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        helpers, "command_pdf_info", lambda **kwargs: calls.append(kwargs)
+    )
+    parser = argparse.ArgumentParser()
+    photo_cli.init_parser_pdf(parser)
+
+    namespace = parser.parse_args(["info", "scan.pdf", "--pt", "-t"])
+    namespace.func(namespace)
+
+    assert calls == [
+        {
+            "root": None,
+            "inf": "scan.pdf",
+            "pages": None,
+            "verbose": False,
+            "pt": True,
+            "table": True,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("out", "expected_output"),
+    [
+        ("formed.pdf", "/root/formed.pdf"),
+        (None, "/root/scan_formed.pdf"),
+    ],
+)
+def test_command_pdf_form_reports_actual_output_after_success(
+    monkeypatch, out, expected_output
+):
+    monkeypatch.setattr(pdf, "form_files", lambda *_args, **_kwargs: True)
+    calls = []
+    monkeypatch.setattr(
+        helpers, "command_pdf_info", lambda root, inf, **kwargs: calls.append(
+            (root, inf, kwargs)
+        )
+    )
+
+    helpers.command_pdf_form("/root", out, ["scan.pdf"], paper_format="a4")
+
+    assert calls == [(None, expected_output, {"verbose": False})]
+
+
+def test_command_pdf_form_does_not_report_failed_output(monkeypatch):
+    monkeypatch.setattr(pdf, "form_files", lambda *_args, **_kwargs: False)
+    calls = []
+    monkeypatch.setattr(
+        helpers, "command_pdf_info", lambda *_args, **_kwargs: calls.append(1)
+    )
+
+    helpers.command_pdf_form(
+        "/root", "formed.pdf", ["scan.pdf"], paper_format="a4"
+    )
+
+    assert calls == []
+
+
+def test_command_pdf_form_forwards_quality(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        pdf,
+        "form_files",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or False,
+    )
+
+    helpers.command_pdf_form(
+        "/root", "formed.pdf", ["scan.pdf"], paper_format="a4", quality=37
+    )
+
+    assert calls[0][1]["quality"] == 37
+
+
+def test_command_pdf_form_forwards_debug_fill(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        pdf,
+        "form_files",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or False,
+    )
+
+    helpers.command_pdf_form(
+        "/root", "formed.pdf", ["scan.pdf"], paper_format="a4",
+        debug_fill=True,
+    )
+
+    assert calls[0][1]["debug_fill"] is True
+
+
+def test_command_pdf_form_forwards_rename_processed(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        pdf,
+        "form_files",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or False,
+    )
+
+    helpers.command_pdf_form(
+        "/root", "formed.pdf", ["scan.pdf"], paper_format="a4",
+        rename_processed=True,
+    )
+
+    assert calls[0][1]["rename_processed"] is True
 
 
 def test_scale_file_uses_default_output_name_and_a4_portrait(fake_fitz):

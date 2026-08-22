@@ -14,9 +14,16 @@ _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
 _EXTRACT_OUTPUT_TYPES = {"jpg", "png"}
 _COMPRESS_DPI_PRESETS = {72, 96, 150, 200, 300, 400}
 _COMPRESS_JPEG_QUALITY = 80
+_ISO_PAGE_FORMATS_MM = {
+    "a3": (297.0, 420.0),
+    "a4": (210.0, 297.0),
+    "a5": (148.0, 210.0),
+    "a6": (105.0, 148.0),
+}
 _PAPER_FORMATS = {
     "a4": (210.0 * 72.0 / 25.4, 297.0 * 72.0 / 25.4),
     "a5": (148.0 * 72.0 / 25.4, 210.0 * 72.0 / 25.4),
+    "a6": (105.0 * 72.0 / 25.4, 148.0 * 72.0 / 25.4),
 }
 
 
@@ -461,31 +468,32 @@ def _classify_page_type(
     if not has_text and not has_vector and raster_count > 1:
         return "multi-raster"
     if not has_text and not has_vector and raster_count == 1:
-        dominant_area = raster_placements[0]["area_pt"]
-        coverage = 0.0
-        if page_area > 0:
-            coverage = dominant_area / page_area
-        if coverage >= raster_coverage_threshold:
-            return "raster"
+        # Margins around a single scan do not make the page mixed.
+        return "raster"
     return "mixed"
 
 
-def _format_resolution_value(value: Optional[int]) -> str:
-    if value is None:
-        return "-"
-    return str(value)
-
-
-def _format_page_size(rect: Any) -> str:
+def _format_page_size(rect: Any, pt: bool = False) -> str:
+    """Format a page size, preferring a recognized ISO A paper name."""
     width_pt, height_pt = _rect_dimensions(rect)
-    width_pt_h = int(round(width_pt))
-    height_pt_h = int(round(height_pt))
-    width_mm = int(round(width_pt * 25.4 / 72.0))
-    height_mm = int(round(height_pt * 25.4 / 72.0))
-    return (
-        f"{width_pt_h}x{height_pt_h} pt "
-        f"({width_mm}x{height_mm} mm)"
-    )
+    width_mm = width_pt * 25.4 / 72.0
+    height_mm = height_pt * 25.4 / 72.0
+
+    for paper_format, (paper_width_mm, paper_height_mm) in (
+        _ISO_PAGE_FORMATS_MM.items()
+    ):
+        if (
+            abs(width_mm - paper_width_mm) <= 1
+            and abs(height_mm - paper_height_mm) <= 1
+        ) or (
+            abs(width_mm - paper_height_mm) <= 1
+            and abs(height_mm - paper_width_mm) <= 1
+        ):
+            return paper_format
+
+    if pt:
+        return f"{int(round(width_pt))}x{int(round(height_pt))} pt"
+    return f"{int(round(width_mm))}x{int(round(height_mm))} mm"
 
 
 def inspect_pages(
@@ -493,6 +501,7 @@ def inspect_pages(
     pages: Optional[Iterable[int]] = None,
     verbose: bool = False,
     raster_coverage_threshold: float = 0.9,
+    pt: bool = False,
 ) -> Optional[List[Dict[str, Any]]]:
     fitz = _import_fitz("page inspection")
 
@@ -531,7 +540,10 @@ def inspect_pages(
                 if dominant is not None:
                     x_resolution = int(round(dominant["x_dpi"]))
                     y_resolution = int(round(dominant["y_dpi"]))
-                    resolution = f"{x_resolution}x{y_resolution} dpi"
+                    if x_resolution == y_resolution:
+                        resolution = f"{x_resolution} dpi"
+                    else:
+                        resolution = f"{x_resolution}x{y_resolution} dpi"
                     image_size_px = (
                         f'{dominant["width_px"]}x{dominant["height_px"]} px'
                     )
@@ -550,10 +562,8 @@ def inspect_pages(
                         "type": page_type,
                         "resolution": resolution,
                         "image_size_px": image_size_px,
-                        "x_resolution": x_resolution,
-                        "y_resolution": y_resolution,
                         "orientation": orientation,
-                        "page_size": _format_page_size(page_rect),
+                        "page_size": _format_page_size(page_rect, pt=pt),
                     }
                 )
     except (OSError, RuntimeError, ValueError) as exc:
@@ -563,14 +573,14 @@ def inspect_pages(
     return rows
 
 
-def format_page_info_report(rows: Sequence[Dict[str, Any]]) -> str:
+def format_page_info_report(
+    rows: Sequence[Dict[str, Any]], table: bool = False
+) -> str:
     headers = [
         "Page",
         "Type",
         "Resolution",
         "ImageSizePx",
-        "XResolution",
-        "YResolution",
         "Orientation",
         "PageSize",
     ]
@@ -580,8 +590,6 @@ def format_page_info_report(rows: Sequence[Dict[str, Any]]) -> str:
             row["type"],
             row["resolution"],
             row["image_size_px"],
-            _format_resolution_value(row["x_resolution"]),
-            _format_resolution_value(row["y_resolution"]),
             row["orientation"],
             row["page_size"],
         ]
@@ -592,6 +600,25 @@ def format_page_info_report(rows: Sequence[Dict[str, Any]]) -> str:
     for row in table_rows:
         for idx, value in enumerate(row):
             widths[idx] = max(widths[idx], len(value))
+
+    if table:
+        border = "+{}+".format(
+            "+".join("-" * (width + 2) for width in widths)
+        )
+
+        def format_row(row: Sequence[str]) -> str:
+            return "| {} |".format(
+                " | ".join(
+                    value.rjust(widths[index]) if index == 0
+                    else value.ljust(widths[index])
+                    for index, value in enumerate(row)
+                )
+            )
+
+        return "\n".join(
+            (border, format_row(headers), border,
+             *(format_row(row) for row in table_rows), border)
+        )
 
     rendered_rows = [
         "  ".join(
@@ -658,6 +685,402 @@ def _fit_rect_within(
         y0,
         x0 + fitted_width,
         y0 + fitted_height,
+    )
+
+
+def _fit_dimensions_within(
+    fitz: Any,
+    source_width: float,
+    source_height: float,
+    target_width: float,
+    target_height: float,
+    allow_upscale: bool = False,
+) -> Any:
+    """Return a centered rectangle preserving the source aspect ratio."""
+    if source_width <= 0 or source_height <= 0:
+        raise RuntimeError("source has invalid bounds")
+
+    scale = min(target_width / source_width, target_height / source_height)
+    if not allow_upscale:
+        scale = min(scale, 1.0)
+    fitted_width = source_width * scale
+    fitted_height = source_height * scale
+    x0 = (target_width - fitted_width) / 2.0
+    y0 = (target_height - fitted_height) / 2.0
+    return _build_rect(
+        fitz, x0, y0, x0 + fitted_width, y0 + fitted_height
+    )
+
+
+def _resolve_form_page_size(
+    page_size: Tuple[float, float],
+    source_width: float,
+    source_height: float,
+) -> Tuple[float, float]:
+    width, height = page_size
+    if source_width > source_height:
+        return height, width
+    return width, height
+
+
+def _image_source_dimensions(
+    input_file: str,
+) -> Tuple[int, int, Optional[Tuple[float, float]]]:
+    """Return image pixels and its physical DPI when it is trustworthy."""
+    from PIL import Image  # noqa pylint: disable=C0415
+
+    with Image.open(input_file) as image:
+        width, height = image.size
+        dpi = image.info.get("dpi")
+        if not dpi or len(dpi) < 2:
+            return width, height, None
+        x_dpi, y_dpi = dpi[:2]
+        if x_dpi <= 0 or y_dpi <= 0:
+            return width, height, None
+        return width, height, (float(x_dpi), float(y_dpi))
+
+
+def _form_image_bytes(
+    input_file: str,
+    dest_rect: Any,
+    dpi: int,
+    quality: int,
+) -> bytes:
+    """Encode an image no larger than its placed size at ``dpi``."""
+    from PIL import Image  # noqa pylint: disable=C0415
+
+    width_pt, height_pt = _rect_dimensions(dest_rect)
+    max_width = max(1, int(width_pt * dpi / 72.0))
+    max_height = max(1, int(height_pt * dpi / 72.0))
+    ext = os.path.splitext(input_file)[1].lower()
+
+    with Image.open(input_file) as source:
+        image = source.copy()
+        source_width, source_height = image.size
+        scale = min(
+            1.0,
+            max_width / float(source_width),
+            max_height / float(source_height),
+        )
+        target_size = (
+            max(1, int(source_width * scale)),
+            max(1, int(source_height * scale)),
+        )
+        if target_size != image.size:
+            try:
+                resample = Image.Resampling.LANCZOS
+            except AttributeError:  # pragma: no cover - old Pillow
+                resample = Image.LANCZOS
+            image = image.resize(target_size, resample=resample)
+
+        output = io.BytesIO()
+        if ext in (".jpg", ".jpeg"):
+            if image.mode not in ("RGB", "L", "CMYK"):
+                image = image.convert("RGB")
+            image.save(output, format="JPEG", quality=quality)
+        else:
+            # PNG encoding retains alpha for transparent PNG inputs.
+            image.save(output, format="PNG")
+        return output.getvalue()
+
+
+def _validate_form_sources(
+    fitz: Any,
+    input_files: Sequence[str],
+    verbose: bool,
+) -> bool:
+    """Check every source before a result document can be created."""
+    from PIL import Image  # noqa pylint: disable=C0415
+
+    for input_file in input_files:
+        if not os.path.exists(input_file):
+            if verbose:
+                logger.warning("pdf.form: file not found: %s", input_file)
+            return False
+
+        ext = os.path.splitext(input_file)[1].lower()
+        if ext == ".pdf":
+            try:
+                with _open_pdf(fitz, input_file, "form"):
+                    pass
+            except (OSError, RuntimeError, ValueError):
+                logger.error("pdf.form: failed to open pdf: %s", input_file)
+                return False
+        elif ext in _IMAGE_EXTENSIONS:
+            try:
+                with Image.open(input_file) as image:
+                    image.verify()
+            except (OSError, ValueError):
+                logger.error("pdf.form: invalid image: %s", input_file)
+                return False
+        else:
+            if verbose:
+                logger.warning("pdf.form: file not supported: %s", input_file)
+            return False
+    return True
+
+
+def _document_has_images_over_dpi(doc: Any, dpi: int) -> bool:
+    for page_idx in range(doc.page_count):
+        page = doc.load_page(page_idx)
+        for placement in _inspect_page_raster_placements(doc, page):
+            if max(placement["x_dpi"], placement["y_dpi"]) > dpi:
+                return True
+    return False
+
+
+def _processed_form_path(input_file: str) -> str:
+    """Return the name used to mark a form source as processed."""
+    stem, ext = os.path.splitext(input_file)
+    return f"{stem}_processed{ext}"
+
+
+def _plan_form_processed_renames(
+    input_files: Iterable[str], output_path: str
+) -> Optional[List[Tuple[str, str]]]:
+    """Validate and de-duplicate form source renames before saving output."""
+    planned = []
+    seen_sources = set()
+    for input_file in input_files:
+        source_key = os.path.normcase(
+            os.path.realpath(os.path.abspath(input_file))
+        )
+        if source_key in seen_sources:
+            continue
+        seen_sources.add(source_key)
+
+        stem, _ = os.path.splitext(input_file)
+        if stem.endswith("_processed"):
+            logger.error(
+                "pdf.form: source is already marked as processed: %s",
+                input_file,
+            )
+            return None
+
+        processed_path = _processed_form_path(input_file)
+        if os.path.exists(processed_path):
+            logger.error(
+                "pdf.form: processed target already exists: %s",
+                processed_path,
+            )
+            return None
+        if _paths_refer_to_same_file(processed_path, output_path):
+            logger.error(
+                "pdf.form: processed target conflicts with output: %s",
+                processed_path,
+            )
+            return None
+        planned.append((input_file, processed_path))
+    return planned
+
+
+def _rename_processed_form_sources(
+    renames: Iterable[Tuple[str, str]]
+) -> bool:
+    """Atomically claim every processed name without overwriting it."""
+    for source_path, processed_path in renames:
+        try:
+            os.link(source_path, processed_path)
+            os.unlink(source_path)
+        except OSError as exc:
+            logger.error(
+                "pdf.form: failed to rename processed source %s to %s: %s",
+                source_path,
+                processed_path,
+                exc,
+            )
+            return False
+    return True
+
+
+def form_files(
+    input_files: Iterable[str],
+    output_path: Optional[str],
+    page_size: Optional[Tuple[float, float]] = None,
+    paper_format: Optional[str] = None,
+    dpi: Any = 300,
+    quality: Any = None,
+    debug_fill: bool = False,
+    rename_processed: bool = False,
+    verbose: bool = False,
+    rewrite: bool = False,
+) -> bool:
+    """Place PDF pages and images on consistently sized, oriented sheets."""
+    files = list(input_files)
+    if not files:
+        if verbose:
+            logger.warning("pdf.form: no input files provided")
+        return False
+
+    try:
+        normalized_dpi = int(dpi)
+        if not 72 <= normalized_dpi <= 800:
+            raise ValueError("dpi must be between 72 and 800")
+        normalized_quality = _normalize_compress_quality(quality)
+        if page_size is None:
+            normalized_format = _normalize_scale_format(paper_format)
+            page_size = _PAPER_FORMATS[normalized_format]
+        base_width, base_height = page_size
+        if base_width <= 0 or base_height <= 0:
+            raise ValueError("page size must be positive")
+    except (TypeError, ValueError) as exc:
+        logger.error("pdf.form: invalid option: %s", exc)
+        return False
+
+    if output_path is None:
+        output_path = _default_output(files[0], "_formed")
+    if not _allow_output_targets(
+        "form", files, [output_path], rewrite=rewrite
+    ):
+        return False
+
+    renames = []
+    if rename_processed:
+        renames = _plan_form_processed_renames(files, output_path)
+        if renames is None:
+            return False
+
+    fitz = _import_fitz("form creation")
+    if not _validate_form_sources(fitz, files, verbose):
+        return False
+
+    try:
+        with fitz.open() as out_doc:
+            for input_file in files:
+                ext = os.path.splitext(input_file)[1].lower()
+                if ext == ".pdf":
+                    with _open_pdf(fitz, input_file, "form") as src:
+                        for page_idx in range(src.page_count):
+                            source_page = src.load_page(page_idx)
+                            source_rect = _get_page_rect(source_page)
+                            source_width, source_height = _rect_dimensions(
+                                source_rect
+                            )
+                            target_size = _resolve_form_page_size(
+                                (base_width, base_height),
+                                source_width,
+                                source_height,
+                            )
+                            target_width, target_height = target_size
+                            dest_page = out_doc.new_page(
+                                width=target_width, height=target_height
+                            )
+                            if debug_fill:
+                                _draw_form_debug_fill(
+                                    fitz, dest_page,
+                                    target_width, target_height,
+                                )
+                            dest_rect = _fit_dimensions_within(
+                                fitz,
+                                source_width,
+                                source_height,
+                                target_width,
+                                target_height,
+                            )
+                            if hasattr(dest_page, "show_pdf_page"):
+                                dest_page.show_pdf_page(
+                                    dest_rect, src, page_idx,
+                                    keep_proportion=True,
+                                )
+                            elif hasattr(dest_page, "showPDFpage"):
+                                dest_page.showPDFpage(dest_rect, src, page_idx)
+                            else:
+                                raise RuntimeError(
+                                    "PyMuPDF page object does not support "
+                                    "page placement API"
+                                )
+                    continue
+
+                width_px, height_px, image_dpi = _image_source_dimensions(
+                    input_file
+                )
+                target_width, target_height = _resolve_form_page_size(
+                    (base_width, base_height), width_px, height_px
+                )
+                if image_dpi is None:
+                    # Pixels have no physical size in this case, so fitting is
+                    # the useful default rather than treating them as 72 DPI.
+                    source_width, source_height = width_px, height_px
+                    allow_upscale = True
+                else:
+                    x_dpi, y_dpi = image_dpi
+                    source_width = width_px * 72.0 / x_dpi
+                    source_height = height_px * 72.0 / y_dpi
+                    allow_upscale = False
+                dest_page = out_doc.new_page(
+                    width=target_width, height=target_height
+                )
+                if debug_fill:
+                    _draw_form_debug_fill(
+                        fitz, dest_page, target_width, target_height
+                    )
+                dest_rect = _fit_dimensions_within(
+                    fitz, source_width, source_height,
+                    target_width, target_height, allow_upscale=allow_upscale,
+                )
+                if hasattr(dest_page, "insert_image"):
+                    dest_page.insert_image(
+                        dest_rect,
+                        stream=_form_image_bytes(
+                            input_file, dest_rect, normalized_dpi,
+                            normalized_quality,
+                        ),
+                        keep_proportion=False,
+                    )
+                elif hasattr(dest_page, "insertImage"):
+                    dest_page.insertImage(
+                        dest_rect,
+                        stream=_form_image_bytes(
+                            input_file, dest_rect, normalized_dpi,
+                            normalized_quality,
+                        ),
+                    )
+                else:
+                    raise RuntimeError(
+                        "PyMuPDF page object does not support image "
+                        "insertion API"
+                    )
+
+            if _document_has_images_over_dpi(out_doc, normalized_dpi):
+                if not hasattr(out_doc, "rewrite_images"):
+                    raise RuntimeError(
+                        "PyMuPDF document does not support image rewrite API"
+                    )
+                out_doc.rewrite_images(
+                    dpi_threshold=normalized_dpi + 1,
+                    dpi_target=normalized_dpi,
+                    quality=normalized_quality,
+                    lossy=True,
+                    lossless=True,
+                    bitonal=True,
+                    color=True,
+                    gray=True,
+                    set_to_gray=False,
+                )
+            out_doc.save(output_path, garbage=3, deflate=True, clean=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.error("pdf.form: failed to form pdf %s", str(exc))
+        return False
+
+    if rename_processed and not _rename_processed_form_sources(renames):
+        return False
+
+    return True
+
+
+def _draw_form_debug_fill(
+    fitz: Any, page: Any, width: float, height: float
+) -> None:
+    """Paint the debug background beneath the placed source content."""
+    if not hasattr(page, "draw_rect"):
+        raise RuntimeError(
+            "PyMuPDF page object does not support drawing API"
+        )
+    page.draw_rect(
+        fitz.Rect(0, 0, width, height),
+        color=None,
+        fill=(1, 0, 1),
+        overlay=False,
     )
 
 
