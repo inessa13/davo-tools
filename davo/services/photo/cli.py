@@ -862,6 +862,17 @@ def init_parser_pdf(
             "-s", "--size", nargs=2, type=float, metavar=("WIDTH", "HEIGHT"),
             help="custom paper size in centimetres",
         )
+        orientation_group = cmd.add_mutually_exclusive_group()
+        orientation_group.add_argument(
+            "--force-landscape", dest="force_orientation",
+            action="store_const", const="landscape",
+            help="use landscape sheets for all output pages",
+        )
+        orientation_group.add_argument(
+            "--force-portrait", dest="force_orientation",
+            action="store_const", const="portrait",
+            help="use portrait sheets for all output pages",
+        )
         dpi_group = cmd.add_mutually_exclusive_group()
         dpi_group.add_argument(
             "-H", dest="dpi", action="store_const", const=400,
@@ -914,6 +925,7 @@ def init_parser_pdf(
                 inf=namespace.inf,
                 paper_format=namespace.paper_format,
                 size_cm=namespace.size,
+                force_orientation=namespace.force_orientation,
                 dpi=namespace.dpi,
                 quality=namespace.quality,
                 debug_fill=namespace.debug_fill,

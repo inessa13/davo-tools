@@ -468,6 +468,62 @@ def test_form_files_places_pdf_pages_without_enlarging(fake_fitz):
     ]
 
 
+@pytest.mark.parametrize(
+    ("force_orientation", "expected_size"),
+    [
+        ("portrait", lambda size: (min(size), max(size))),
+        ("landscape", lambda size: (max(size), min(size))),
+    ],
+)
+def test_form_files_forces_sheet_orientation_without_rotating_pdf_content(
+    fake_fitz, force_orientation, expected_size
+):
+    fake_fitz["/multi.pdf"] = FakeDoc(
+        page_count=2,
+        pages=[
+            FakePage(rect=FakeRect(100, 200)),
+            FakePage(rect=FakeRect(400, 200)),
+        ],
+    )
+
+    assert pdf.form_files(
+        ["/multi.pdf"], "/out.pdf", paper_format="a6",
+        force_orientation=force_orientation,
+    )
+
+    result = fake_fitz["__created__"][0]
+    expected_width, expected_height = expected_size(pdf._PAPER_FORMATS["a6"])
+    assert [(page.width, page.height) for page in result.new_pages] == [
+        (expected_width, expected_height),
+        (expected_width, expected_height),
+    ]
+    # The portrait source is still taller than it is wide after placement.
+    first_rect = result.new_pages[0].shown[0][0]
+    assert first_rect[3] - first_rect[1] > first_rect[2] - first_rect[0]
+
+
+def test_form_files_forced_orientation_normalizes_custom_page_size(fake_fitz):
+    fake_fitz["/multi.pdf"] = FakeDoc(
+        pages=[FakePage(rect=FakeRect(100, 200))]
+    )
+
+    assert pdf.form_files(
+        ["/multi.pdf"], "/out.pdf", page_size=(500, 300),
+        force_orientation="portrait",
+    )
+
+    page = fake_fitz["__created__"][0].new_pages[0]
+    assert (page.width, page.height) == (300, 500)
+
+
+def test_form_files_rejects_invalid_forced_orientation(fake_fitz):
+    assert not pdf.form_files(
+        ["/input.pdf"], "/out.pdf", paper_format="a4",
+        force_orientation="diagonal",
+    )
+    assert fake_fitz["__created__"] == []
+
+
 def test_form_files_debug_fill_precedes_pdf_placement(fake_fitz):
     fake_fitz["/multi.pdf"] = FakeDoc(
         pages=[FakePage(rect=FakeRect(100, 200))]
@@ -1826,6 +1882,22 @@ def test_command_pdf_form_forwards_debug_fill(monkeypatch):
     )
 
     assert calls[0][1]["debug_fill"] is True
+
+
+def test_command_pdf_form_forwards_forced_orientation(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        pdf,
+        "form_files",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or False,
+    )
+
+    helpers.command_pdf_form(
+        "/root", "formed.pdf", ["scan.pdf"], paper_format="a4",
+        force_orientation="landscape",
+    )
+
+    assert calls[0][1]["force_orientation"] == "landscape"
 
 
 def test_command_pdf_form_forwards_rename_processed(monkeypatch):

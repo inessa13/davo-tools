@@ -733,7 +733,12 @@ def _resolve_form_page_size(
     page_size: Tuple[float, float],
     source_width: float,
     source_height: float,
+    force_orientation: Optional[str] = None,
 ) -> Tuple[float, float]:
+    if force_orientation == "landscape":
+        return max(page_size), min(page_size)
+    if force_orientation == "portrait":
+        return min(page_size), max(page_size)
     width, height = page_size
     if source_width > source_height:
         return height, width
@@ -921,6 +926,7 @@ def form_files(
     rename_processed: bool = False,
     verbose: bool = False,
     rewrite: bool = False,
+    force_orientation: Optional[str] = None,
 ) -> bool:
     """Place PDF pages and images on consistently sized, oriented sheets."""
     files = list(input_files)
@@ -940,6 +946,10 @@ def form_files(
         base_width, base_height = page_size
         if base_width <= 0 or base_height <= 0:
             raise ValueError("page size must be positive")
+        if force_orientation not in (None, "landscape", "portrait"):
+            raise ValueError(
+                "force orientation must be landscape or portrait"
+            )
     except (TypeError, ValueError) as exc:
         logger.error("pdf.form: invalid option: %s", exc)
         return False
@@ -977,6 +987,7 @@ def form_files(
                                 (base_width, base_height),
                                 source_width,
                                 source_height,
+                                force_orientation=force_orientation,
                             )
                             target_width, target_height = target_size
                             dest_page = out_doc.new_page(
@@ -1012,7 +1023,8 @@ def form_files(
                     input_file
                 )
                 target_width, target_height = _resolve_form_page_size(
-                    (base_width, base_height), width_px, height_px
+                    (base_width, base_height), width_px, height_px,
+                    force_orientation=force_orientation,
                 )
                 if image_dpi is None:
                     # Pixels have no physical size in this case, so fitting is

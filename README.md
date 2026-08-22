@@ -41,6 +41,9 @@ With an activated venv: `source .venv/bin/activate`, then `make test` or `python
 `davo pdf form` creates a PDF from PDF, JPEG, PNG, and BMP inputs, fitting each
 page onto the requested paper size without cropping.  A source page's
 orientation is preserved; use `-W` to replace an existing output file.
+Use `--force-landscape` or `--force-portrait` to use that orientation for
+every output sheet. These mutually exclusive flags do not rotate source
+content.
 
 ```bash
 davo pdf form -4M file.jpg
@@ -48,6 +51,7 @@ davo pdf form -5 *.pdf
 davo pdf form -s 21 29.7 -o result.pdf *.jpg
 davo pdf form -4 --debug-fill file.jpg
 davo pdf form -4 -R file.jpg
+davo pdf form -4 --force-landscape file.jpg
 ```
 
 The image-DPI presets are `-H` (400), `-Q` (300), `-M` (200), `-l` (150), and

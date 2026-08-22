@@ -190,6 +190,23 @@ def test_parser_accepts_pdf_form_debug_fill_and_defaults_to_false():
     assert debug.debug_fill is True
 
 
+@pytest.mark.parametrize(
+    ("option", "orientation"),
+    [
+        ("--force-landscape", "landscape"),
+        ("--force-portrait", "portrait"),
+    ],
+)
+def test_parser_accepts_pdf_form_forced_orientation(option, orientation):
+    default = cli.init_parser().parse_args(["pdf", "form", "-4", "in.jpg"])
+    forced = cli.init_parser().parse_args(
+        ["pdf", "form", "-4", option, "in.jpg"]
+    )
+
+    assert default.force_orientation is None
+    assert forced.force_orientation == orientation
+
+
 @pytest.mark.parametrize("option", ["-R", "--rename-processed"])
 def test_parser_accepts_pdf_form_rename_processed(option):
     default = cli.init_parser().parse_args(["pdf", "form", "-4", "in.jpg"])
@@ -206,6 +223,10 @@ def test_parser_accepts_pdf_form_rename_processed(option):
     [
         ["pdf", "form", "input.jpg"],
         ["pdf", "form", "-4", "-5", "input.jpg"],
+        [
+            "pdf", "form", "-4", "--force-landscape",
+            "--force-portrait", "input.jpg",
+        ],
         ["pdf", "form", "-4", "-M", "--dpi", "200", "input.jpg"],
         ["pdf", "form", "-4", "--dpi", "71", "input.jpg"],
         ["pdf", "form", "-4", "--dpi", "801", "input.jpg"],
