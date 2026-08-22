@@ -10,6 +10,7 @@ try:
     import cv2
 except ImportError:
     cv2 = None
+import numpy
 from PIL import Image
 
 import davo.utils
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 P_LIVE = r"(:?IMG_\d{8}_\d{6} \()?IMG_(?P<num>\d+)\)?\.(?P<ext>.*)$"
 FAST_DIFF_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".heic"})
+JPEG_FORMATS = frozenset({"JPEG", "MPO"})
+MAGENTA = (255, 0, 255, 255)
 
 
 def command_tree(root, reverse, commit=False):
@@ -661,6 +664,186 @@ def command_downscale(
 
 def command_fingerprint(image: str):
     print(fingerprint.format_fingerprint(image))
+
+
+def command_image_merge(
+    images: list[str],
+    vertical: bool,
+    out: str = None,
+    debug_fill: bool = False,
+    smart: bool = False,
+):
+    """Merge image files without altering their source files."""
+    if len(images) < 2:
+        raise errors.UserError("At least two images are required for merge")
+
+    loaded_images, source_formats = _load_merge_images(images)
+    output_path, output_format = _merge_output_path(
+        images, source_formats, out
+    )
+    _validate_merge_output(output_path, images)
+
+    if smart:
+        offsets, size = _smart_merge_layout(loaded_images, vertical)
+    else:
+        offsets, size = _plain_merge_layout(loaded_images, vertical)
+
+    fill = MAGENTA if debug_fill else (0, 0, 0, 0)
+    result = Image.new("RGBA", size, fill)
+    for image, offset in zip(loaded_images, offsets):
+        result.alpha_composite(image, offset)
+
+    try:
+        if output_format in JPEG_FORMATS:
+            background = MAGENTA[:3] if debug_fill else (255, 255, 255)
+            flattened = Image.new("RGB", result.size, background)
+            flattened.paste(result, mask=result.getchannel("A"))
+            flattened.save(output_path, format=output_format)
+        else:
+            result.save(output_path, format=output_format)
+    except (OSError, ValueError) as exc:
+        raise errors.UserError(
+            "Cannot save merged image {}: {}".format(output_path, exc)
+        ) from exc
+
+
+def _load_merge_images(paths):
+    loaded_images = []
+    source_formats = []
+    for path in paths:
+        if not os.path.isfile(path):
+            raise errors.UserError(
+                "Image is not a regular file: {}".format(path)
+            )
+        try:
+            with Image.open(path) as image:
+                image.load()
+                if image.format is None:
+                    raise errors.UserError(
+                        "Cannot determine image format: {}".format(path)
+                    )
+                loaded_images.append(image.convert("RGBA"))
+                source_formats.append(image.format.upper())
+        except (OSError, ValueError) as exc:
+            raise errors.UserError(
+                "Cannot read image {}: {}".format(path, exc)
+            ) from exc
+    return loaded_images, source_formats
+
+
+def _merge_output_path(paths, source_formats, out):
+    if out is not None:
+        extension = os.path.splitext(out)[1].lower()
+        output_format = Image.registered_extensions().get(extension)
+        if output_format is None:
+            raise errors.UserError(
+                "Unsupported output image extension: {}".format(
+                    extension or "(missing)"
+                )
+            )
+        return out, output_format.upper()
+
+    first_path = paths[0]
+    root, extension = os.path.splitext(first_path)
+    if len(set(source_formats)) == 1 and extension:
+        output_format = source_formats[0]
+        output_path = "{}_merged{}".format(root, extension)
+    else:
+        output_format = "JPEG"
+        output_path = "{}_merged.jpg".format(root)
+    return output_path, output_format
+
+
+def _validate_merge_output(output_path, input_paths):
+    output_real_path = os.path.realpath(os.path.abspath(output_path))
+    for input_path in input_paths:
+        input_real_path = os.path.realpath(os.path.abspath(input_path))
+        if output_real_path == input_real_path:
+            raise errors.UserError(
+                "Output image must not replace an input image"
+            )
+    if os.path.lexists(output_path):
+        raise errors.UserError(
+            "Output image already exists: {}".format(output_path)
+        )
+
+
+def _plain_merge_layout(images, vertical):
+    if vertical:
+        width = max(image.width for image in images)
+        height = sum(image.height for image in images)
+        offsets = []
+        top = 0
+        for image in images:
+            offsets.append(((width - image.width) // 2, top))
+            top += image.height
+        return offsets, (width, height)
+
+    width = sum(image.width for image in images)
+    height = max(image.height for image in images)
+    offsets = []
+    left = 0
+    for image in images:
+        offsets.append((left, (height - image.height) // 2))
+        left += image.width
+    return offsets, (width, height)
+
+
+def _smart_merge_layout(images, vertical):
+    cross_axis = [
+        image.width if vertical else image.height for image in images
+    ]
+    if len(set(cross_axis)) != 1:
+        axis = "width" if vertical else "height"
+        raise errors.UserError(
+            "Smart {} merge requires images with equal {}".format(
+                "vertical" if vertical else "horizontal", axis
+            )
+        )
+    if cv2 is None:
+        raise errors.UserError("Smart merge requires OpenCV")
+
+    offsets = [(0, 0)]
+    position = 0
+    for previous, current in zip(images, images[1:]):
+        overlap = _find_merge_overlap(previous, current, vertical)
+        if overlap is None:
+            raise errors.UserError(
+                "No strong overlap found between adjacent images"
+            )
+        position += (previous.height if vertical else previous.width) - overlap
+        offsets.append((0, position) if vertical else (position, 0))
+
+    if vertical:
+        return offsets, (images[0].width, position + images[-1].height)
+    return offsets, (position + images[-1].width, images[0].height)
+
+
+def _find_merge_overlap(previous, current, vertical):
+    previous_gray = _merge_gray(previous)
+    current_gray = _merge_gray(current)
+    axis_length = min(
+        previous.height if vertical else previous.width,
+        current.height if vertical else current.width,
+    )
+    probe = min(64, axis_length)
+    if probe < 16:
+        return None
+
+    template = current_gray[:probe, :] if vertical else current_gray[:, :probe]
+    match = cv2.matchTemplate(
+        previous_gray, template, cv2.TM_CCOEFF_NORMED
+    )
+    _minimum, score, _minimum_location, location = cv2.minMaxLoc(match)
+    if score < 0.98:
+        return None
+    start = location[1] if vertical else location[0]
+    return (previous.height if vertical else previous.width) - start
+
+
+def _merge_gray(image):
+    rgb = numpy.asarray(image.convert("RGB"))
+    return cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
 
 
 def command_fingerprint_diff(

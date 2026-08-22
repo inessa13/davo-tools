@@ -19,6 +19,7 @@ from davo.services.photo import cli as photo_cli
         ["im", "downscale"],
         ["im", "fp", "input.png"],
         ["im", "diff", "first.png", "second.png"],
+        ["im", "merge", "-V", "first.png", "second.png"],
         ["im", "diff", "first.png", "second.png", "third.png"],
         ["im", "diff", "-r", "images"],
         ["im", "diff", "--recursive", "images"],
@@ -108,6 +109,38 @@ def test_parser_passes_options_to_image_diff_handler(
         fast=fast,
         group=group,
     )
+
+
+def test_parser_passes_options_to_image_merge_handler(mocker):
+    handler = mocker.patch.object(photo_cli.helpers, "command_image_merge")
+    namespace = cli.init_parser().parse_args(
+        [
+            "im", "merge", "--horizontal", "--debug-fill", "--smart",
+            "-o", "merged.png", "first.png", "second.png",
+        ]
+    )
+
+    namespace.func(namespace)
+
+    handler.assert_called_once_with(
+        images=["first.png", "second.png"],
+        vertical=False,
+        out="merged.png",
+        debug_fill=True,
+        smart=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["im", "merge", "first.png", "second.png"],
+        ["im", "merge", "-V", "-H", "first.png", "second.png"],
+    ],
+)
+def test_parser_rejects_invalid_image_merge_direction(arguments):
+    with pytest.raises(SystemExit):
+        cli.init_parser().parse_args(arguments)
 
 
 @pytest.mark.parametrize(

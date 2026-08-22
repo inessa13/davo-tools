@@ -494,6 +494,46 @@ def init_parser(parser=None, subparsers=None, commands=()):
             )
         )
 
+    if not commands or "merge" in commands:
+        cmd = subparsers.add_parser(
+            "merge",
+            help="merge images sequentially",
+        )
+        direction = cmd.add_mutually_exclusive_group(required=True)
+        direction.add_argument(
+            "-V",
+            "--vertical",
+            action="store_true",
+            help="place images from top to bottom",
+        )
+        direction.add_argument(
+            "-H",
+            "--horizontal",
+            action="store_true",
+            help="place images from left to right",
+        )
+        cmd.add_argument("-o", "--out", help="output image path")
+        cmd.add_argument(
+            "--debug-fill",
+            action="store_true",
+            help="fill unused and transparent areas with magenta",
+        )
+        cmd.add_argument(
+            "--smart",
+            action="store_true",
+            help="remove strong overlaps between adjacent images",
+        )
+        cmd.add_argument("images", metavar="IMAGE", nargs="+")
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_image_merge(
+                images=namespace.images,
+                vertical=namespace.vertical,
+                out=namespace.out,
+                debug_fill=namespace.debug_fill,
+                smart=namespace.smart,
+            )
+        )
+
     if not commands or "pdf" in commands:
         init_parser_pdf(
             parser,

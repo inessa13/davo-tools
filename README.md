@@ -64,3 +64,22 @@ Use `-R/--rename-processed` to rename every unique source after the PDF is
 successfully saved, for example `file.jpg` to `file_processed.jpg`. Inputs
 already marked this way, existing processed targets, and processed targets that
 would conflict with the output PDF are rejected before creating the PDF.
+
+## Image merging
+
+`davo im merge` places image files in the supplied order without resizing or
+rotating them. Choose exactly one direction: `-V` for a vertical stack or `-H`
+for a horizontal row. Smaller images are centred in the unused cross-axis area.
+
+```bash
+davo im merge -V first.png second.png
+davo im merge -H -o panorama.jpg left.jpg right.jpg
+davo im merge -V --debug-fill -o review.png *.png
+davo im merge -V --smart screenshot-1.png screenshot-2.png
+```
+
+Without `-o`, the output is named from the first input (for example,
+`first_merged.png`). `--debug-fill` paints unused and transparent areas
+magenta. `--smart` detects a strong edge overlap between each adjacent pair;
+it supports only equal widths for vertical stacks and equal heights for
+horizontal rows.
