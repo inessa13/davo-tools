@@ -180,6 +180,16 @@ def test_parser_accepts_pdf_form_quality_and_default():
     assert custom.quality == 37
 
 
+def test_parser_accepts_pdf_form_debug_fill_and_defaults_to_false():
+    default = cli.init_parser().parse_args(["pdf", "form", "-4", "in.jpg"])
+    debug = cli.init_parser().parse_args(
+        ["pdf", "form", "-4", "--debug-fill", "in.jpg"]
+    )
+
+    assert default.debug_fill is False
+    assert debug.debug_fill is True
+
+
 @pytest.mark.parametrize(
     "arguments",
     [

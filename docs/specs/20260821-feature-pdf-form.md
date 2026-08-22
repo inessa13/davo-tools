@@ -19,6 +19,8 @@ pages fit an explicitly requested A4, A5, A6, or centimetre-based paper size.
   their alpha channel.
 - `-H`, `-Q`, `-M`, `-l`, and `-L` select 400, 300, 200, 150, and 96 DPI;
   `--dpi` accepts 72 through 800 and defaults to 300.
+- `--debug-fill` fills each output page with magenta before placing its source,
+  making page margins and transparent PNG areas visible.
 - The default output is `[first-input]_formed.pdf`. Existing outputs need
   `-W/--rewrite`; output may never be an input file.
 - All inputs are validated before the result document is created.
@@ -29,4 +31,5 @@ Examples:
 davo pdf form -4M file.jpg
 davo pdf form -5 *.pdf
 davo pdf form -s 21 29.7 -o result.pdf *.jpg
+davo pdf form -4 --debug-fill file.jpg
 ```

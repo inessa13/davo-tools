@@ -836,6 +836,7 @@ def form_files(
     paper_format: Optional[str] = None,
     dpi: Any = 300,
     quality: Any = None,
+    debug_fill: bool = False,
     verbose: bool = False,
     rewrite: bool = False,
 ) -> bool:
@@ -893,6 +894,11 @@ def form_files(
                             dest_page = out_doc.new_page(
                                 width=target_width, height=target_height
                             )
+                            if debug_fill:
+                                _draw_form_debug_fill(
+                                    fitz, dest_page,
+                                    target_width, target_height,
+                                )
                             dest_rect = _fit_dimensions_within(
                                 fitz,
                                 source_width,
@@ -933,6 +939,10 @@ def form_files(
                 dest_page = out_doc.new_page(
                     width=target_width, height=target_height
                 )
+                if debug_fill:
+                    _draw_form_debug_fill(
+                        fitz, dest_page, target_width, target_height
+                    )
                 dest_rect = _fit_dimensions_within(
                     fitz, source_width, source_height,
                     target_width, target_height, allow_upscale=allow_upscale,
@@ -982,6 +992,22 @@ def form_files(
         return False
 
     return True
+
+
+def _draw_form_debug_fill(
+    fitz: Any, page: Any, width: float, height: float
+) -> None:
+    """Paint the debug background beneath the placed source content."""
+    if not hasattr(page, "draw_rect"):
+        raise RuntimeError(
+            "PyMuPDF page object does not support drawing API"
+        )
+    page.draw_rect(
+        fitz.Rect(0, 0, width, height),
+        color=None,
+        fill=(1, 0, 1),
+        overlay=False,
+    )
 
 
 def _render_page_jpeg_bytes(

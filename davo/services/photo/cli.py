@@ -895,6 +895,11 @@ def init_parser_pdf(
             default=80,
             help="jpeg recompression quality 0..100, default %(default)s",
         )
+        cmd.add_argument(
+            "--debug-fill",
+            action="store_true",
+            help="fill page margins with magenta for layout debugging",
+        )
         add_input_argument(cmd, multiple=True)
         cmd.set_defaults(
             dpi=300,
@@ -906,6 +911,7 @@ def init_parser_pdf(
                 size_cm=namespace.size,
                 dpi=namespace.dpi,
                 quality=namespace.quality,
+                debug_fill=namespace.debug_fill,
                 rewrite=namespace.rewrite,
                 verbose=namespace.verbose,
             )

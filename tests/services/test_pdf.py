@@ -29,17 +29,26 @@ class FakeOutputPage:
         self.height = height
         self.shown = []
         self.inserted = []
+        self.drawn = []
+        self.operations = []
+
+    def draw_rect(self, rect, color=None, fill=None, overlay=True):
+        self.drawn.append((rect, color, fill, overlay))
+        self.operations.append("draw_rect")
 
     def show_pdf_page(
         self, rect, doc, page_idx, keep_proportion=True
     ):
         self.shown.append((rect, doc, page_idx, keep_proportion))
+        self.operations.append("show_pdf_page")
 
     def insert_image(self, rect, stream, keep_proportion=True):
         self.inserted.append((rect, stream, keep_proportion))
+        self.operations.append("insert_image")
 
     def insertImage(self, rect, stream):
         self.inserted.append((rect, stream, True))
+        self.operations.append("insertImage")
 
 
 class FakePage:
@@ -455,6 +464,56 @@ def test_form_files_places_pdf_pages_without_enlarging(fake_fitz):
     assert result.saved == [
         ("/out.pdf", {"garbage": 3, "deflate": True, "clean": True})
     ]
+
+
+def test_form_files_debug_fill_precedes_pdf_placement(fake_fitz):
+    fake_fitz["/multi.pdf"] = FakeDoc(
+        pages=[FakePage(rect=FakeRect(100, 200))]
+    )
+
+    status = pdf.form_files(
+        ["/multi.pdf"], "/out.pdf", paper_format="a6", debug_fill=True
+    )
+
+    assert status is True
+    page = fake_fitz["__created__"][0].new_pages[0]
+    a6_width, a6_height = pdf._PAPER_FORMATS["a6"]
+    assert page.drawn == [
+        ((0, 0, a6_width, a6_height), None, (1, 0, 1), False)
+    ]
+    assert page.operations == ["draw_rect", "show_pdf_page"]
+
+
+def test_form_files_debug_fill_precedes_raster_placement(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "input.png"
+    Image.new("RGBA", (100, 50), (255, 0, 0, 0)).save(source)
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: path == str(source)
+    )
+    status = pdf.form_files(
+        [str(source)], str(tmp_path / "out.pdf"), paper_format="a6",
+        debug_fill=True,
+    )
+
+    assert status is True
+    page = fake_fitz["__created__"][0].new_pages[0]
+    a6_width, a6_height = pdf._PAPER_FORMATS["a6"]
+    assert page.drawn == [
+        ((0, 0, a6_height, a6_width), None, (1, 0, 1), False)
+    ]
+    assert page.operations == ["draw_rect", "insert_image"]
+
+
+def test_form_files_does_not_draw_debug_fill_by_default(fake_fitz):
+    fake_fitz["/multi.pdf"] = FakeDoc(
+        pages=[FakePage(rect=FakeRect(100, 200))]
+    )
+
+    assert pdf.form_files(["/multi.pdf"], "/out.pdf", paper_format="a6")
+
+    assert fake_fitz["__created__"][0].new_pages[0].drawn == []
 
 
 def test_form_files_rejects_unsupported_source_before_creating_result(
@@ -1392,6 +1451,22 @@ def test_command_pdf_form_forwards_quality(monkeypatch):
     )
 
     assert calls[0][1]["quality"] == 37
+
+
+def test_command_pdf_form_forwards_debug_fill(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        pdf,
+        "form_files",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or False,
+    )
+
+    helpers.command_pdf_form(
+        "/root", "formed.pdf", ["scan.pdf"], paper_format="a4",
+        debug_fill=True,
+    )
+
+    assert calls[0][1]["debug_fill"] is True
 
 
 def test_scale_file_uses_default_output_name_and_a4_portrait(fake_fitz):
