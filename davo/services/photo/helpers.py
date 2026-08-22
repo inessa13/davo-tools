@@ -1243,7 +1243,12 @@ def command_pdf_form(
             output_path = pdf._default_output(  # pylint: disable=W0212
                 _pdf_path(root, inf[0]), "_formed"
             )
-        command_pdf_info(None, output_path, verbose=verbose)
+        command_pdf_info(
+            None,
+            output_path,
+            verbose=verbose,
+            show_paths=False,
+        )
 
 
 def command_pdf_extract(
@@ -1271,22 +1276,64 @@ def command_pdf_extract(
 
 def command_pdf_info(
     root,
-    inf: str,
+    inf: str | list[str],
     pages: list = None,
     verbose: bool = False,
     pt: bool = False,
     table: bool = False,
+    compact: bool = False,
+    show_paths: bool = True,
 ):
-    rows = pdf.inspect_pages(
-        _pdf_path(root, inf),
-        pages=pages,
-        verbose=verbose,
-        pt=pt,
-    )
-    if rows is None:
-        return
+    input_files = [inf] if isinstance(inf, str) else inf
+    inspections = []
+    for input_file in input_files:
+        input_path = _pdf_path(root, input_file)
+        rows = pdf.inspect_pages(
+            input_path,
+            pages=pages,
+            verbose=verbose,
+            pt=pt,
+        )
+        if rows is None:
+            continue
+        inspections.append((input_path, rows))
 
-    print(pdf.format_page_info_report(rows, table=table))
+    page_number_width = None
+    if compact:
+        page_number_width = max(
+            (
+                len(str(row["total_pages"]))
+                for _input_path, rows in inspections
+                for row in rows
+            ),
+            default=1,
+        )
+
+    reports = []
+    for input_path, rows in inspections:
+        report = pdf.format_page_info_report(
+            rows,
+            table=table,
+            compact=compact,
+            page_number_width=page_number_width,
+        )
+        if show_paths and not compact:
+            report = "{}\n{}".format(
+                os.path.relpath(input_path, os.getcwd()),
+                report,
+            )
+        reports.append(report)
+
+    if reports:
+        if compact and table:
+            reports = [
+                reports[0],
+                *(
+                    "\n".join(report.splitlines()[1:])
+                    for report in reports[1:]
+                ),
+            ]
+        print(("\n" if compact else "\n\n").join(reports))
 
 
 def command_pdf_scale(

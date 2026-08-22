@@ -172,6 +172,7 @@ def fake_paths(monkeypatch):
         "/landscape.pdf",
         "/multi.pdf",
         "/scan.pdf",
+        "/selected.pdf",
     }
     monkeypatch.setattr(
         pdf.os.path,
@@ -1039,7 +1040,7 @@ def test_extract_images_whole_page_mode_renders_selected_pages(
         ),
         (
             ["info", "/documents/scan.pdf", "-p", "2", "1"],
-            {"inf": "/documents/scan.pdf", "pages": [2, 1]},
+            {"inf": ["/documents/scan.pdf"], "pages": [2, 1]},
         ),
         (
             [
@@ -1331,6 +1332,18 @@ def test_inspect_pages_classifies_text_vector_empty_and_mixed(fake_fitz):
     ]
     assert [row["resolution"] for row in rows[:3]] == ["-", "-", "-"]
     assert [row["image_size_px"] for row in rows[:3]] == ["-", "-", "-"]
+    assert [row["total_pages"] for row in rows] == [4, 4, 4, 4]
+
+
+def test_inspect_pages_keeps_source_total_for_selected_pages(fake_fitz):
+    fake_fitz["/selected.pdf"] = FakeDoc(
+        page_count=12,
+        pages=[FakePage() for _ in range(12)],
+    )
+
+    rows = pdf.inspect_pages("/selected.pdf", pages=[3])
+
+    assert [(row["page"], row["total_pages"]) for row in rows] == [(3, 12)]
 
 
 def test_inspect_pages_classifies_raster_and_formats_metadata(fake_fitz):
@@ -1354,6 +1367,7 @@ def test_inspect_pages_classifies_raster_and_formats_metadata(fake_fitz):
     assert rows == [
         {
             "page": 1,
+            "total_pages": 1,
             "type": "raster",
             "resolution": "300 dpi",
             "image_size_px": "2480x3508 px",
@@ -1418,6 +1432,7 @@ def test_inspect_pages_uses_visible_bbox_and_reused_xref_for_multi_raster(
     assert rows == [
         {
             "page": 1,
+            "total_pages": 1,
             "type": "multi-raster",
             "resolution": "300 dpi",
             "image_size_px": "1500x1500 px",
@@ -1443,9 +1458,12 @@ def test_command_pdf_info_prints_report(monkeypatch, capsys):
         ],
     )
 
+    monkeypatch.setattr(helpers.os, "getcwd", lambda: "/root")
+
     helpers.command_pdf_info("/root", "a.pdf")
 
     output = capsys.readouterr().out
+    assert output.startswith("a.pdf\n")
     assert "Page" in output
     assert "ImageSizePx" in output
     assert "empty" in output
@@ -1499,6 +1517,49 @@ def test_format_page_info_report_supports_points_and_ascii_table():
     assert report.splitlines()[-1] == report.splitlines()[0]
 
 
+def test_format_page_info_report_compact_omits_headers_and_formats_pages():
+    rows = [
+        {
+            "page": 3,
+            "total_pages": 12,
+            "type": "raster",
+            "resolution": "300 dpi",
+            "image_size_px": "100x200 px",
+            "orientation": "portrait",
+            "page_size": "a4",
+        }
+    ]
+
+    report = pdf.format_page_info_report(rows, compact=True)
+
+    assert report.startswith("03/12  raster")
+    assert "Page" not in report
+    assert "\n" not in report
+
+
+def test_format_page_info_report_compact_table_keeps_border_without_header():
+    rows = [
+        {
+            "page": 3,
+            "total_pages": 120,
+            "type": "raster",
+            "resolution": "300 dpi",
+            "image_size_px": "100x200 px",
+            "orientation": "portrait",
+            "page_size": "a4",
+        }
+    ]
+
+    report = pdf.format_page_info_report(rows, table=True, compact=True)
+
+    lines = report.splitlines()
+    assert lines[0].startswith("+")
+    assert lines[1].startswith("| 003/120")
+    assert "Page" not in report
+    assert len(lines) == 3
+    assert lines[-1] == lines[0]
+
+
 def test_init_parser_pdf_info_passes_display_options(monkeypatch):
     calls = []
     monkeypatch.setattr(
@@ -1507,19 +1568,194 @@ def test_init_parser_pdf_info_passes_display_options(monkeypatch):
     parser = argparse.ArgumentParser()
     photo_cli.init_parser_pdf(parser)
 
-    namespace = parser.parse_args(["info", "scan.pdf", "--pt", "-t"])
+    namespace = parser.parse_args(
+        ["info", "scan.pdf", "--pt", "-t", "--compact"]
+    )
     namespace.func(namespace)
 
     assert calls == [
         {
             "root": None,
-            "inf": "scan.pdf",
+            "inf": ["scan.pdf"],
             "pages": None,
             "verbose": False,
             "pt": True,
             "table": True,
+            "compact": True,
         }
     ]
+
+
+def test_init_parser_pdf_info_passes_all_inputs_and_pages(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        helpers, "command_pdf_info", lambda **kwargs: calls.append(kwargs)
+    )
+    parser = argparse.ArgumentParser()
+    photo_cli.init_parser_pdf(parser)
+
+    namespace = parser.parse_args(
+        [
+            "info",
+            "first.pdf",
+            "nested/second.pdf",
+            "-p",
+            "1",
+            "3",
+            "--pt",
+            "-t",
+            "--compact",
+        ]
+    )
+    namespace.func(namespace)
+
+    assert calls == [
+        {
+            "root": None,
+            "inf": ["first.pdf", "nested/second.pdf"],
+            "pages": [1, 3],
+            "verbose": False,
+            "pt": True,
+            "table": True,
+            "compact": True,
+        }
+    ]
+
+
+def test_command_pdf_info_prints_named_reports_in_order(monkeypatch, capsys):
+    calls = []
+
+    def inspect_pages(input_path, **kwargs):
+        calls.append((input_path, kwargs))
+        if input_path.endswith("broken.pdf"):
+            return None
+        return [
+            {
+                "page": 1,
+                "type": "empty",
+                "resolution": "-",
+                "image_size_px": "-",
+                "orientation": "portrait",
+                "page_size": "a4",
+            }
+        ]
+
+    monkeypatch.setattr(pdf, "inspect_pages", inspect_pages)
+    monkeypatch.setattr(helpers.os, "getcwd", lambda: "/work")
+
+    helpers.command_pdf_info(
+        None,
+        ["first.pdf", "/elsewhere/broken.pdf", "/work/nested/second.pdf"],
+        pages=[1, 3],
+        verbose=True,
+        pt=True,
+        table=True,
+    )
+
+    assert calls == [
+        ("first.pdf", {"pages": [1, 3], "verbose": True, "pt": True}),
+        (
+            "/elsewhere/broken.pdf",
+            {"pages": [1, 3], "verbose": True, "pt": True},
+        ),
+        (
+            "/work/nested/second.pdf",
+            {"pages": [1, 3], "verbose": True, "pt": True},
+        ),
+    ]
+    output = capsys.readouterr().out
+    assert output.startswith("first.pdf\n+")
+    assert "../elsewhere/broken.pdf" not in output
+    assert "\n\nnested/second.pdf\n+" in output
+    assert not output.endswith("\n\n")
+
+
+def test_command_pdf_info_compact_prints_reports_without_paths_or_blank_lines(
+    monkeypatch, capsys
+):
+    def inspect_pages(input_path, **_kwargs):
+        if input_path.endswith("broken.pdf"):
+            return None
+        return [
+            {
+                "page": 3,
+                "total_pages": 12,
+                "type": "empty",
+                "resolution": "-",
+                "image_size_px": "-",
+                "orientation": "portrait",
+                "page_size": "a4",
+            }
+        ]
+
+    monkeypatch.setattr(pdf, "inspect_pages", inspect_pages)
+
+    helpers.command_pdf_info(
+        None,
+        ["first.pdf", "broken.pdf", "second.pdf"],
+        compact=True,
+    )
+
+    assert capsys.readouterr().out == (
+        "03/12  empty  -  -  portrait  a4\n"
+        "03/12  empty  -  -  portrait  a4\n"
+    )
+
+
+def test_command_pdf_info_compact_uses_one_page_width_for_all_files(
+    monkeypatch, capsys
+):
+    def inspect_pages(input_path, **_kwargs):
+        total_pages = 3 if input_path == "short.pdf" else 120
+        return [
+            {
+                "page": 3,
+                "total_pages": total_pages,
+                "type": "empty",
+                "resolution": "-",
+                "image_size_px": "-",
+                "orientation": "portrait",
+                "page_size": "a4",
+            }
+        ]
+
+    monkeypatch.setattr(pdf, "inspect_pages", inspect_pages)
+
+    helpers.command_pdf_info(
+        None, ["short.pdf", "long.pdf"], compact=True
+    )
+
+    assert capsys.readouterr().out == (
+        "003/003  empty  -  -  portrait  a4\n"
+        "003/120  empty  -  -  portrait  a4\n"
+    )
+
+
+def test_command_pdf_info_compact_table_shares_border_between_files(
+    monkeypatch, capsys
+):
+    rows = [
+        {
+            "page": 1,
+            "total_pages": 1,
+            "type": "empty",
+            "resolution": "-",
+            "image_size_px": "-",
+            "orientation": "portrait",
+            "page_size": "a4",
+        }
+    ]
+    monkeypatch.setattr(pdf, "inspect_pages", lambda *_args, **_kwargs: rows)
+
+    helpers.command_pdf_info(
+        None, ["first.pdf", "second.pdf"], compact=True, table=True
+    )
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("+")
+    assert lines[2] == lines[0]
+    assert lines[-1] == lines[0]
+    assert len(lines) == 5
 
 
 @pytest.mark.parametrize(
@@ -1542,7 +1778,9 @@ def test_command_pdf_form_reports_actual_output_after_success(
 
     helpers.command_pdf_form("/root", out, ["scan.pdf"], paper_format="a4")
 
-    assert calls == [(None, expected_output, {"verbose": False})]
+    assert calls == [
+        (None, expected_output, {"verbose": False, "show_paths": False})
+    ]
 
 
 def test_command_pdf_form_does_not_report_failed_output(monkeypatch):

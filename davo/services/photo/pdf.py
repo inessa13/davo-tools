@@ -559,6 +559,7 @@ def inspect_pages(
                 rows.append(
                     {
                         "page": page_idx + 1,
+                        "total_pages": doc.page_count,
                         "type": page_type,
                         "resolution": resolution,
                         "image_size_px": image_size_px,
@@ -574,7 +575,10 @@ def inspect_pages(
 
 
 def format_page_info_report(
-    rows: Sequence[Dict[str, Any]], table: bool = False
+    rows: Sequence[Dict[str, Any]],
+    table: bool = False,
+    compact: bool = False,
+    page_number_width: Optional[int] = None,
 ) -> str:
     headers = [
         "Page",
@@ -584,19 +588,26 @@ def format_page_info_report(
         "Orientation",
         "PageSize",
     ]
-    table_rows = [
-        [
-            str(row["page"]),
-            row["type"],
-            row["resolution"],
-            row["image_size_px"],
-            row["orientation"],
-            row["page_size"],
-        ]
-        for row in rows
-    ]
+    table_rows = []
+    for row in rows:
+        if compact:
+            total_pages = row["total_pages"]
+            width = page_number_width or len(str(total_pages))
+            page = f'{row["page"]:0{width}d}/{total_pages:0{width}d}'
+        else:
+            page = str(row["page"])
+        table_rows.append(
+            [
+                page,
+                row["type"],
+                row["resolution"],
+                row["image_size_px"],
+                row["orientation"],
+                row["page_size"],
+            ]
+        )
 
-    widths = [len(header) for header in headers]
+    widths = [0 if compact else len(header) for header in headers]
     for row in table_rows:
         for idx, value in enumerate(row):
             widths[idx] = max(widths[idx], len(value))
@@ -615,16 +626,22 @@ def format_page_info_report(
                 )
             )
 
+        if compact:
+            return "\n".join(
+                (border, *(format_row(row) for row in table_rows), border)
+            )
         return "\n".join(
             (border, format_row(headers), border,
              *(format_row(row) for row in table_rows), border)
         )
 
-    rendered_rows = [
-        "  ".join(
-            header.ljust(widths[idx]) for idx, header in enumerate(headers)
+    rendered_rows = []
+    if not compact:
+        rendered_rows.append(
+            "  ".join(
+                header.ljust(widths[idx]) for idx, header in enumerate(headers)
+            )
         )
-    ]
     for row in table_rows:
         rendered_rows.append(
             "  ".join(

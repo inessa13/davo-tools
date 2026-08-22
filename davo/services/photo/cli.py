@@ -969,7 +969,7 @@ def init_parser_pdf(
             parents=parents,
             help="pdf: show page metadata (PyMuPDF)",
         )
-        add_input_argument(cmd)
+        add_input_argument(cmd, multiple=not legacy)
         cmd.add_argument(
             "-p",
             "--pages",
@@ -988,6 +988,11 @@ def init_parser_pdf(
             action="store_true",
             help="print an ASCII table",
         )
+        cmd.add_argument(
+            "--compact",
+            action="store_true",
+            help="print page rows without file names or column headers",
+        )
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_info(  # noqa
                 root=root(namespace),
@@ -996,6 +1001,7 @@ def init_parser_pdf(
                 verbose=namespace.verbose,
                 pt=namespace.pt,
                 table=namespace.table,
+                compact=namespace.compact,
             )
         )
 
