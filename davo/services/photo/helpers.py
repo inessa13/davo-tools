@@ -23,7 +23,15 @@ try:
 except ImportError:
     pass
 
-from . import clients, fingerprint, image_info, pdf, replace_classes, utils
+from . import (
+    clients,
+    fingerprint,
+    image_info,
+    pdf,
+    replace_classes,
+    utils,
+    video_info,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -747,6 +755,85 @@ def command_image_info(
             exif_block = image_info.format_exif_block(row)
             if exif_block:
                 report = "{}\n{}".format(report, exif_block)
+        reports.append(report)
+
+    print(("\n" if compact else "\n\n").join(reports))
+
+
+def command_clips_info(
+    inputs: list[str],
+    verbose: bool = False,
+    table: bool = False,
+    compact: bool = False,
+    meta: bool = False,
+    *,
+    detailed: bool = False,
+):
+    """Print readonly MediaInfo metadata for media paths in argv order."""
+    if not inputs:
+        inputs = sorted(glob.glob("*"))
+
+    inspections = []
+    total_videos = len(inputs)
+    for index, input_file in enumerate(inputs, start=1):
+        row = video_info.inspect_video(input_file, verbose=verbose)
+        if row is not None:
+            row["video_number"] = index
+            row["total_videos"] = total_videos
+            inspections.append((input_file, row))
+
+    if not inspections:
+        return
+
+    video_number_width = max(
+        len(str(total_videos)),
+        len(str(max(row["video_number"] for _, row in inspections))),
+    )
+    rows = [row for _, row in inspections]
+    if meta:
+        print(
+            video_info.format_video_info_metadata_report(
+                inspections,
+                meta_level="full",
+                table=table,
+                compact=compact,
+                detailed=detailed,
+                video_number_width=video_number_width,
+            )
+        )
+        return
+
+    if compact:
+        print(
+            video_info.format_video_info_report(
+                rows,
+                table=table,
+                compact=True,
+                detailed=detailed,
+                video_number_width=video_number_width,
+            )
+        )
+        return
+
+    reports = []
+    for input_file, row in inspections:
+        report = video_info.format_video_info_report(
+            [row],
+            table=table,
+            compact=compact,
+            detailed=detailed,
+            video_number_width=video_number_width,
+        )
+        if not compact:
+            report = "{}\n{}".format(
+                os.path.relpath(input_file, os.getcwd()), report
+            )
+        if len(row["video_tracks"]) > 1 or len(row["audio_tracks"]) > 1:
+            track_blocks = video_info.format_basic_meta_blocks(
+                row, include_general=False
+            )
+            if track_blocks:
+                report = f"{report}\n{track_blocks}"
         reports.append(report)
 
     print(("\n" if compact else "\n\n").join(reports))

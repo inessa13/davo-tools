@@ -626,6 +626,43 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
         return "{}{}".format(prefix, name)
 
     cmd = subparsers.add_parser(
+        command_name("info"),
+        help="show media metadata (MediaInfo)",
+    )
+    cmd.add_argument("-v", "--verbose", action="store_true")
+    cmd.add_argument(
+        "-t", "--table", action="store_true", help="print an ASCII table"
+    )
+    cmd.add_argument(
+        "-c",
+        "--compact",
+        action="store_true",
+        help="print media rows without file names or column headers",
+    )
+    cmd.add_argument(
+        "-d",
+        "--detailed",
+        action="store_true",
+        help="show all summary columns with full duration and FPS precision",
+    )
+    cmd.add_argument(
+        "--meta",
+        action="store_true",
+        help="print all non-empty raw MediaInfo fields by track",
+    )
+    cmd.add_argument("inputs", metavar="INPUT", nargs="*")
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_clips_info(
+            inputs=namespace.inputs,
+            verbose=namespace.verbose,
+            table=namespace.table,
+            compact=namespace.compact,
+            meta=namespace.meta,
+            detailed=namespace.detailed,
+        )
+    )
+
+    cmd = subparsers.add_parser(
         command_name("convert"),
         parents=p_prcvs,
         help="convert video (ffmpeg)",

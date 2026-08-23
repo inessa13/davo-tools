@@ -6,6 +6,7 @@ Per-change specifications. Naming and front matter: [`docs/shared/docs/conventio
 
 | Spec | Status |
 | --- | --- |
+| [`20260823-feature-clips-info.md`](20260823-feature-clips-info.md) | implemented |
 | [`20260822-feature-im-merge.md`](20260822-feature-im-merge.md) | implemented |
 | [`20260822-feature-im-info.md`](20260822-feature-im-info.md) | implemented |
 | [`20260809-feature-im-diff.md`](20260809-feature-im-diff.md) | implemented |

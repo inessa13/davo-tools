@@ -96,3 +96,19 @@ davo im info photo.jpg
 davo im info -e photo.jpg                 # Date and Camera columns
 davo im info --exif-full photo.jpg        # all readable EXIF tags
 ```
+
+## Media metadata
+
+`davo clips info` reads video and audio container metadata without changing the
+source file. By default its compact summary shows practical codec, bitrate, and
+quality information; duration is rounded to seconds and FPS to one decimal.
+`-d/--detailed` restores all quality columns and full duration/FPS precision.
+`--meta` prints every non-empty raw MediaInfo field. For files with multiple
+video or audio tracks, the normal report also prints a basic block for each
+track.
+
+```bash
+davo clips info movie.mp4
+davo clips info --detailed movie.mp4
+davo clips info --meta movie.mp4
+```
