@@ -33,7 +33,7 @@ def run_ffmpeg(
     :param bool commit:
     :return:
     """
-    chain = ["/usr/bin/ffmpeg"]
+    chain = ["ffmpeg"]
     if seek:
         chain += ["-ss", seek]
     chain += ["-i", inf]
@@ -80,7 +80,7 @@ def check_ffmpeg_faststart(path):
         stream = "v"
 
     cmd = [
-        "/usr/bin/ffprobe",
+        "ffprobe",
         "-v",
         "error",
         "-show_entries",

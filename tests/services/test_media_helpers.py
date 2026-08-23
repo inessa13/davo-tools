@@ -3,7 +3,7 @@ import re
 import pytest
 
 from davo import errors
-from davo.services.photo import helpers
+from davo.services.photo import clients, helpers
 
 _FILES = [
     "/test_media/a.mp4",  # converted
@@ -179,6 +179,34 @@ def iter_files(mocker):
     mocker.patch("davo.services.photo.utils.iter_files", _iter_files)
 
 
+def test_run_ffmpeg_uses_path_binary():
+    result = clients.run_ffmpeg("/a.avi", "/a-web.avi", commit=False)
+
+    assert result == "ffmpeg -i /a.avi /a-web.avi"
+
+
+@pytest.mark.parametrize(
+    ["path", "stream"],
+    [
+        ("/a.mp3", "a"),
+        ("/a.avi", "v"),
+    ],
+)
+def test_check_ffmpeg_faststart_uses_path_binary(
+    mocker, path, stream
+):
+    run_subproc = mocker.patch(
+        "davo.services.photo.clients.concur.run_subproc",
+        return_value=b"pos=501",
+    )
+
+    assert clients.check_ffmpeg_faststart(path) is True
+    cmd = run_subproc.call_args.args[0]
+    assert cmd[0] == "ffprobe"
+    assert cmd[cmd.index("-select_streams") + 1] == stream
+    assert run_subproc.call_args.kwargs == {"quiet": False, "pipe": True}
+
+
 @pytest.mark.skip
 @pytest.mark.parametrize("path", ("/test_media", "/test_media/short"))
 @pytest.mark.parametrize("points", ("00:10", "00:10 00:15", "00:00.00.1234"))
@@ -256,7 +284,7 @@ def test_r_command_clips_web(
             True,
             _OUT_SINGLE_DRY_C.replace(
                 "*cmd*",
-                "/usr/bin/ffmpeg -i /a.avi -movflags +faststart "
+                "ffmpeg -i /a.avi -movflags +faststart "
                 "-c copy /a-web.avi",
             ),
         ),
@@ -267,7 +295,7 @@ def test_r_command_clips_web(
             False,
             _OUT_SINGLE_DRY_C.replace(
                 "*cmd*",
-                "/usr/bin/ffmpeg -i /a.avi -movflags +faststart "
+                "ffmpeg -i /a.avi -movflags +faststart "
                 "-c copy /a-web.avi",
             ),
         ),
@@ -310,7 +338,7 @@ def test_r2_command_clips_web(
             False,
             _OUT_SINGLE_DRY_C.replace(
                 "*cmd*",
-                "/usr/bin/ffmpeg -ss 10 -i /a.avi -movflags +faststart "
+                "ffmpeg -ss 10 -i /a.avi -movflags +faststart "
                 "/a-trimmed.avi",
             ),
         ),
