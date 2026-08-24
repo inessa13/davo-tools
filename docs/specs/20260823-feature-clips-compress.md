@@ -5,24 +5,24 @@ slug: clips-compress
 date: 2026-08-23
 ---
 
-# Feature: add `davo clips compress` command
+# Feature: add `davo vid compress` command
 
 ## Summary
 
-`davo clips compress` creates H.264-compressed copies of one or more videos.
-The command is available only in the `clips` command group; legacy flat
+`davo vid compress` creates H.264-compressed copies of one or more videos.
+The command is available only in the `vid` command group; legacy flat
 `clips-*` commands are not supported.
 
 ## Usage
 
 ```bash
-davo clips compress movie.mov
-davo clips compress first.mp4 second.mkv --crf 20
-davo clips compress -r .
-davo clips compress --mp4 movie.mov
-davo clips compress --replace-source movie.mov
-davo clips compress --dry-run movie.mov
-davo clips compress -W movie.mov
+davo vid compress movie.mov
+davo vid compress first.mp4 second.mkv --crf 20
+davo vid compress -r .
+davo vid compress --mp4 movie.mov
+davo vid compress --replace-source movie.mov
+davo vid compress --dry-run movie.mov
+davo vid compress -W movie.mov
 ```
 
 The default CRF is `23`. Outputs are written beside their sources as

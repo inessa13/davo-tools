@@ -1,4 +1,4 @@
-"""Readonly inspection and rendering for ``davo clips info``."""
+"""Readonly inspection and rendering for ``davo vid info``."""
 
 import logging
 import os

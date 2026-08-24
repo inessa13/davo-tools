@@ -592,7 +592,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
 
 
 def init_parser_clips(parser=None, subparsers=None):
-    """Register video commands under the ``clips`` command group."""
+    """Register video commands under the ``vid`` command group."""
     if parser is None:
         parser = argparse.ArgumentParser()
 

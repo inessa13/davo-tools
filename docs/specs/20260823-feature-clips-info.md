@@ -5,11 +5,11 @@ slug: clips-info
 date: 2026-08-23
 ---
 
-# Feature: add `davo clips info` command
+# Feature: add `davo vid info` command
 
 ## Summary
 
-Add the readonly command `davo clips info [INPUT ...]`. It reads media metadata
+Add the readonly command `davo vid info [INPUT ...]`. It reads media metadata
 with the existing `pymediainfo` dependency and never changes the source files.
 
 Without inputs, the command scans sorted entries in the current directory.

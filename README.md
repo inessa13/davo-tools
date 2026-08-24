@@ -99,7 +99,7 @@ davo im info --exif-full photo.jpg        # all readable EXIF tags
 
 ## Media metadata
 
-`davo clips info` reads video and audio container metadata without changing the
+`davo vid info` reads video and audio container metadata without changing the
 source file. By default its compact summary shows practical codec, bitrate, and
 quality information; duration is rounded to seconds and FPS to one decimal.
 `-d/--detailed` restores all quality columns and full duration/FPS precision.
@@ -108,24 +108,24 @@ video or audio tracks, the normal report also prints a basic block for each
 track.
 
 ```bash
-davo clips info movie.mp4
-davo clips info --detailed movie.mp4
-davo clips info --meta movie.mp4
+davo vid info movie.mp4
+davo vid info --detailed movie.mp4
+davo vid info --meta movie.mp4
 ```
 
 ## Video compression
 
-`davo clips compress` writes H.264-compressed copies beside the input videos.
+`davo vid compress` writes H.264-compressed copies beside the input videos.
 It accepts files or directories; use `-r` to scan directories recursively.
 
 ```bash
-davo clips compress movie.mov
-davo clips compress first.mp4 second.mkv --crf 20
-davo clips compress -r .
-davo clips compress --mp4 movie.mov
-davo clips compress --replace-source movie.mov
-davo clips compress --dry-run movie.mov
-davo clips compress -W movie.mov
+davo vid compress movie.mov
+davo vid compress first.mp4 second.mkv --crf 20
+davo vid compress -r .
+davo vid compress --mp4 movie.mov
+davo vid compress --replace-source movie.mov
+davo vid compress --dry-run movie.mov
+davo vid compress -W movie.mov
 ```
 
 The default output is `<stem>_compressed<extension>` (`.mp4` with `--mp4`).

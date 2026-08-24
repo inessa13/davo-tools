@@ -54,7 +54,7 @@ def init_parser():
     )
     services.common.init_parser(cmd, _subparsers, commands=("compare",))
 
-    cmd = subparsers.add_parser("clips", help="video tools")
+    cmd = subparsers.add_parser("vid", help="video tools")
     services.photo.cli.init_parser_clips(cmd)
 
     cmd = subparsers.add_parser("im", help="image tools")
