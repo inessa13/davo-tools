@@ -344,19 +344,21 @@ def _media_info_field(filename, context, field, default=""):
     return default
 
 
+def _datetime_from_media_info(value):
+    value = value.removeprefix("UTC ").removesuffix(" UTC")
+    if m := re.match(
+        r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})[Z+-]", value
+    ):
+        value = m.group(1)
+    return datetime.datetime.fromisoformat(value)
+
+
 def _datetime_for_video_(filename, context):
     if value := _media_info_field(filename, context, "creationdate", ""):
-        if m := re.match(
-            r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})[Z+-]", value
-        ):
-            value = m.group(1)
-        value = datetime.datetime.fromisoformat(value)
-        return value
+        return _datetime_from_media_info(value)
 
     if value := _media_info_field(filename, context, "encoded_date", ""):
-        value = value.replace("UTC ", "")
-        value = datetime.datetime.fromisoformat(value)
-        return value
+        return _datetime_from_media_info(value)
 
     return None
 
