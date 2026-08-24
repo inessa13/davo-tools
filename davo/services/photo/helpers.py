@@ -39,6 +39,25 @@ P_LIVE = r"(:?IMG_\d{8}_\d{6} \()?IMG_(?P<num>\d+)\)?\.(?P<ext>.*)$"
 FAST_DIFF_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".heic"})
 JPEG_FORMATS = frozenset({"JPEG", "MPO"})
 MAGENTA = (255, 0, 255, 255)
+VIDEO_EXTENSIONS = frozenset(
+    {
+        ".3gp",
+        ".avi",
+        ".flv",
+        ".m2ts",
+        ".m4v",
+        ".mkv",
+        ".mov",
+        ".mp4",
+        ".mpeg",
+        ".mpg",
+        ".mts",
+        ".ogv",
+        ".ts",
+        ".webm",
+        ".wmv",
+    }
+)
 
 
 def command_tree(root, reverse, commit=False):
@@ -354,6 +373,123 @@ def command_clips_web(inf, output, verbose=False, commit=False, **kwargs):
         status, output, verbose=verbose, commit=commit, **kwargs
     )
     return status
+
+
+def _clips_compress_inputs(inputs, recursive=False):
+    """Return unique, sorted video files selected from command inputs."""
+    files = []
+    seen = set()
+    for input_path in inputs:
+        if os.path.isfile(input_path):
+            candidates = [input_path]
+        elif os.path.isdir(input_path):
+            candidates = utils.iter_files(
+                input_path, recursive=recursive, sort=True
+            )
+        else:
+            logger.warning("skipped missing input: %s", input_path)
+            continue
+
+        for candidate in candidates:
+            stem, extension = os.path.splitext(candidate)
+            key = os.path.normcase(os.path.abspath(candidate))
+            if (
+                key in seen
+                or extension.lower() not in VIDEO_EXTENSIONS
+                or stem.lower().endswith("_compressed")
+            ):
+                continue
+            seen.add(key)
+            files.append(candidate)
+    return files
+
+
+def command_clips_compress(
+    inputs: list[str],
+    crf: int = 23,
+    mp4: bool = False,
+    dry_run: bool = False,
+    rewrite: bool = False,
+    recursive: bool = False,
+    replace_source: bool = False,
+):
+    """Compress selected videos, continuing after individual failures."""
+    successful_sizes = []
+    for input_file in _clips_compress_inputs(inputs, recursive=recursive):
+        stem, extension = os.path.splitext(input_file)
+        output_file = f"{stem}_compressed{'.mp4' if mp4 else extension}"
+        replacement_file = f"{stem}.mp4" if mp4 else input_file
+
+        if (
+            replace_source
+            and mp4
+            and extension.lower() != ".mp4"
+            and os.path.exists(replacement_file)
+        ):
+            logger.error(
+                "%s: cannot replace source; target exists: %s",
+                input_file,
+                replacement_file,
+            )
+            continue
+
+        if os.path.exists(output_file) and not rewrite:
+            logger.info("%s: exists", input_file)
+            continue
+
+        command = clients.run_ffmpeg(
+            input_file,
+            output_file,
+            video_codec="libx264",
+            crf=crf,
+            audio_codec="copy",
+            overwrite=rewrite,
+            timeout=14400,
+            commit=not dry_run,
+        )
+        if dry_run:
+            logger.info(command)
+            continue
+        if not command:
+            logger.error("%s: failed", input_file)
+            continue
+
+        try:
+            source_size = os.path.getsize(input_file)
+            result_size = os.path.getsize(output_file)
+            if replace_source:
+                os.replace(output_file, replacement_file)
+                if mp4 and extension.lower() != ".mp4":
+                    os.remove(input_file)
+        except OSError as exc:
+            logger.error("%s: failed: %s", input_file, exc)
+            continue
+
+        successful_sizes.append((source_size, result_size))
+        reduction = _clips_compress_reduction(source_size, result_size)
+        logger.info(
+            "%s: %s -> %s (%.2f%% reduction)",
+            input_file,
+            format_utils.humanize_bytes(source_size),
+            format_utils.humanize_bytes(result_size),
+            reduction,
+        )
+
+    if len(successful_sizes) > 1:
+        source_size = sum(sizes[0] for sizes in successful_sizes)
+        result_size = sum(sizes[1] for sizes in successful_sizes)
+        logger.info(
+            "total: %s -> %s (%.2f%% reduction)",
+            format_utils.humanize_bytes(source_size),
+            format_utils.humanize_bytes(result_size),
+            _clips_compress_reduction(source_size, result_size),
+        )
+
+
+def _clips_compress_reduction(source_size, result_size):
+    if not source_size:
+        return 0.0
+    return (source_size - result_size) * 100.0 / source_size
 
 
 def command_thumbs(

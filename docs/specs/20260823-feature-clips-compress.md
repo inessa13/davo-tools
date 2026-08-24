@@ -1,0 +1,58 @@
+---
+status: implemented
+type: feature
+slug: clips-compress
+date: 2026-08-23
+---
+
+# Feature: add `davo clips compress` command
+
+## Summary
+
+`davo clips compress` creates H.264-compressed copies of one or more videos.
+The command is available only in the `clips` command group; legacy flat
+`clips-*` commands are not supported.
+
+## Usage
+
+```bash
+davo clips compress movie.mov
+davo clips compress first.mp4 second.mkv --crf 20
+davo clips compress -r .
+davo clips compress --mp4 movie.mov
+davo clips compress --replace-source movie.mov
+davo clips compress --dry-run movie.mov
+davo clips compress -W movie.mov
+```
+
+The default CRF is `23`. Outputs are written beside their sources as
+`<stem>_compressed<extension>`, or as `<stem>_compressed.mp4` with `--mp4`.
+Directories contribute common video formats (recursively with `-r`); non-video
+files and already-compressed names are skipped. Input processing is stable and
+deduplicated.
+
+Existing outputs are skipped unless `-W/--rewrite` is supplied. That flag adds
+ffmpeg's non-interactive overwrite option; on its own, it never changes the
+input file.
+`--dry-run` prints each ffmpeg command without running it. Each selected input
+is processed independently, so a failure does not stop later files.
+
+Each successful compression reports the source path, original and resulting
+sizes, and percentage reduction (which is negative if the file grows). When two
+or more files succeed, a final total uses the summed sizes. Skipped, failed, and
+dry-run inputs are excluded.
+
+`--replace-source` replaces a source only after ffmpeg successfully creates the
+compressed output. Without `--mp4`, the temporary compressed copy atomically
+replaces the source. With `--mp4`, the result is named `<stem>.mp4` and the
+non-MP4 source is removed; if that target already exists, that input is skipped.
+`-W/--rewrite` applies only to the temporary `_compressed` output and does not
+permit overwriting this separate MP4 target.
+
+## ffmpeg invocation
+
+For each output, the command uses:
+
+```text
+ffmpeg -i INPUT -vcodec libx264 -crf CRF -acodec copy OUTPUT
+```

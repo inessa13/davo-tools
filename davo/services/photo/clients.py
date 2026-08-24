@@ -15,6 +15,10 @@ def run_ffmpeg(
     copy_antz=False,
     quiet=False,
     save_mtime=False,
+    video_codec=None,
+    crf=None,
+    audio_codec=None,
+    overwrite=False,
     timeout=1 * 60 * 60,
     commit=True,
 ):
@@ -34,6 +38,8 @@ def run_ffmpeg(
     :return:
     """
     chain = ["ffmpeg"]
+    if overwrite:
+        chain.append("-y")
     if seek:
         chain += ["-ss", seek]
     chain += ["-i", inf]
@@ -43,6 +49,12 @@ def run_ffmpeg(
         chain += ["-c", "copy", "-avoid_negative_ts", "make_zero"]
     elif copy:
         chain += ["-c", "copy"]
+    if video_codec:
+        chain += ["-vcodec", video_codec]
+    if crf is not None:
+        chain += ["-crf", str(crf)]
+    if audio_codec:
+        chain += ["-acodec", audio_codec]
     if to:
         chain += ["-to", to]
     chain.append(out)

@@ -543,10 +543,7 @@ def test_clips_info_cli_rejects_meta_full():
         raise AssertionError("--meta-full must be rejected")
 
 
-def test_clips_info_cli_accepts_no_input_and_legacy_name():
+def test_clips_info_cli_accepts_no_input():
     parser = argparse.ArgumentParser()
     photo_cli.init_parser_clips(parser)
     assert parser.parse_args(["info"]).inputs == []
-
-    legacy = photo_cli.init_parser()[0]
-    assert callable(legacy.parse_args(["clips-info", "movie.mp4"]).func)

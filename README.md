@@ -112,3 +112,26 @@ davo clips info movie.mp4
 davo clips info --detailed movie.mp4
 davo clips info --meta movie.mp4
 ```
+
+## Video compression
+
+`davo clips compress` writes H.264-compressed copies beside the input videos.
+It accepts files or directories; use `-r` to scan directories recursively.
+
+```bash
+davo clips compress movie.mov
+davo clips compress first.mp4 second.mkv --crf 20
+davo clips compress -r .
+davo clips compress --mp4 movie.mov
+davo clips compress --replace-source movie.mov
+davo clips compress --dry-run movie.mov
+davo clips compress -W movie.mov
+```
+
+The default output is `<stem>_compressed<extension>` (`.mp4` with `--mp4`).
+Existing outputs are skipped unless `-W/--rewrite` is provided.
+Each successful file reports its original and compressed size and the percentage
+reduction; multiple successes also print a total. `--replace-source` replaces
+the source only after compression succeeds. With `--mp4`, the replacement is
+named `<stem>.mp4`; an existing file at that path is never overwritten when it
+is distinct from the source.

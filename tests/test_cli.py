@@ -13,6 +13,7 @@ from davo.services.photo import cli as photo_cli
         ["clips", "trim"],
         ["clips", "web"],
         ["clips", "isweb"],
+        ["clips", "compress", "input.mp4"],
         ["im", "convert"],
         ["im", "thumbs"],
         ["im", "recover"],
@@ -304,9 +305,56 @@ def test_file_keeps_non_image_photo_commands(command):
     assert callable(namespace.func)
 
 
-def test_photo_cli_keeps_legacy_clip_commands():
+def test_photo_cli_rejects_legacy_clip_convert():
     parser = photo_cli.init_parser()[0]
 
-    namespace = parser.parse_args(["clips-convert"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["clips-convert"])
 
-    assert callable(namespace.func)
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["clips-info", "movie.mp4"],
+        ["clips-convert"],
+        ["clips-split", "movie.mp4", "00:00:10"],
+        ["clips-trim"],
+        ["clips-web"],
+        ["clips-isweb"],
+        ["clips-compress", "movie.mp4"],
+    ],
+)
+def test_photo_cli_rejects_legacy_clip_commands(arguments):
+    with pytest.raises(SystemExit):
+        photo_cli.init_parser()[0].parse_args(arguments)
+
+
+def test_clips_compress_cli_forwards_options(mocker):
+    handler = mocker.patch.object(photo_cli.helpers, "command_clips_compress")
+    namespace = cli.init_parser().parse_args(
+        [
+            "clips",
+            "compress",
+            "--crf",
+            "20",
+            "--mp4",
+            "--replace-source",
+            "--dry-run",
+            "-W",
+            "-r",
+            "one.mov",
+            "two.mkv",
+        ]
+    )
+
+    namespace.func(namespace)
+
+    assert handler.call_args.kwargs == {
+        "inputs": ["one.mov", "two.mkv"],
+        "crf": 20,
+        "mp4": True,
+        "replace_source": True,
+        "dry_run": True,
+        "rewrite": True,
+        "recursive": True,
+    }

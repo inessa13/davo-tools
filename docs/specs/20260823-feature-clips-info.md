@@ -9,9 +9,8 @@ date: 2026-08-23
 
 ## Summary
 
-Add the readonly command `davo clips info [INPUT ...]`, also available as the
-legacy photo-CLI command `clips-info`. It reads media metadata with the existing
-`pymediainfo` dependency and never changes the source files.
+Add the readonly command `davo clips info [INPUT ...]`. It reads media metadata
+with the existing `pymediainfo` dependency and never changes the source files.
 
 Without inputs, the command scans sorted entries in the current directory.
 Direct inputs retain their supplied order. It accepts files containing a Video

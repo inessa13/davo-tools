@@ -273,9 +273,6 @@ def init_parser(parser=None, subparsers=None, commands=()):
             )
         )
 
-    if not commands or "clips" in commands:
-        init_parser_clips(parser, subparsers, prefix="clips-")
-
     if not commands or "iphone-clean-live" in commands:
         cmd = subparsers.add_parser(
             "iphone-clean-live",
@@ -594,8 +591,8 @@ def init_parser(parser=None, subparsers=None, commands=()):
     return parser, subparsers
 
 
-def init_parser_clips(parser=None, subparsers=None, prefix=""):
-    """Register video commands with either grouped or legacy names."""
+def init_parser_clips(parser=None, subparsers=None):
+    """Register video commands under the ``clips`` command group."""
     if parser is None:
         parser = argparse.ArgumentParser()
 
@@ -622,11 +619,8 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
     if subparsers is None:
         subparsers = parser.add_subparsers(title="list of commands")
 
-    def command_name(name):
-        return "{}{}".format(prefix, name)
-
     cmd = subparsers.add_parser(
-        command_name("info"),
+        "info",
         help="show media metadata (MediaInfo)",
     )
     cmd.add_argument("-v", "--verbose", action="store_true")
@@ -663,7 +657,7 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
     )
 
     cmd = subparsers.add_parser(
-        command_name("convert"),
+        "convert",
         parents=p_prcvs,
         help="convert video (ffmpeg)",
     )
@@ -682,7 +676,7 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
     )
 
     cmd = subparsers.add_parser(
-        command_name("split"),
+        "split",
         parents=[p_commit, p_silent, p_verbose],
         help="split video to clips (ffmpeg)",
     )
@@ -701,7 +695,7 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
     )
 
     cmd = subparsers.add_parser(
-        command_name("trim"),
+        "trim",
         parents=p_prcvs,
         help="trim video (ffmpeg)",
     )
@@ -719,7 +713,7 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
     )
 
     cmd = subparsers.add_parser(
-        command_name("web"),
+        "web",
         parents=p_prcvs,
         help="encode +faststart (ffmpeg)",
     )
@@ -734,7 +728,7 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
     )
 
     cmd = subparsers.add_parser(
-        command_name("isweb"),
+        "isweb",
         parents=[p_root, p_recursive, p_silent],
         help="check is video encoded with +faststart (ffmpeg)",
     )
@@ -743,6 +737,53 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
             root=namespace.path,
             recursive=namespace.recursive,
             silent=namespace.silent,
+        )
+    )
+
+    cmd = subparsers.add_parser(
+        "compress",
+        help="compress videos with H.264 (ffmpeg)",
+    )
+    cmd.add_argument(
+        "--crf",
+        type=int,
+        default=23,
+        help="H.264 constant rate factor, by default %(default)s",
+    )
+    cmd.add_argument(
+        "--mp4",
+        action="store_true",
+        help="write compressed files as .mp4",
+    )
+    cmd.add_argument(
+        "--replace-source",
+        action="store_true",
+        help="replace each source after it is successfully compressed",
+    )
+    cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print ffmpeg commands without running them",
+    )
+    cmd.add_argument(
+        "-W",
+        "--rewrite",
+        action="store_true",
+        help="overwrite existing compressed output files",
+    )
+    cmd.add_argument(
+        "-r", "--recursive", action="store_true", help="recursive scan"
+    )
+    cmd.add_argument("inputs", metavar="INPUT", nargs="+")
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_clips_compress(
+            inputs=namespace.inputs,
+            crf=namespace.crf,
+            mp4=namespace.mp4,
+            replace_source=namespace.replace_source,
+            dry_run=namespace.dry_run,
+            rewrite=namespace.rewrite,
+            recursive=namespace.recursive,
         )
     )
 
