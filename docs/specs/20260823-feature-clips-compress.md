@@ -23,6 +23,7 @@ davo vid compress --mp4 movie.mov
 davo vid compress --replace-source movie.mov
 davo vid compress --dry-run movie.mov
 davo vid compress -W movie.mov
+davo vid compress -H 720 movie.mov
 ```
 
 The default CRF is `23`. Outputs are written beside their sources as
@@ -49,6 +50,12 @@ non-MP4 source is removed; if that target already exists, that input is skipped.
 `-W/--rewrite` applies only to the temporary `_compressed` output and does not
 permit overwriting this separate MP4 target.
 
+`-H/--height HEIGHT` limits the output height to 144--2160 pixels; typical
+values are `240`, `360`, and `720`. The width is calculated automatically to
+preserve aspect ratio and is even for H.264. Videos already shorter than the
+requested height are not enlarged. Odd values are rounded down to the nearest
+even value.
+
 ## ffmpeg invocation
 
 For each output, the command uses:
@@ -56,3 +63,6 @@ For each output, the command uses:
 ```text
 ffmpeg -i INPUT -vcodec libx264 -crf CRF -acodec copy OUTPUT
 ```
+
+With `-H HEIGHT`, ffmpeg also receives the video filter
+`scale=-2:min(ih\\,HEIGHT)`, which derives an even width and prevents upscaling.

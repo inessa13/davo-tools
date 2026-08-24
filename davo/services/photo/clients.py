@@ -17,6 +17,7 @@ def run_ffmpeg(
     save_mtime=False,
     video_codec=None,
     crf=None,
+    height=None,
     audio_codec=None,
     overwrite=False,
     timeout=1 * 60 * 60,
@@ -33,6 +34,7 @@ def run_ffmpeg(
     :param bool copy_antz:
     :param bool quiet:
     :param bool save_mtime:
+    :param int height:
     :param int timeout:
     :param bool commit:
     :return:
@@ -53,6 +55,8 @@ def run_ffmpeg(
         chain += ["-vcodec", video_codec]
     if crf is not None:
         chain += ["-crf", str(crf)]
+    if height is not None:
+        chain += ["-vf", f"scale=-2:min(ih\\,{height})"]
     if audio_codec:
         chain += ["-acodec", audio_codec]
     if to:

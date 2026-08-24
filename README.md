@@ -126,9 +126,15 @@ davo vid compress --mp4 movie.mov
 davo vid compress --replace-source movie.mov
 davo vid compress --dry-run movie.mov
 davo vid compress -W movie.mov
+davo vid compress -H 720 movie.mov
 ```
 
 The default output is `<stem>_compressed<extension>` (`.mp4` with `--mp4`).
+Use `-H/--height` to limit the output height from 144 to 2160 pixels (for
+example, `-H 240`, `-H 360`, or `-H 720`). The width is calculated
+automatically without changing the aspect ratio; videos already shorter than
+the requested height are not enlarged. Odd heights are rounded down to an even
+value.
 Existing outputs are skipped unless `-W/--rewrite` is provided.
 Each successful file reports its original and compressed size and the percentage
 reduction; multiple successes also print a total. `--replace-source` replaces

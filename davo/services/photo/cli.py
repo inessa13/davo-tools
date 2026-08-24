@@ -23,6 +23,16 @@ def _form_dpi(value):
     return dpi
 
 
+def _video_compress_height(value):
+    try:
+        height = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("height must be an integer") from exc
+    if not 144 <= height <= 2160:
+        raise argparse.ArgumentTypeError("height must be from 144 to 2160")
+    return height // 2 * 2
+
+
 def init_parser(parser=None, subparsers=None, commands=()):
     if parser is None:
         parser = argparse.ArgumentParser()
@@ -751,6 +761,12 @@ def init_parser_clips(parser=None, subparsers=None):
         help="H.264 constant rate factor, by default %(default)s",
     )
     cmd.add_argument(
+        "-H",
+        "--height",
+        type=_video_compress_height,
+        help="maximum output height in pixels (144 to 2160)",
+    )
+    cmd.add_argument(
         "--mp4",
         action="store_true",
         help="write compressed files as .mp4",
@@ -779,6 +795,7 @@ def init_parser_clips(parser=None, subparsers=None):
         func=lambda namespace: helpers.command_clips_compress(
             inputs=namespace.inputs,
             crf=namespace.crf,
+            height=namespace.height,
             mp4=namespace.mp4,
             replace_source=namespace.replace_source,
             dry_run=namespace.dry_run,

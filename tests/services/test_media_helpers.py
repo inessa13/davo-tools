@@ -203,6 +203,23 @@ def test_run_ffmpeg_builds_compression_command():
     )
 
 
+def test_run_ffmpeg_limits_height_without_upscaling():
+    result = clients.run_ffmpeg(
+        "/a.mov",
+        "/a_compressed.mp4",
+        video_codec="libx264",
+        crf=20,
+        height=720,
+        audio_codec="copy",
+        commit=False,
+    )
+
+    assert result == (
+        "ffmpeg -i /a.mov -vcodec libx264 -crf 20 "
+        "-vf scale=-2:min(ih\\,720) -acodec copy /a_compressed.mp4"
+    )
+
+
 def test_clips_compress_selects_unique_videos_in_stable_order(mocker):
     mocker.patch.object(
         helpers.os.path,
@@ -259,6 +276,7 @@ def test_clips_compress_dry_run_and_rewrite(mocker, caplog):
     assert ffmpeg.call_args_list[0].kwargs == {
         "video_codec": "libx264",
         "crf": 18,
+        "height": None,
         "audio_codec": "copy",
         "overwrite": True,
         "timeout": 14400,

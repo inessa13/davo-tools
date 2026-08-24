@@ -407,6 +407,7 @@ def _clips_compress_inputs(inputs, recursive=False):
 def command_clips_compress(
     inputs: list[str],
     crf: int = 23,
+    height: int | None = None,
     mp4: bool = False,
     dry_run: bool = False,
     rewrite: bool = False,
@@ -442,6 +443,7 @@ def command_clips_compress(
             output_file,
             video_codec="libx264",
             crf=crf,
+            height=height,
             audio_codec="copy",
             overwrite=rewrite,
             timeout=14400,

@@ -342,6 +342,8 @@ def test_vid_compress_cli_forwards_options(mocker):
             "compress",
             "--crf",
             "20",
+            "-H",
+            "721",
             "--mp4",
             "--replace-source",
             "--dry-run",
@@ -357,9 +359,27 @@ def test_vid_compress_cli_forwards_options(mocker):
     assert handler.call_args.kwargs == {
         "inputs": ["one.mov", "two.mkv"],
         "crf": 20,
+        "height": 720,
         "mp4": True,
         "replace_source": True,
         "dry_run": True,
         "rewrite": True,
         "recursive": True,
     }
+
+
+@pytest.mark.parametrize("height", ["144", "2160"])
+def test_vid_compress_cli_accepts_height_limits(height):
+    namespace = cli.init_parser().parse_args(
+        ["vid", "compress", "-H", height, "movie.mov"]
+    )
+
+    assert namespace.height == int(height)
+
+
+@pytest.mark.parametrize("height", ["143", "2161", "720p"])
+def test_vid_compress_cli_rejects_invalid_height(height):
+    with pytest.raises(SystemExit):
+        cli.init_parser().parse_args(
+            ["vid", "compress", "-H", height, "movie.mov"]
+        )
