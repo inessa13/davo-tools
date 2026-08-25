@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 import pprint
+import re
 import time
 
 import reprint
@@ -15,6 +16,18 @@ from . import cache, conf, const, tasks, utils, workers
 logger = logging.getLogger(__name__)
 
 _CONFIRM_PERMANENT = {}
+_MD5_ETAG_RE = re.compile(r"[0-9a-fA-F]{32}")
+
+
+def _normalise_md5_etag(etag):
+    """Return a normalised MD5 ETag, or ``None`` when it is not one."""
+    if etag and etag.startswith('"') and etag.endswith('"'):
+        etag = etag[1:-1]
+
+    if etag and _MD5_ETAG_RE.fullmatch(etag):
+        return etag.lower()
+
+    return None
 
 
 def _diff_display_lines(files, all_files, root_key="", verbose=False):
@@ -219,7 +232,8 @@ def on_diff(namespace, print_details=True):
             name=file_.name,
             size=file_.size,
             modified=file_.last_modified,
-            md5=file_.etag[1:-1] if file_.etag else None,
+            md5=_normalise_md5_etag(file_.etag),
+            etag=file_.etag,
             state=constants.STATE_LOCAL_MISSING,
             comment=[],
             local_path=utils.file_path(file_.name),
@@ -251,9 +265,25 @@ def on_diff(namespace, print_details=True):
                 remote["comment"].append("size: {:.2f}%".format(diff))
 
             elif namespace.md5:
-                if davo.utils.path.file_hash(f_path) != remote["md5"]:
+                local_md5 = davo.utils.path.file_hash(f_path).hexdigest()
+                remote_md5 = remote["md5"]
+                if remote_md5 is None:
+                    logger.warning(
+                        "cannot compare MD5 for %s: S3 ETag %r is not a "
+                        "single-part MD5",
+                        remote["name"],
+                        remote["etag"],
+                    )
+                elif local_md5 != remote_md5:
                     equal = False
-                    remote["comment"].append("md5: different")
+                    if getattr(namespace, "verbose", False):
+                        remote["comment"].append(
+                            "md5: local {}, remote {}".format(
+                                local_md5, remote_md5
+                            )
+                        )
+                    else:
+                        remote["comment"].append("md5: different")
 
             if equal:
                 remote.update(state=constants.STATE_EQUAL, comment=[])
@@ -310,7 +340,9 @@ def on_diff(namespace, print_details=True):
                 if ext not in conf.get("ALLOWED_EXTENSIONS"):
                     remote_files[key]["state"] = constants.STATE_INVALID_TYPE
             if namespace.md5:
-                remote_files[key]["md5"] = davo.utils.path.file_hash(f_path)
+                remote_files[key]["md5"] = davo.utils.path.file_hash(
+                    f_path
+                ).hexdigest()
 
     # find renames
     if constants.STATE_RENAMED in modes:

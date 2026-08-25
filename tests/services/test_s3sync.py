@@ -1,3 +1,4 @@
+import hashlib
 import os
 from types import SimpleNamespace
 
@@ -72,6 +73,102 @@ def test_is_excluded_matches_regex_rule():
 
 def _diff_file(state, comment=None):
     return {"state": state, "comment": comment or []}
+
+
+def _on_diff_with_etag(tmp_path, monkeypatch, etag, content="local", **kwargs):
+    local_file = tmp_path / "local.txt"
+    local_file.write_text(content, encoding="utf-8")
+    remote_file = SimpleNamespace(
+        name="local.txt",
+        size=local_file.stat().st_size,
+        last_modified="2026-01-01T00:00:00.000Z",
+        etag=etag,
+    )
+
+    def iter_local_path(**_kwargs):
+        return [str(local_file)]
+
+    def file_key(_path):
+        return "local.txt"
+
+    def iter_remote_path(*_args, **_kwargs):
+        return iter([remote_file])
+
+    def connect_bucket():
+        return object()
+
+    monkeypatch.setattr(conf, "init", lambda: None)
+    monkeypatch.setattr(utils, "connect_bucket", connect_bucket)
+    monkeypatch.setattr(utils, "iter_local_path", iter_local_path)
+    monkeypatch.setattr(utils, "file_key", file_key)
+    monkeypatch.setattr(utils, "iter_remote_path", iter_remote_path)
+
+    options = {
+        "all": False,
+        "modes": constants.STATES_DIFF_ALL,
+        "path": str(tmp_path),
+        "recursive": True,
+        "depth": None,
+        "file_types": None,
+        "ignore_case": False,
+        "no_cache": True,
+        "md5": True,
+        "force_upload": False,
+        "force_download": False,
+        "brief": True,
+        "verbose": False,
+    }
+    options.update(kwargs)
+    namespace = SimpleNamespace(**options)
+    return handlers.on_diff(namespace, print_details=False)
+
+
+@pytest.mark.parametrize("quoted", (False, True))
+def test_on_diff_md5_accepts_matching_s3_etag(tmp_path, monkeypatch, quoted):
+    md5 = hashlib.md5(b"local").hexdigest()
+    etag = '"{}"'.format(md5.upper()) if quoted else md5.upper()
+
+    _bucket, diff = _on_diff_with_etag(
+        tmp_path, monkeypatch, etag, modes=constants.STATES_ALL
+    )
+
+    assert diff["local.txt"]["state"] == constants.STATE_EQUAL
+
+
+def test_on_diff_md5_shows_both_hashes_in_verbose_output(
+    tmp_path, monkeypatch
+):
+    remote_md5 = hashlib.md5(b"other").hexdigest()
+
+    _bucket, diff = _on_diff_with_etag(
+        tmp_path, monkeypatch, '"{}"'.format(remote_md5), verbose=True
+    )
+
+    assert diff["local.txt"]["state"] != constants.STATE_EQUAL
+    assert "md5: local {}, remote {}".format(
+        hashlib.md5(b"local").hexdigest(), remote_md5
+    ) in handlers._diff_display_lines(  # pylint: disable=protected-access
+        diff, diff, verbose=True
+    )[0]
+
+
+def test_on_diff_md5_skips_multipart_etag(tmp_path, monkeypatch, caplog):
+    _bucket, diff = _on_diff_with_etag(
+        tmp_path, monkeypatch, '"0123456789abcdef0123456789abcdef-2"'
+    )
+
+    assert diff == {}
+    assert "not a single-part MD5" in caplog.text
+
+
+def test_on_diff_md5_verbose_omits_matching_files(tmp_path, monkeypatch):
+    md5 = hashlib.md5(b"local").hexdigest()
+
+    _bucket, diff = _on_diff_with_etag(
+        tmp_path, monkeypatch, md5, verbose=True
+    )
+
+    assert diff == {}
 
 
 def test_diff_display_lines_collapses_wholly_missing_folders():
