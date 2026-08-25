@@ -17,6 +17,84 @@ logger = logging.getLogger(__name__)
 _CONFIRM_PERMANENT = {}
 
 
+def _diff_display_lines(files, all_files, root_key="", verbose=False):
+    """Return diff lines, collapsing wholly missing directory trees."""
+    if verbose:
+        return [
+            "{} {} {}".format(
+                data["state"], key, ", ".join(data.get("comment", []))
+            )
+            for key, data in files.items()
+        ]
+
+    root_key = root_key.rstrip("/")
+    candidates = {}
+    for key, data in files.items():
+        state = data["state"]
+        if state not in {
+            constants.STATE_LOCAL_NEW,
+            constants.STATE_LOCAL_MISSING,
+        }:
+            continue
+
+        parts = key.split("/")[:-1]
+        for index in range(1, len(parts) + 1):
+            directory = "/".join(parts[:index])
+            if directory != root_key:
+                candidates[directory] = state
+
+    collapsed = {}
+    for directory, state in candidates.items():
+        descendants = [
+            data
+            for key, data in all_files.items()
+            if key.startswith(directory + "/")
+        ]
+        if len(descendants) > 1 and all(
+            data["state"] == state for data in descendants
+        ):
+            collapsed[directory] = len(descendants)
+
+    # A parent directory represents all of its descendants, so only retain
+    # outermost candidates.
+    collapsed = {
+        directory: count
+        for directory, count in collapsed.items()
+        if not any(
+            directory.startswith(parent + "/") for parent in collapsed
+        )
+    }
+
+    lines = []
+    emitted = set()
+    for key, data in files.items():
+        directory = next(
+            (
+                parent
+                for parent in collapsed
+                if key.startswith(parent + "/")
+            ),
+            None,
+        )
+        if directory:
+            if directory not in emitted:
+                lines.append(
+                    "{} {}/ ({} files)".format(
+                        data["state"], directory, collapsed[directory]
+                    )
+                )
+                emitted.add(directory)
+            continue
+
+        lines.append(
+            "{} {} {}".format(
+                data["state"], key, ", ".join(data.get("comment", []))
+            )
+        )
+
+    return lines
+
+
 def on_config(namespace):
     if namespace.local:
         local_root = utils.find_project_root()
@@ -259,19 +337,20 @@ def on_diff(namespace, print_details=True):
         for key in to_del:
             del remote_files[key]
 
+    all_files = remote_files
     remote_files = {
         k: v for k, v in remote_files.items() if v["state"] in modes
     }
 
     if print_details and not namespace.brief:
-        keys = remote_files.keys()
-        for key in keys:
-            data = remote_files[key]
-            print(
-                "{} {} {}".format(
-                    data["state"], key, ", ".join(data.get("comment", []))
-                )
-            )
+        root_key = utils.file_key(path)
+        for line in _diff_display_lines(
+            remote_files,
+            all_files,
+            root_key=root_key,
+            verbose=getattr(namespace, "verbose", False),
+        ):
+            print(line)
 
     davo.utils.path.count_diff(remote_files, verbose=True)
 

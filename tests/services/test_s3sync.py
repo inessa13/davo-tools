@@ -70,6 +70,63 @@ def test_is_excluded_matches_regex_rule():
     )
 
 
+def _diff_file(state, comment=None):
+    return {"state": state, "comment": comment or []}
+
+
+def test_diff_display_lines_collapses_wholly_missing_folders():
+    files = {
+        "local/a.txt": _diff_file(constants.STATE_LOCAL_NEW),
+        "local/nested/b.txt": _diff_file(constants.STATE_LOCAL_NEW),
+        "remote/a.txt": _diff_file(constants.STATE_LOCAL_MISSING),
+        "remote/nested/b.txt": _diff_file(constants.STATE_LOCAL_MISSING),
+    }
+
+    assert handlers._diff_display_lines(files, files) == [  # pylint: disable=protected-access
+        "+ local/ (2 files)",
+        "- remote/ (2 files)",
+    ]
+
+
+def test_diff_display_lines_verbose_keeps_individual_files():
+    files = {
+        "local/a.txt": _diff_file(constants.STATE_LOCAL_NEW),
+        "local/b.txt": _diff_file(constants.STATE_LOCAL_NEW, ["size: 1%"]),
+    }
+
+    assert handlers._diff_display_lines(  # pylint: disable=protected-access
+        files, files, verbose=True
+    ) == [
+        "+ local/a.txt ",
+        "+ local/b.txt size: 1%",
+    ]
+
+
+def test_diff_display_lines_only_collapses_complete_nested_trees():
+    all_files = {
+        "partial/exists.txt": _diff_file(constants.STATE_EQUAL),
+        "partial/new/a.txt": _diff_file(constants.STATE_LOCAL_NEW),
+        "partial/new/b.txt": _diff_file(constants.STATE_LOCAL_NEW),
+        "single/file.txt": _diff_file(constants.STATE_LOCAL_NEW),
+        "root/a.txt": _diff_file(constants.STATE_LOCAL_NEW),
+        "root/b.txt": _diff_file(constants.STATE_LOCAL_NEW),
+    }
+    files = {
+        key: data
+        for key, data in all_files.items()
+        if data["state"] != constants.STATE_EQUAL
+    }
+
+    assert handlers._diff_display_lines(  # pylint: disable=protected-access
+        files, all_files, root_key="root"
+    ) == [
+        "+ partial/new/ (2 files)",
+        "+ single/file.txt ",
+        "+ root/a.txt ",
+        "+ root/b.txt ",
+    ]
+
+
 @pytest.mark.parametrize("no_cache", (False, True))
 def test_on_diff_excludes_ignored_remote_keys(tmp_path, monkeypatch, no_cache):
     local_file = tmp_path / "local.txt"
