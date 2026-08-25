@@ -31,7 +31,7 @@ def _normalise_md5_etag(etag):
 
 
 def _diff_display_lines(files, all_files, root_key="", verbose=False):
-    """Return diff lines, collapsing wholly missing directory trees."""
+    """Return sorted diff lines, collapsing wholly missing directory trees."""
     if verbose:
         return [
             "{} {} {}".format(
@@ -41,6 +41,7 @@ def _diff_display_lines(files, all_files, root_key="", verbose=False):
         ]
 
     root_key = root_key.rstrip("/")
+    root_prefix = "{}/".format(root_key) if root_key else ""
     candidates = {}
     for key, data in files.items():
         state = data["state"]
@@ -53,7 +54,7 @@ def _diff_display_lines(files, all_files, root_key="", verbose=False):
         parts = key.split("/")[:-1]
         for index in range(1, len(parts) + 1):
             directory = "/".join(parts[:index])
-            if directory != root_key:
+            if not root_prefix or directory.startswith(root_prefix):
                 candidates[directory] = state
 
     collapsed = {}
@@ -80,7 +81,7 @@ def _diff_display_lines(files, all_files, root_key="", verbose=False):
 
     lines = []
     emitted = set()
-    for key, data in files.items():
+    for key, data in sorted(files.items()):
         directory = next(
             (
                 parent

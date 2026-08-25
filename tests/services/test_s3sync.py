@@ -187,24 +187,55 @@ def test_diff_display_lines_collapses_wholly_missing_folders():
 
 def test_diff_display_lines_verbose_keeps_individual_files():
     files = {
-        "local/a.txt": _diff_file(constants.STATE_LOCAL_NEW),
-        "local/b.txt": _diff_file(constants.STATE_LOCAL_NEW, ["size: 1%"]),
+        "local/z.txt": _diff_file(constants.STATE_LOCAL_NEW),
+        "local/a.txt": _diff_file(constants.STATE_LOCAL_NEW, ["size: 1%"]),
     }
 
     assert handlers._diff_display_lines(  # pylint: disable=protected-access
         files, files, verbose=True
     ) == [
-        "+ local/a.txt ",
-        "+ local/b.txt size: 1%",
+        "+ local/z.txt ",
+        "+ local/a.txt size: 1%",
+    ]
+
+
+def test_diff_display_lines_sorts_non_verbose_output_by_path():
+    files = {
+        "z.txt": _diff_file(constants.STATE_LOCAL_NEW),
+        "a.txt": _diff_file(constants.STATE_LOCAL_MISSING),
+        "m.txt": _diff_file(constants.STATE_LOCAL_NEWER, ["size: 1%"]),
+    }
+
+    assert handlers._diff_display_lines(files, files) == [  # pylint: disable=protected-access
+        "- a.txt ",
+        "> m.txt size: 1%",
+        "+ z.txt ",
+    ]
+
+
+def test_diff_display_lines_does_not_collapse_selected_root():
+    files = {
+        "photo/200x/2008/08/15-22 _g/DSCN0667.JPG": _diff_file(
+            constants.STATE_LOCAL_MISSING
+        ),
+        "photo/200x/2008/08/15-22 _g/DSCN0670.jpg": _diff_file(
+            constants.STATE_LOCAL_MISSING
+        ),
+    }
+
+    assert handlers._diff_display_lines(  # pylint: disable=protected-access
+        files, files, root_key="photo/200x/2008/08/15-22 _g"
+    ) == [
+        "- photo/200x/2008/08/15-22 _g/DSCN0667.JPG ",
+        "- photo/200x/2008/08/15-22 _g/DSCN0670.jpg ",
     ]
 
 
 def test_diff_display_lines_only_collapses_complete_nested_trees():
     all_files = {
-        "partial/exists.txt": _diff_file(constants.STATE_EQUAL),
-        "partial/new/a.txt": _diff_file(constants.STATE_LOCAL_NEW),
-        "partial/new/b.txt": _diff_file(constants.STATE_LOCAL_NEW),
-        "single/file.txt": _diff_file(constants.STATE_LOCAL_NEW),
+        "root/exists.txt": _diff_file(constants.STATE_EQUAL),
+        "root/new/a.txt": _diff_file(constants.STATE_LOCAL_NEW),
+        "root/new/b.txt": _diff_file(constants.STATE_LOCAL_NEW),
         "root/a.txt": _diff_file(constants.STATE_LOCAL_NEW),
         "root/b.txt": _diff_file(constants.STATE_LOCAL_NEW),
     }
@@ -217,10 +248,9 @@ def test_diff_display_lines_only_collapses_complete_nested_trees():
     assert handlers._diff_display_lines(  # pylint: disable=protected-access
         files, all_files, root_key="root"
     ) == [
-        "+ partial/new/ (2 files)",
-        "+ single/file.txt ",
         "+ root/a.txt ",
         "+ root/b.txt ",
+        "+ root/new/ (2 files)",
     ]
 
 
