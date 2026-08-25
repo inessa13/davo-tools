@@ -126,6 +126,9 @@ def on_diff(namespace, print_details=True):
     )
 
     for file_ in ls_remote:
+        if davo.utils.path.is_excluded(file_.name, conf.get("IGNORE")):
+            continue
+
         if not utils.check_file_type(file_.name, namespace.file_types):
             continue
 

@@ -1,6 +1,11 @@
 import os
+from types import SimpleNamespace
 
-from davo.services.s3sync import cache, cli, conf, utils
+import pytest
+
+from davo import constants
+from davo import utils as davo_utils
+from davo.services.s3sync import cache, cli, conf, handlers, utils
 
 
 def test_cli_command_with_mapping():
@@ -49,6 +54,78 @@ def test_check_file_type_allow_list():
 def test_check_file_type_exclude_list():
     assert utils.check_file_type("photo.jpg", "^jpg,png") is False
     assert utils.check_file_type("video.mp4", "^jpg,png") is True
+
+
+def test_is_excluded_matches_substring_rule():
+    assert davo_utils.path.is_excluded("photos/audio/song.mp3", ("audio",))
+    assert not davo_utils.path.is_excluded("photos/image.jpg", ("audio",))
+
+
+def test_is_excluded_matches_regex_rule():
+    assert davo_utils.path.is_excluded(
+        "photo/2019/image.jpg", ("^photo/201[0-9]",)
+    )
+    assert not davo_utils.path.is_excluded(
+        "archive/photo/2019/image.jpg", ("^photo/201[0-9]",)
+    )
+
+
+@pytest.mark.parametrize("no_cache", (False, True))
+def test_on_diff_excludes_ignored_remote_keys(tmp_path, monkeypatch, no_cache):
+    local_file = tmp_path / "local.txt"
+    local_file.write_text("local", encoding="utf-8")
+    remote_files = [
+        SimpleNamespace(
+            name="audio/song.mp3",
+            size=1,
+            last_modified="2026-01-01T00:00:00.000Z",
+            etag='"ignored"',
+        ),
+        SimpleNamespace(
+            name="keep.txt",
+            size=1,
+            last_modified="2026-01-01T00:00:00.000Z",
+            etag='"kept"',
+        ),
+    ]
+    cached_values = []
+
+    monkeypatch.setattr(conf, "init", lambda: None)
+    monkeypatch.setattr(utils, "connect_bucket", lambda: object())
+    monkeypatch.setattr(
+        utils, "iter_local_path", lambda **_kwargs: [str(local_file)]
+    )
+    monkeypatch.setattr(utils, "file_key", lambda _path: "local.txt")
+
+    def iter_remote(*_args, **kwargs):
+        cached_values.append(kwargs["cached"])
+        return iter(remote_files)
+
+    monkeypatch.setattr(utils, "iter_remote_path", iter_remote)
+    monkeypatch.setattr(cache.cache, "init", lambda: None)
+    monkeypatch.setattr(cache.cache, "total", lambda: 1)
+    monkeypatch.setitem(conf._CONFIG, "IGNORE", ("audio",))
+
+    namespace = SimpleNamespace(
+        all=False,
+        modes=constants.STATES_DIFF_ALL,
+        path=str(tmp_path),
+        recursive=True,
+        depth=None,
+        file_types=None,
+        ignore_case=False,
+        no_cache=no_cache,
+        md5=False,
+        force_upload=False,
+        force_download=False,
+        brief=True,
+    )
+
+    _bucket, diff = handlers.on_diff(namespace, print_details=False)
+
+    assert "audio/song.mp3" not in diff
+    assert "keep.txt" in diff
+    assert cached_values == [not no_cache]
 
 
 def test_load_config_tree_merges_global_and_local(monkeypatch):
