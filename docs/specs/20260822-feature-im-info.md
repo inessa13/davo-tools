@@ -17,10 +17,10 @@ davo im info [-v] [-t|--table] [--compact] [-e|--exif | -E|--exif-full] IMAGE [I
 
 It reports each direct image path in argv order. Without input paths, it uses
 the current directory contents as if `*` had been passed. The base report includes
-format, EXIF-adjusted pixel dimensions and orientation, source DPI and mode,
-file size, and whether Pillow finds EXIF metadata. `--exif` adds date and
-camera columns; `--exif-full` prints the available tags in stable alphabetical
-order after the image's ordinary report.
+format, EXIF-adjusted pixel dimensions and orientation, estimated JPEG quality,
+source DPI and mode, file size, and whether Pillow finds EXIF metadata. `--exif`
+adds date and camera columns; `--exif-full` prints the available tags in stable
+alphabetical order after the image's ordinary report.
 
 ## Output and errors
 
@@ -32,3 +32,9 @@ uses one table when no full EXIF blocks are requested.
 Unreadable, corrupted, missing, and non-regular inputs are skipped. They emit
 a warning only with `-v`, and never prevent later valid inputs from being
 reported. The command never writes or otherwise changes a source file.
+
+`Quality`, placed after `ImageSizePx`, is an integer estimate without `%` for
+JPEG files. It compares the image's quantization tables with standard Pillow
+tables for qualities 1 through 100; custom tables use the closest match. It is
+not guaranteed original encoder metadata. Non-JPEG images or unavailable tables
+render as `-`.

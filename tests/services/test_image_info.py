@@ -15,7 +15,7 @@ def _save_exif_image(path):
     exif[306] = "2026:08:22 10:00:00"
     exif[36867] = "2026:08:22 09:00:00"
     Image.new("RGB", (4, 2), "red").save(
-        path, dpi=(300, 200), exif=exif
+        path, dpi=(300, 200), exif=exif, quality=85
     )
 
 
@@ -27,12 +27,47 @@ def test_inspect_image_reads_metadata_and_exif_orientation(tmp_path):
 
     assert row["format"] == "JPEG"
     assert row["image_size_px"] == "2x4 px"
+    assert row["quality"] == "85"
     assert row["resolution"] == "300x200 dpi"
     assert row["orientation"] == "portrait"
     assert row["mode"] == "RGB"
     assert row["exif"] == "yes"
     assert row["date"] == "2026:08:22 09:00:00"
     assert row["camera"] == "Davo Camera"
+
+
+def test_inspect_image_uses_dash_quality_for_non_jpeg(tmp_path):
+    source = tmp_path / "photo.png"
+    Image.new("RGB", (1, 1)).save(source)
+
+    row = image_info.inspect_image(str(source))
+
+    assert row["quality"] == "-"
+
+
+def test_format_image_info_report_renders_quality_in_all_layouts():
+    row = {
+        "image": 1,
+        "total_images": 1,
+        "format": "JPEG",
+        "image_size_px": "100x200 px",
+        "quality": "85",
+        "resolution": "300 dpi",
+        "orientation": "portrait",
+        "mode": "RGB",
+        "file_size": "1 kB",
+        "exif": "no",
+    }
+
+    report = image_info.format_image_info_report([row])
+    table_report = image_info.format_image_info_report([row], table=True)
+    compact_report = image_info.format_image_info_report([row], compact=True)
+
+    assert "ImageSizePx  Quality  Resolution" in report
+    assert "85" in report
+    assert "| ImageSizePx | Quality | Resolution" in table_report
+    assert "85" in table_report
+    assert compact_report.startswith("1/1  JPEG  100x200 px  85")
 
 
 def test_inspect_image_uses_general_date_and_missing_camera_placeholders(

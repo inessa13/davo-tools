@@ -1387,6 +1387,7 @@ def test_inspect_pages_classifies_text_vector_empty_and_mixed(fake_fitz):
     ]
     assert [row["resolution"] for row in rows[:3]] == ["-", "-", "-"]
     assert [row["image_size_px"] for row in rows[:3]] == ["-", "-", "-"]
+    assert [row["quality"] for row in rows[:3]] == ["-", "-", "-"]
     assert [row["total_pages"] for row in rows] == [4, 4, 4, 4]
 
 
@@ -1426,6 +1427,7 @@ def test_inspect_pages_classifies_raster_and_formats_metadata(fake_fitz):
             "type": "raster",
             "resolution": "300 dpi",
             "image_size_px": "2480x3508 px",
+            "quality": "-",
             "orientation": "portrait",
             "page_size": "a4",
         }
@@ -1464,6 +1466,70 @@ def test_inspect_pages_formats_different_dpi_per_axis(fake_fitz):
     assert rows[0]["resolution"] == "300x200 dpi"
 
 
+def test_inspect_pages_estimates_dominant_jpeg_quality(fake_fitz):
+    jpeg = io.BytesIO()
+    Image.new("RGB", (100, 100)).save(jpeg, format="JPEG", quality=85)
+    fake_fitz["/scan.pdf"] = FakeDoc(
+        pages=[
+            FakePage(
+                images=[(11,), (12,)],
+                image_rects={
+                    11: [FakeRect(72, 72)],
+                    12: [FakeRect(144, 144)],
+                },
+            )
+        ],
+        extracted_images={
+            11: {"width": 100, "height": 100, "ext": "png"},
+            12: {
+                "width": 200,
+                "height": 200,
+                "ext": "jpeg",
+                "image": jpeg.getvalue(),
+            },
+        },
+    )
+
+    row = pdf.inspect_pages("/scan.pdf")[0]
+
+    assert row["type"] == "multi-raster"
+    assert row["resolution"] == "100 dpi"
+    assert row["image_size_px"] == "200x200 px"
+    assert row["quality"] == "85"
+
+
+def test_inspect_pages_uses_dash_for_unavailable_or_invalid_quality(fake_fitz):
+    png = io.BytesIO()
+    Image.new("RGB", (10, 10)).save(png, format="PNG")
+    fake_fitz["/scan.pdf"] = FakeDoc(
+        page_count=3,
+        pages=[
+            FakePage(images=[(11,)], image_rects={11: [FakeRect(72, 72)]}),
+            FakePage(images=[(12,)], image_rects={12: [FakeRect(72, 72)]}),
+            FakePage(images=[(13,)], image_rects={13: [FakeRect(72, 72)]}),
+        ],
+        extracted_images={
+            11: {
+                "width": 10,
+                "height": 10,
+                "ext": "png",
+                "image": png.getvalue(),
+            },
+            12: {"width": 10, "height": 10, "ext": "jpeg"},
+            13: {"width": 10, "height": 10, "ext": "jpeg", "image": b"bad"},
+        },
+    )
+
+    rows = pdf.inspect_pages("/scan.pdf")
+
+    assert [row["quality"] for row in rows] == ["-", "-", "-"]
+    assert [row["resolution"] for row in rows] == [
+        "10 dpi",
+        "10 dpi",
+        "10 dpi",
+    ]
+
+
 def test_inspect_pages_uses_visible_bbox_and_reused_xref_for_multi_raster(
     fake_fitz,
 ):
@@ -1491,6 +1557,7 @@ def test_inspect_pages_uses_visible_bbox_and_reused_xref_for_multi_raster(
             "type": "multi-raster",
             "resolution": "300 dpi",
             "image_size_px": "1500x1500 px",
+            "quality": "-",
             "orientation": "portrait",
             "page_size": "a4",
         }
@@ -1507,6 +1574,7 @@ def test_command_pdf_info_prints_report(monkeypatch, capsys):
                 "type": "empty",
                 "resolution": "-",
                 "image_size_px": "-",
+                "quality": "85",
                 "orientation": "portrait",
                 "page_size": "210x297 mm",
             }
@@ -1521,6 +1589,8 @@ def test_command_pdf_info_prints_report(monkeypatch, capsys):
     assert output.startswith("a.pdf\n")
     assert "Page" in output
     assert "ImageSizePx" in output
+    assert "Quality" in output
+    assert "85" in output
     assert "empty" in output
     assert "210x297 mm" in output
     assert "XResolution" not in output
@@ -1558,6 +1628,7 @@ def test_format_page_info_report_supports_points_and_ascii_table():
             "type": "raster",
             "resolution": "300x200 dpi",
             "image_size_px": "100x200 px",
+            "quality": "85",
             "orientation": "portrait",
             "page_size": "612x792 pt",
         }
@@ -1568,6 +1639,7 @@ def test_format_page_info_report_supports_points_and_ascii_table():
     assert report.splitlines()[0].startswith("+")
     assert "| Page" in report
     assert "300x200 dpi" in report
+    assert "85" in report
     assert "XResolution" not in report
     assert report.splitlines()[-1] == report.splitlines()[0]
 
@@ -1580,6 +1652,7 @@ def test_format_page_info_report_compact_omits_headers_and_formats_pages():
             "type": "raster",
             "resolution": "300 dpi",
             "image_size_px": "100x200 px",
+            "quality": "85",
             "orientation": "portrait",
             "page_size": "a4",
         }
@@ -1588,6 +1661,7 @@ def test_format_page_info_report_compact_omits_headers_and_formats_pages():
     report = pdf.format_page_info_report(rows, compact=True)
 
     assert report.startswith("03/12  raster")
+    assert "85" in report
     assert "Page" not in report
     assert "\n" not in report
 
@@ -1600,6 +1674,7 @@ def test_format_page_info_report_compact_table_keeps_border_without_header():
             "type": "raster",
             "resolution": "300 dpi",
             "image_size_px": "100x200 px",
+            "quality": "85",
             "orientation": "portrait",
             "page_size": "a4",
         }
@@ -1732,6 +1807,7 @@ def test_command_pdf_info_prints_named_reports_in_order(monkeypatch, capsys):
                 "type": "empty",
                 "resolution": "-",
                 "image_size_px": "-",
+                "quality": "-",
                 "orientation": "portrait",
                 "page_size": "a4",
             }
@@ -1780,6 +1856,7 @@ def test_command_pdf_info_compact_prints_reports_without_paths_or_blank_lines(
                 "type": "empty",
                 "resolution": "-",
                 "image_size_px": "-",
+                "quality": "-",
                 "orientation": "portrait",
                 "page_size": "a4",
             }
@@ -1794,8 +1871,8 @@ def test_command_pdf_info_compact_prints_reports_without_paths_or_blank_lines(
     )
 
     assert capsys.readouterr().out == (
-        "03/12  empty  -  -  portrait  a4\n"
-        "03/12  empty  -  -  portrait  a4\n"
+        "03/12  empty  -  -  -  portrait  a4\n"
+        "03/12  empty  -  -  -  portrait  a4\n"
     )
 
 
@@ -1811,6 +1888,7 @@ def test_command_pdf_info_compact_uses_one_page_width_for_all_files(
                 "type": "empty",
                 "resolution": "-",
                 "image_size_px": "-",
+                "quality": "-",
                 "orientation": "portrait",
                 "page_size": "a4",
             }
@@ -1823,8 +1901,8 @@ def test_command_pdf_info_compact_uses_one_page_width_for_all_files(
     )
 
     assert capsys.readouterr().out == (
-        "003/003  empty  -  -  portrait  a4\n"
-        "003/120  empty  -  -  portrait  a4\n"
+        "003/003  empty  -  -  -  portrait  a4\n"
+        "003/120  empty  -  -  -  portrait  a4\n"
     )
 
 
@@ -1838,6 +1916,7 @@ def test_command_pdf_info_compact_table_shares_border_between_files(
             "type": "empty",
             "resolution": "-",
             "image_size_px": "-",
+            "quality": "-",
             "orientation": "portrait",
             "page_size": "a4",
         }
