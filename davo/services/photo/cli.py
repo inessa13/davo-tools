@@ -1091,6 +1091,12 @@ def init_parser_pdf(
             help="fill page margins with magenta for layout debugging",
         )
         cmd.add_argument(
+            "--crop",
+            nargs=4,
+            metavar=("TOP", "RIGHT", "BOTTOM", "LEFT"),
+            help="crop source edges with %% or px values",
+        )
+        cmd.add_argument(
             "-R", "--rename-processed",
             action="store_true",
             help="rename each source with a _processed suffix after success",
@@ -1108,6 +1114,7 @@ def init_parser_pdf(
                 dpi=namespace.dpi,
                 quality=namespace.quality,
                 debug_fill=namespace.debug_fill,
+                crop=namespace.crop,
                 rename_processed=namespace.rename_processed,
                 rewrite=namespace.rewrite,
                 verbose=namespace.verbose,

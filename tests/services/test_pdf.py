@@ -29,6 +29,7 @@ class FakeOutputPage:
         self.width = width
         self.height = height
         self.shown = []
+        self.clips = []
         self.inserted = []
         self.drawn = []
         self.operations = []
@@ -38,9 +39,10 @@ class FakeOutputPage:
         self.operations.append("draw_rect")
 
     def show_pdf_page(
-        self, rect, doc, page_idx, keep_proportion=True
+        self, rect, doc, page_idx, keep_proportion=True, clip=None
     ):
         self.shown.append((rect, doc, page_idx, keep_proportion))
+        self.clips.append(clip)
         self.operations.append("show_pdf_page")
 
     def insert_image(self, rect, stream, keep_proportion=True):
@@ -466,6 +468,61 @@ def test_form_files_places_pdf_pages_without_enlarging(fake_fitz):
     assert result.saved == [
         ("/out.pdf", {"garbage": 3, "deflate": True, "clean": True})
     ]
+
+
+def test_form_files_crops_pdf_page_and_fits_cropped_area(fake_fitz):
+    fake_fitz["/multi.pdf"] = FakeDoc(
+        pages=[FakePage(rect=FakeRect(100, 200))]
+    )
+
+    assert pdf.form_files(
+        ["/multi.pdf"], "/out.pdf", paper_format="a6",
+        crop=["10%", "20%", "10%", "20%"],
+    )
+
+    page = fake_fitz["__created__"][0].new_pages[0]
+    assert page.clips == [pytest.approx((20, 20, 80, 180))]
+    shown = page.shown[0][0]
+    assert shown[3] - shown[1] == pytest.approx(page.height)
+    assert shown[2] - shown[0] > 60
+
+
+def test_form_files_crops_raster_before_encoding(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "input.png"
+    Image.new("RGBA", (100, 50), (255, 0, 0, 128)).save(source)
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: path == str(source)
+    )
+
+    assert pdf.form_files(
+        [str(source)], str(tmp_path / "out.pdf"), paper_format="a6",
+        crop=["10%", "10px", "10%", "10px"],
+    )
+
+    stream = fake_fitz["__created__"][0].new_pages[0].inserted[0][1]
+    with Image.open(io.BytesIO(stream)) as image:
+        assert image.size == (80, 40)
+        assert image.mode == "RGBA"
+
+
+@pytest.mark.parametrize(
+    "crop",
+    [
+        ["1px", "0", "0", "0"],
+        ["-1%", "0", "0", "0"],
+        ["none", "0", "0", "0"],
+        ["50%", "0", "50%", "0"],
+    ],
+)
+def test_form_files_rejects_invalid_crop_before_creating_result(
+    fake_fitz, crop
+):
+    assert not pdf.form_files(
+        ["/multi.pdf"], "/out.pdf", paper_format="a6", crop=crop
+    )
+    assert fake_fitz["__created__"] == []
 
 
 @pytest.mark.parametrize(
@@ -2002,6 +2059,22 @@ def test_command_pdf_form_forwards_debug_fill(monkeypatch):
     )
 
     assert calls[0][1]["debug_fill"] is True
+
+
+def test_command_pdf_form_forwards_crop(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        pdf,
+        "form_files",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or False,
+    )
+
+    helpers.command_pdf_form(
+        "/root", "formed.pdf", ["scan.pdf"], paper_format="a4",
+        crop=["5%", "20px", "5%", "20px"],
+    )
+
+    assert calls[0][1]["crop"] == ["5%", "20px", "5%", "20px"]
 
 
 def test_command_pdf_form_forwards_forced_orientation(monkeypatch):

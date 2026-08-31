@@ -1,6 +1,8 @@
 import io
 import logging
+import math
 import os
+import re
 import tempfile
 import types
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -26,6 +28,9 @@ _PAPER_FORMATS = {
     "a5": (148.0 * 72.0 / 25.4, 210.0 * 72.0 / 25.4),
     "a6": (105.0 * 72.0 / 25.4, 148.0 * 72.0 / 25.4),
 }
+_CROP_VALUE_RE = re.compile(
+    r"^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(%|px)?$"
+)
 
 
 def _import_fitz(action: str) -> types.ModuleType:
@@ -790,13 +795,88 @@ def _resolve_form_page_size(
     return width, height
 
 
+def _normalize_crop(crop: Optional[Sequence[Any]]):
+    """Parse TOP RIGHT BOTTOM LEFT crop values into amounts and units."""
+    if crop is None:
+        return None
+    if isinstance(crop, str) or len(crop) != 4:
+        raise ValueError(
+            "crop must contain exactly four values: TOP RIGHT BOTTOM LEFT"
+        )
+
+    normalized = []
+    for value in crop:
+        match = _CROP_VALUE_RE.fullmatch(str(value))
+        if match is None:
+            raise ValueError(
+                "crop values must be non-negative numbers followed by % or px"
+            )
+        amount = float(match.group(1))
+        unit = match.group(2)
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError("crop values must be finite and non-negative")
+        if unit is None and amount != 0:
+            raise ValueError("crop values must use % or px (except zero)")
+        normalized.append((amount, unit))
+    return tuple(normalized)
+
+
+def _crop_margins(
+    crop, width: float, height: float
+) -> Tuple[float, float, float, float]:
+    """Resolve a normalized crop to top, right, bottom, left dimensions."""
+    if crop is None:
+        return (0.0, 0.0, 0.0, 0.0)
+
+    dimensions = (height, width, height, width)
+    margins = tuple(
+        amount * dimension / 100.0 if unit == "%" else amount
+        for (amount, unit), dimension in zip(crop, dimensions)
+    )
+    top, right, bottom, left = margins
+    if width - left - right <= 0 or height - top - bottom <= 0:
+        raise ValueError("crop leaves no visible source area")
+    return margins
+
+
+def _cropped_rect(fitz: Any, source_rect: Any, crop) -> Any:
+    """Return the visible source rectangle after applying ``crop``."""
+    width, height = _rect_dimensions(source_rect)
+    top, right, bottom, left = _crop_margins(crop, width, height)
+    if hasattr(source_rect, "x0"):
+        x0, y0 = source_rect.x0, source_rect.y0
+    else:
+        x0, y0 = source_rect[0], source_rect[1]
+    return _build_rect(
+        fitz,
+        x0 + left,
+        y0 + top,
+        x0 + width - right,
+        y0 + height - bottom,
+    )
+
+
+def _crop_image(image: Any, crop) -> Any:
+    """Crop a Pillow image before it is sized for its destination."""
+    if crop is None:
+        return image
+    width, height = image.size
+    top, right, bottom, left = _crop_margins(crop, width, height)
+    cropped = image.crop((left, top, width - right, height - bottom))
+    if not all(cropped.size):
+        raise ValueError("crop leaves no visible source area")
+    return cropped
+
+
 def _image_source_dimensions(
     input_file: str,
+    crop=None,
 ) -> Tuple[int, int, Optional[Tuple[float, float]]]:
     """Return image pixels and its physical DPI when it is trustworthy."""
     from PIL import Image  # noqa pylint: disable=C0415
 
     with Image.open(input_file) as image:
+        image = _crop_image(image, crop)
         width, height = image.size
         dpi = image.info.get("dpi")
         if not dpi or len(dpi) < 2:
@@ -812,6 +892,7 @@ def _form_image_bytes(
     dest_rect: Any,
     dpi: int,
     quality: int,
+    crop=None,
 ) -> bytes:
     """Encode an image no larger than its placed size at ``dpi``."""
     from PIL import Image  # noqa pylint: disable=C0415
@@ -822,7 +903,7 @@ def _form_image_bytes(
     ext = os.path.splitext(input_file)[1].lower()
 
     with Image.open(input_file) as source:
-        image = source.copy()
+        image = _crop_image(source, crop).copy()
         source_width, source_height = image.size
         scale = min(
             1.0,
@@ -855,6 +936,7 @@ def _validate_form_sources(
     fitz: Any,
     input_files: Sequence[str],
     verbose: bool,
+    crop=None,
 ) -> bool:
     """Check every source before a result document can be created."""
     from PIL import Image  # noqa pylint: disable=C0415
@@ -867,17 +949,26 @@ def _validate_form_sources(
 
         ext = os.path.splitext(input_file)[1].lower()
         if ext == ".pdf":
+            if crop is not None and any(unit == "px" for _, unit in crop):
+                logger.error(
+                    "pdf.form: px crop is not supported for PDF: %s",
+                    input_file,
+                )
+                return False
             try:
-                with _open_pdf(fitz, input_file, "form"):
-                    pass
+                with _open_pdf(fitz, input_file, "form") as doc:
+                    for page_idx in range(doc.page_count):
+                        page_rect = _get_page_rect(doc.load_page(page_idx))
+                        _cropped_rect(fitz, page_rect, crop)
             except (OSError, RuntimeError, ValueError):
                 logger.error("pdf.form: failed to open pdf: %s", input_file)
                 return False
         elif ext in _IMAGE_EXTENSIONS:
             try:
                 with Image.open(input_file) as image:
+                    _crop_margins(crop, *image.size)
                     image.verify()
-            except (OSError, ValueError):
+            except (OSError, RuntimeError, ValueError):
                 logger.error("pdf.form: invalid image: %s", input_file)
                 return False
         else:
@@ -972,6 +1063,7 @@ def form_files(
     verbose: bool = False,
     rewrite: bool = False,
     force_orientation: Optional[str] = None,
+    crop: Optional[Sequence[Any]] = None,
 ) -> bool:
     """Place PDF pages and images on consistently sized, oriented sheets."""
     files = list(input_files)
@@ -995,6 +1087,7 @@ def form_files(
             raise ValueError(
                 "force orientation must be landscape or portrait"
             )
+        normalized_crop = _normalize_crop(crop)
     except (TypeError, ValueError) as exc:
         logger.error("pdf.form: invalid option: %s", exc)
         return False
@@ -1013,7 +1106,7 @@ def form_files(
             return False
 
     fitz = _import_fitz("form creation")
-    if not _validate_form_sources(fitz, files, verbose):
+    if not _validate_form_sources(fitz, files, verbose, normalized_crop):
         return False
 
     try:
@@ -1025,8 +1118,11 @@ def form_files(
                         for page_idx in range(src.page_count):
                             source_page = src.load_page(page_idx)
                             source_rect = _get_page_rect(source_page)
+                            crop_rect = _cropped_rect(
+                                fitz, source_rect, normalized_crop
+                            )
                             source_width, source_height = _rect_dimensions(
-                                source_rect
+                                crop_rect
                             )
                             target_size = _resolve_form_page_size(
                                 (base_width, base_height),
@@ -1049,14 +1145,29 @@ def form_files(
                                 source_height,
                                 target_width,
                                 target_height,
+                                allow_upscale=normalized_crop is not None,
                             )
                             if hasattr(dest_page, "show_pdf_page"):
-                                dest_page.show_pdf_page(
-                                    dest_rect, src, page_idx,
-                                    keep_proportion=True,
-                                )
+                                if normalized_crop is None:
+                                    dest_page.show_pdf_page(
+                                        dest_rect, src, page_idx,
+                                        keep_proportion=True,
+                                    )
+                                else:
+                                    dest_page.show_pdf_page(
+                                        dest_rect, src, page_idx,
+                                        keep_proportion=True, clip=crop_rect,
+                                    )
                             elif hasattr(dest_page, "showPDFpage"):
-                                dest_page.showPDFpage(dest_rect, src, page_idx)
+                                if normalized_crop is None:
+                                    dest_page.showPDFpage(
+                                        dest_rect, src, page_idx
+                                    )
+                                else:
+                                    dest_page.showPDFpage(
+                                        dest_rect, src, page_idx,
+                                        clip=crop_rect,
+                                    )
                             else:
                                 raise RuntimeError(
                                     "PyMuPDF page object does not support "
@@ -1065,7 +1176,7 @@ def form_files(
                     continue
 
                 width_px, height_px, image_dpi = _image_source_dimensions(
-                    input_file
+                    input_file, normalized_crop
                 )
                 target_width, target_height = _resolve_form_page_size(
                     (base_width, base_height), width_px, height_px,
@@ -1080,7 +1191,7 @@ def form_files(
                     x_dpi, y_dpi = image_dpi
                     source_width = width_px * 72.0 / x_dpi
                     source_height = height_px * 72.0 / y_dpi
-                    allow_upscale = False
+                    allow_upscale = normalized_crop is not None
                 dest_page = out_doc.new_page(
                     width=target_width, height=target_height
                 )
@@ -1097,7 +1208,7 @@ def form_files(
                         dest_rect,
                         stream=_form_image_bytes(
                             input_file, dest_rect, normalized_dpi,
-                            normalized_quality,
+                            normalized_quality, normalized_crop,
                         ),
                         keep_proportion=False,
                     )
@@ -1106,7 +1217,7 @@ def form_files(
                         dest_rect,
                         stream=_form_image_bytes(
                             input_file, dest_rect, normalized_dpi,
-                            normalized_quality,
+                            normalized_quality, normalized_crop,
                         ),
                     )
                 else:

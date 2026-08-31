@@ -1840,6 +1840,7 @@ def command_pdf_form(
     verbose: bool = False,
     rewrite: bool = False,
     force_orientation: str = None,
+    crop: list = None,
 ):
     if size_cm is not None:
         page_size = tuple(value * 72.0 / 2.54 for value in size_cm)
@@ -1853,6 +1854,7 @@ def command_pdf_form(
         dpi=dpi,
         quality=quality,
         debug_fill=debug_fill,
+        crop=crop,
         rename_processed=rename_processed,
         rewrite=rewrite,
         verbose=verbose,

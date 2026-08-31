@@ -236,6 +236,14 @@ def test_parser_accepts_pdf_form_debug_fill_and_defaults_to_false():
     assert debug.debug_fill is True
 
 
+def test_parser_accepts_pdf_form_crop_in_css_order():
+    namespace = cli.init_parser().parse_args(
+        ["pdf", "form", "-4", "--crop", "5%", "20px", "0", "1.5%", "in.jpg"]
+    )
+
+    assert namespace.crop == ["5%", "20px", "0", "1.5%"]
+
+
 @pytest.mark.parametrize(
     ("option", "orientation"),
     [
