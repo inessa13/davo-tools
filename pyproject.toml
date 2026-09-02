@@ -33,6 +33,7 @@ dependencies = [
     "opencv-python==5.0.0.93",
     "numpy==2.4.6",
     "scikit-image==0.26.0",
+    "qrcode[pil]==8.2",
 ]
 [project.urls]
 Homepage = "https://github.com/inessa13/davo-tools"
