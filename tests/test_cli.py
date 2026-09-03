@@ -7,18 +7,20 @@ from davo.services.photo import cli as photo_cli
 @pytest.mark.parametrize(
     "arguments",
     [
-        ["clips", "convert"],
+        ["vid", "convert"],
         ["arch", "fns-rename"],
-        ["clips", "split", "input.mp4", "00:00:10"],
-        ["clips", "trim"],
-        ["clips", "web"],
-        ["clips", "isweb"],
+        ["vid", "split", "input.mp4", "00:00:10"],
+        ["vid", "trim"],
+        ["vid", "web"],
+        ["vid", "isweb"],
+        ["vid", "compress", "input.mp4"],
         ["im", "convert"],
         ["im", "thumbs"],
         ["im", "recover"],
         ["im", "downscale"],
         ["im", "fp", "input.png"],
         ["im", "diff", "first.png", "second.png"],
+        ["im", "merge", "-V", "first.png", "second.png"],
         ["im", "diff", "first.png", "second.png", "third.png"],
         ["im", "diff", "-r", "images"],
         ["im", "diff", "--recursive", "images"],
@@ -110,6 +112,50 @@ def test_parser_passes_options_to_image_diff_handler(
     )
 
 
+def test_parser_passes_options_to_image_merge_handler(mocker):
+    handler = mocker.patch.object(photo_cli.helpers, "command_image_merge")
+    namespace = cli.init_parser().parse_args(
+        [
+            "im", "merge", "--horizontal", "--debug-fill", "--smart",
+            "-o", "merged.png", "first.png", "second.png",
+        ]
+    )
+
+    namespace.func(namespace)
+
+    handler.assert_called_once_with(
+        images=["first.png", "second.png"],
+        vertical=False,
+        out="merged.png",
+        debug_fill=True,
+        smart=True,
+    )
+
+
+@pytest.mark.parametrize("smart_option", ["-S", "--smart"])
+def test_parser_accepts_each_smart_merge_option(mocker, smart_option):
+    handler = mocker.patch.object(photo_cli.helpers, "command_image_merge")
+    namespace = cli.init_parser().parse_args(
+        ["im", "merge", "-V", smart_option, "first.png", "second.png"]
+    )
+
+    namespace.func(namespace)
+
+    assert handler.call_args.kwargs["smart"] is True
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["im", "merge", "first.png", "second.png"],
+        ["im", "merge", "-V", "-H", "first.png", "second.png"],
+    ],
+)
+def test_parser_rejects_invalid_image_merge_direction(arguments):
+    with pytest.raises(SystemExit):
+        cli.init_parser().parse_args(arguments)
+
+
 @pytest.mark.parametrize(
     "arguments",
     [
@@ -190,6 +236,31 @@ def test_parser_accepts_pdf_form_debug_fill_and_defaults_to_false():
     assert debug.debug_fill is True
 
 
+def test_parser_accepts_pdf_form_crop_in_css_order():
+    namespace = cli.init_parser().parse_args(
+        ["pdf", "form", "-4", "--crop", "5%", "20px", "0", "1.5%", "in.jpg"]
+    )
+
+    assert namespace.crop == ["5%", "20px", "0", "1.5%"]
+
+
+@pytest.mark.parametrize(
+    ("option", "orientation"),
+    [
+        ("--force-landscape", "landscape"),
+        ("--force-portrait", "portrait"),
+    ],
+)
+def test_parser_accepts_pdf_form_forced_orientation(option, orientation):
+    default = cli.init_parser().parse_args(["pdf", "form", "-4", "in.jpg"])
+    forced = cli.init_parser().parse_args(
+        ["pdf", "form", "-4", option, "in.jpg"]
+    )
+
+    assert default.force_orientation is None
+    assert forced.force_orientation == orientation
+
+
 @pytest.mark.parametrize("option", ["-R", "--rename-processed"])
 def test_parser_accepts_pdf_form_rename_processed(option):
     default = cli.init_parser().parse_args(["pdf", "form", "-4", "in.jpg"])
@@ -206,6 +277,10 @@ def test_parser_accepts_pdf_form_rename_processed(option):
     [
         ["pdf", "form", "input.jpg"],
         ["pdf", "form", "-4", "-5", "input.jpg"],
+        [
+            "pdf", "form", "-4", "--force-landscape",
+            "--force-portrait", "input.jpg",
+        ],
         ["pdf", "form", "-4", "-M", "--dpi", "200", "input.jpg"],
         ["pdf", "form", "-4", "--dpi", "71", "input.jpg"],
         ["pdf", "form", "-4", "--dpi", "801", "input.jpg"],
@@ -238,9 +313,81 @@ def test_file_keeps_non_image_photo_commands(command):
     assert callable(namespace.func)
 
 
-def test_photo_cli_keeps_legacy_clip_commands():
+def test_photo_cli_rejects_legacy_clip_convert():
     parser = photo_cli.init_parser()[0]
 
-    namespace = parser.parse_args(["clips-convert"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["clips-convert"])
 
-    assert callable(namespace.func)
+
+def test_parser_rejects_removed_clips_group():
+    with pytest.raises(SystemExit):
+        cli.init_parser().parse_args(["clips", "info", "movie.mp4"])
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["clips-info", "movie.mp4"],
+        ["clips-convert"],
+        ["clips-split", "movie.mp4", "00:00:10"],
+        ["clips-trim"],
+        ["clips-web"],
+        ["clips-isweb"],
+        ["clips-compress", "movie.mp4"],
+    ],
+)
+def test_photo_cli_rejects_legacy_clip_commands(arguments):
+    with pytest.raises(SystemExit):
+        photo_cli.init_parser()[0].parse_args(arguments)
+
+
+def test_vid_compress_cli_forwards_options(mocker):
+    handler = mocker.patch.object(photo_cli.helpers, "command_clips_compress")
+    namespace = cli.init_parser().parse_args(
+        [
+            "vid",
+            "compress",
+            "--crf",
+            "20",
+            "-H",
+            "721",
+            "--mp4",
+            "--replace-source",
+            "--dry-run",
+            "-W",
+            "-r",
+            "one.mov",
+            "two.mkv",
+        ]
+    )
+
+    namespace.func(namespace)
+
+    assert handler.call_args.kwargs == {
+        "inputs": ["one.mov", "two.mkv"],
+        "crf": 20,
+        "height": 720,
+        "mp4": True,
+        "replace_source": True,
+        "dry_run": True,
+        "rewrite": True,
+        "recursive": True,
+    }
+
+
+@pytest.mark.parametrize("height", ["144", "2160"])
+def test_vid_compress_cli_accepts_height_limits(height):
+    namespace = cli.init_parser().parse_args(
+        ["vid", "compress", "-H", height, "movie.mov"]
+    )
+
+    assert namespace.height == int(height)
+
+
+@pytest.mark.parametrize("height", ["143", "2161", "720p"])
+def test_vid_compress_cli_rejects_invalid_height(height):
+    with pytest.raises(SystemExit):
+        cli.init_parser().parse_args(
+            ["vid", "compress", "-H", height, "movie.mov"]
+        )

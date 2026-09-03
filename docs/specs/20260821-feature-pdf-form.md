@@ -10,8 +10,17 @@ pages fit an explicitly requested A4, A5, A6, or centimetre-based paper size.
 
 - One of `-4`, `-5`, `-6`, or `-s WIDTH HEIGHT` is required.
 - Each source page selects portrait or landscape independently, keeps its
-  aspect ratio, is centered, and is never cropped. PDF and DPI-tagged images
-  are not enlarged.
+  aspect ratio, and is centered. PDF and DPI-tagged images are not enlarged
+  unless `--crop` is used.
+- `--crop TOP RIGHT BOTTOM LEFT` removes source edges before layout. Each
+  value is a finite non-negative number with a `%` or `px` suffix; unitless
+  `0` is also accepted. Percentages use the corresponding source axis, and
+  units may be mixed. Pixel values refer to source-image pixels and therefore
+  are supported for JPEG, PNG, and BMP only; PDF sources accept percentages
+  only. The remaining width and height must both be non-zero. The cropped area
+  is allowed to enlarge to fill the sheet by the normal fit layout.
+- `--force-landscape` and `--force-portrait` are mutually exclusive and set
+  every output sheet to that orientation without rotating source content.
 - PDF source pages remain vector placements. JPEG, PNG, and BMP inputs are
   resized before insertion to no more than the selected DPI at their actual
   placed size; low-resolution inputs are never enlarged. JPEG quality defaults
@@ -36,4 +45,6 @@ davo pdf form -5 *.pdf
 davo pdf form -s 21 29.7 -o result.pdf *.jpg
 davo pdf form -4 --debug-fill file.jpg
 davo pdf form -4 -R file.jpg
+davo pdf form -4 --force-portrait file.jpg
+davo pdf form -4 --crop 5% 20px 5% 20px file.jpg
 ```

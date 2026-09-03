@@ -12,8 +12,8 @@ date: 2026-08-01
 Add a new readonly `davo pdf info` command that prints one metadata row per
 selected PDF page.
 
-The command should report page type, effective raster resolution, orientation,
-and page size without writing a new PDF file.
+The command should report page type, effective raster resolution, estimated JPEG
+quality, orientation, and page size without writing a new PDF file.
 
 ## Scope
 
@@ -25,8 +25,9 @@ and page size without writing a new PDF file.
 ## Command contract
 
 - Command name: `davo pdf info`
-- Required positional argument:
-  - `INPUT` for the source PDF file
+- Optional positional arguments:
+  - `INPUT [INPUT ...]` for source PDF files. With no inputs, inspect the
+    current directory contents as if `*` had been passed.
 - Optional flags:
   - `-p N1 N2 ... NX` for explicit source PDF page numbers to inspect
   - `--pt` to show non-standard page sizes in points instead of millimetres
@@ -43,12 +44,17 @@ and page size without writing a new PDF file.
   - `Type`
   - `Resolution`
   - `ImageSizePx`
+  - `Quality`
   - `Orientation`
   - `PageSize`
 - Page numbering in output is 1-based.
 - `Resolution` is formatted as `<DPI> dpi` when rounded horizontal and
   vertical DPI match, otherwise `<XDPI>x<YDPI> dpi`.
 - For pages with no raster content, `Resolution` should render as `-`.
+- `Quality` is the estimated JPEG quality of the dominant raster placement,
+  shown as an integer without `%`. It is derived from JPEG quantization tables,
+  rather than guaranteed original encoder metadata. Non-JPEG images and missing,
+  malformed, or unreadable JPEG payloads render as `-`.
 - `PageSize` defaults to millimetres, such as `210x297 mm`; `--pt` switches
   non-standard sizes to points. ISO A3, A4, A5, and A6 pages (in either
   orientation and within 1 mm on each side) render as `a3`, `a4`, `a5`, or
@@ -108,6 +114,9 @@ effective raster DPI from placed image content.
   "dominant" means the displayed raster with the largest area on the page.
 - If a page has multiple raster images, classify the page as `multi-raster`
   and still emit a single DPI pair using the dominant placement.
+- For the same dominant placement, estimate JPEG quality by comparing its
+  quantization tables with standard Pillow JPEG tables for qualities 1 through
+  100. Custom encoder tables use the closest matching standard quality.
 - If a page has no displayed raster images, emit `-` for resolution.
 - Do not use full-page render DPI as the reported page resolution in the MVP.
 
@@ -147,6 +156,7 @@ effective raster DPI from placed image content.
   - `empty` classification
   - `mixed` classification
   - dominant-image DPI selection for pages with multiple raster images
+  - JPEG quality estimation, including non-JPEG and invalid-payload fallback
   - `-` resolution for non-raster pages
   - orientation derivation for portrait and landscape pages
   - page size formatting

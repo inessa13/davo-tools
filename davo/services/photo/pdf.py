@@ -1,16 +1,29 @@
 import io
 import logging
+import math
 import os
+import re
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
 import tempfile
+import textwrap
+import time
 import types
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from davo.services.photo import image_info
 from davo.utils import format as format_utils
 
 logger = logging.getLogger(__name__)
 
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
+_TEXT_EXTENSIONS = {".txt"}
+_HTML_EXTENSIONS = {".html", ".htm"}
 _EXTRACT_OUTPUT_TYPES = {"jpg", "png"}
 _COMPRESS_DPI_PRESETS = {72, 96, 150, 200, 300, 400}
 _COMPRESS_JPEG_QUALITY = 80
@@ -25,6 +38,258 @@ _PAPER_FORMATS = {
     "a5": (148.0 * 72.0 / 25.4, 210.0 * 72.0 / 25.4),
     "a6": (105.0 * 72.0 / 25.4, 148.0 * 72.0 / 25.4),
 }
+_TEXT_FONT_SIZE = 10.0
+_TEXT_LINE_HEIGHT = 12.0
+_TEXT_MARGIN = 72.0 / 2.54
+_CROP_VALUE_RE = re.compile(
+    r"^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(%|px)?$"
+)
+_HTML_RENDER_TIMEOUT_SECONDS = 10
+_HTML_RENDER_TERMINATION_GRACE_SECONDS = 1
+_HTML_BROWSER_CAPTURE_TIMEOUT_MILLISECONDS = 5000
+_HTML_BROWSER_LOG_TAIL_BYTES = 8192
+_HTML_RENDER_POLL_SECONDS = 0.1
+_HTML_BROWSER_COMMANDS = (
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+    "chrome",
+)
+_HTML_BROWSER_MACOS_PATHS = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+)
+
+
+class HtmlRenderError(RuntimeError):
+    """HTML could not be printed to a usable browser PDF."""
+
+
+def _find_html_browser() -> Optional[str]:
+    """Return a system Chrome/Chromium executable, if one is available."""
+    for command in _HTML_BROWSER_COMMANDS:
+        executable = shutil.which(command)
+        if executable:
+            return executable
+    for executable in _HTML_BROWSER_MACOS_PATHS:
+        if os.path.isfile(executable) and os.access(executable, os.X_OK):
+            return executable
+    return None
+
+
+def _stop_html_browser_process(process: Any) -> Tuple[Any, Any, str]:
+    """Stop a timed-out browser and all processes in its process group."""
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    else:  # pragma: no cover - exercised only on Windows
+        process.terminate()
+
+    try:
+        stdout, stderr = process.communicate(
+            timeout=_HTML_RENDER_TERMINATION_GRACE_SECONDS
+        )
+        return stdout, stderr, "Chrome process stopped after SIGTERM"
+    except subprocess.TimeoutExpired:
+        pass
+
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    else:  # pragma: no cover - exercised only on Windows
+        process.kill()
+
+    try:
+        stdout, stderr = process.communicate(
+            timeout=_HTML_RENDER_TERMINATION_GRACE_SECONDS
+        )
+        return stdout, stderr, "Chrome process stopped after SIGKILL"
+    except subprocess.TimeoutExpired as exc:  # pragma: no cover - defensive
+        logger.warning("pdf.html: browser process did not stop after SIGKILL")
+        return (
+            exc.output or b"",
+            exc.stderr or b"",
+            "Chrome process remained running after SIGKILL",
+        )
+
+
+def _html_browser_error(
+    message: str,
+    command: Sequence[str],
+    stderr: Any,
+    verbose: bool,
+    process_state: Optional[str] = None,
+) -> HtmlRenderError:
+    """Build a concise browser error, with diagnostics for verbose callers."""
+    if not verbose:
+        return HtmlRenderError(message)
+
+    if isinstance(stderr, bytes):
+        stderr_text = stderr.decode("utf-8", errors="replace")
+    else:
+        stderr_text = str(stderr or "")
+    stderr_tail = stderr_text[-_HTML_BROWSER_LOG_TAIL_BYTES:]
+    diagnostics = [f"Chrome command: {shlex.join(command)}"]
+    if process_state:
+        diagnostics.append(process_state)
+    if stderr_tail:
+        diagnostics.append(
+            "Chrome stderr (last "
+            f"{_HTML_BROWSER_LOG_TAIL_BYTES} bytes):\n{stderr_tail}"
+        )
+    else:
+        diagnostics.append("Chrome stderr: (no output)")
+    return HtmlRenderError(f"{message}\n" + "\n".join(diagnostics))
+
+
+def _html_browser_log_tail(log_file: Any) -> bytes:
+    """Read the useful end of a Chrome log redirected away from a pipe."""
+    log_file.flush()
+    log_file.seek(0, os.SEEK_END)
+    size = log_file.tell()
+    log_file.seek(max(0, size - _HTML_BROWSER_LOG_TAIL_BYTES))
+    return log_file.read()
+
+
+def _html_pdf_is_valid(fitz: Any, output_path: str) -> bool:
+    """Return whether a fully written browser PDF has at least one page."""
+    try:
+        with _open_pdf(fitz, output_path, "HTML rendering") as rendered:
+            return rendered.page_count > 0
+    except Exception:  # A PDF can still be being written by Chrome.
+        return False
+
+
+def _render_html_to_pdf(
+    fitz: Any,
+    input_file: str,
+    temp_dir: str,
+    verbose: bool = False,
+) -> str:
+    """Print local HTML through Chrome/Chromium into a checked PDF."""
+    if not os.path.isfile(input_file):
+        raise HtmlRenderError("HTML file not found")
+    browser = _find_html_browser()
+    if browser is None:
+        raise HtmlRenderError(
+            "Chrome or Chromium is required to render HTML; install Chromium"
+        )
+
+    source_uri = Path(input_file).resolve().as_uri()
+    output_path = os.path.join(
+        temp_dir, f"html-{len(os.listdir(temp_dir))}.pdf"
+    )
+    profile_dir = tempfile.mkdtemp(prefix="chrome-profile-", dir=temp_dir)
+    command = [
+        browser,
+        "--headless",
+        "--disable-gpu",
+        "--allow-file-access-from-files",
+        "--no-pdf-header-footer",
+        f"--timeout={_HTML_BROWSER_CAPTURE_TIMEOUT_MILLISECONDS}",
+        f"--user-data-dir={profile_dir}",
+        f"--print-to-pdf={output_path}",
+    ]
+    if sys.platform == "darwin":
+        command.extend(
+            (
+                "--use-mock-keychain",
+                "--disable-features=DialMediaRouteProvider",
+                "--no-first-run",
+                "--no-default-browser-check",
+            )
+        )
+    if verbose:
+        command.append("--enable-logging=stderr")
+    command.append(source_uri)
+
+    stdout_log = tempfile.TemporaryFile(dir=temp_dir)
+    stderr_log = tempfile.TemporaryFile(dir=temp_dir)
+    popen_kwargs: Dict[str, Any] = {
+        "stdout": stdout_log,
+        "stderr": stderr_log,
+    }
+    if os.name == "posix":
+        popen_kwargs["start_new_session"] = True
+    else:  # pragma: no cover - exercised only on Windows
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+
+    process = None
+    stderr = b""
+    try:
+        # Keep the process available to terminate its whole group after a PDF
+        # is ready, or on timeout.
+        process = subprocess.Popen(  # pylint: disable=consider-using-with
+            command, **popen_kwargs
+        )
+        deadline = time.monotonic() + _HTML_RENDER_TIMEOUT_SECONDS
+        previous_size = None
+        while time.monotonic() < deadline:
+            if os.path.isfile(output_path):
+                size = os.path.getsize(output_path)
+                if size > 0 and size == previous_size:
+                    if _html_pdf_is_valid(fitz, output_path):
+                        _stop_html_browser_process(process)
+                        return output_path
+                previous_size = size
+
+            if process.poll() is not None:
+                break
+            time.sleep(_HTML_RENDER_POLL_SECONDS)
+        else:
+            _stdout, _stderr, process_state = _stop_html_browser_process(
+                process
+            )
+            stderr = _html_browser_log_tail(stderr_log)
+            raise _html_browser_error(
+                "browser timed out while rendering HTML after "
+                f"{_HTML_RENDER_TIMEOUT_SECONDS} seconds",
+                command,
+                stderr,
+                verbose,
+                process_state,
+            )
+        stderr = _html_browser_log_tail(stderr_log)
+    except OSError as exc:
+        raise _html_browser_error(
+            f"browser failed to render HTML: {exc}", command, b"", verbose
+        ) from exc
+    finally:
+        stdout_log.close()
+        stderr_log.close()
+        shutil.rmtree(profile_dir, ignore_errors=True)
+
+    if process.returncode != 0:
+        raise _html_browser_error(
+            f"browser failed to render HTML (exit {process.returncode})",
+            command,
+            stderr,
+            verbose,
+        )
+    if not os.path.isfile(output_path) or os.path.getsize(output_path) == 0:
+        raise _html_browser_error(
+            "browser did not create a PDF", command, stderr, verbose
+        )
+    try:
+        with _open_pdf(fitz, output_path, "HTML rendering") as rendered:
+            if rendered.page_count == 0:
+                raise _html_browser_error(
+                    "browser created an empty PDF", command, stderr, verbose
+                )
+    except HtmlRenderError:
+        raise
+    except Exception as exc:
+        raise _html_browser_error(
+            "browser created an invalid PDF", command, stderr, verbose
+        ) from exc
+    raise _html_browser_error(
+        "browser exited before creating a stable PDF", command, stderr, verbose
+    )
 
 
 def _import_fitz(action: str) -> types.ModuleType:
@@ -394,7 +659,10 @@ def _get_page_image_rects(page: Any, xref: int) -> List[Any]:
     return list(rects or [])
 
 
-def _extract_image_dimensions(doc: Any, xref: int) -> Tuple[int, int]:
+def _extract_image_info(
+    doc: Any,
+    xref: int,
+) -> Tuple[int, int, Optional[bytes], Optional[str]]:
     if hasattr(doc, "extract_image"):
         payload = doc.extract_image(xref)
     elif hasattr(doc, "extractImage"):
@@ -406,17 +674,47 @@ def _extract_image_dimensions(doc: Any, xref: int) -> Tuple[int, int]:
 
     width = payload.get("width")
     height = payload.get("height")
-    if width and height:
-        return int(width), int(height)
-
     image_bytes = payload.get("image")
+    image_format = payload.get("ext")
+    if width and height:
+        return int(width), int(height), image_bytes, image_format
+
     if not image_bytes:
         raise RuntimeError(f"invalid extracted image payload for xref {xref}")
 
     from PIL import Image  # noqa pylint: disable=C0415
 
     with Image.open(io.BytesIO(image_bytes)) as image:
-        return int(image.width), int(image.height)
+        return int(image.width), int(image.height), image_bytes, image_format
+
+
+def _extract_image_dimensions(doc: Any, xref: int) -> Tuple[int, int]:
+    """Return an extracted image's dimensions (legacy inspection helper)."""
+    width, height, _, _ = _extract_image_info(doc, xref)
+    return width, height
+
+
+def _estimate_jpeg_quality(
+    image_bytes: Optional[bytes],
+    image_format: Optional[str],
+) -> str:
+    """Estimate JPEG quality from quantization tables, or return ``-``.
+
+    JPEG quality is encoder-specific metadata in practice, so custom tables are
+    reported as the closest table set generated by Pillow's standard encoder.
+    """
+    if not image_bytes:
+        return "-"
+    if image_format and str(image_format).lower() not in {"jpg", "jpeg"}:
+        return "-"
+
+    try:
+        from PIL import Image  # noqa pylint: disable=C0415
+
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            return image_info.estimate_jpeg_quality(image)
+    except (AttributeError, KeyError, OSError, TypeError, ValueError):
+        return "-"
 
 
 def _inspect_page_raster_placements(
@@ -425,7 +723,9 @@ def _inspect_page_raster_placements(
 ) -> List[Dict[str, Any]]:
     placements: List[Dict[str, Any]] = []
     for xref in _list_page_image_xrefs(page):
-        width_px, height_px = _extract_image_dimensions(doc, xref)
+        width_px, height_px, image_bytes, image_format = _extract_image_info(
+            doc, xref
+        )
         for rect in _get_page_image_rects(page, xref):
             width_pt, height_pt = _rect_dimensions(rect)
             if width_pt <= 0 or height_pt <= 0:
@@ -441,6 +741,8 @@ def _inspect_page_raster_placements(
                     "xref": xref,
                     "width_px": width_px,
                     "height_px": height_px,
+                    "image_bytes": image_bytes,
+                    "image_format": image_format,
                     "width_pt": width_pt,
                     "height_pt": height_pt,
                     "area_pt": width_pt * height_pt,
@@ -537,6 +839,7 @@ def inspect_pages(
                 y_resolution = None
                 resolution = "-"
                 image_size_px = "-"
+                quality = "-"
                 if dominant is not None:
                     x_resolution = int(round(dominant["x_dpi"]))
                     y_resolution = int(round(dominant["y_dpi"]))
@@ -546,6 +849,9 @@ def inspect_pages(
                         resolution = f"{x_resolution}x{y_resolution} dpi"
                     image_size_px = (
                         f'{dominant["width_px"]}x{dominant["height_px"]} px'
+                    )
+                    quality = _estimate_jpeg_quality(
+                        dominant["image_bytes"], dominant["image_format"]
                     )
 
                 width_pt, height_pt = _rect_dimensions(page_rect)
@@ -559,9 +865,11 @@ def inspect_pages(
                 rows.append(
                     {
                         "page": page_idx + 1,
+                        "total_pages": doc.page_count,
                         "type": page_type,
                         "resolution": resolution,
                         "image_size_px": image_size_px,
+                        "quality": quality,
                         "orientation": orientation,
                         "page_size": _format_page_size(page_rect, pt=pt),
                     }
@@ -574,29 +882,41 @@ def inspect_pages(
 
 
 def format_page_info_report(
-    rows: Sequence[Dict[str, Any]], table: bool = False
+    rows: Sequence[Dict[str, Any]],
+    table: bool = False,
+    compact: bool = False,
+    page_number_width: Optional[int] = None,
 ) -> str:
     headers = [
         "Page",
         "Type",
         "Resolution",
         "ImageSizePx",
+        "Quality",
         "Orientation",
         "PageSize",
     ]
-    table_rows = [
-        [
-            str(row["page"]),
-            row["type"],
-            row["resolution"],
-            row["image_size_px"],
-            row["orientation"],
-            row["page_size"],
-        ]
-        for row in rows
-    ]
+    table_rows = []
+    for row in rows:
+        if compact:
+            total_pages = row["total_pages"]
+            width = page_number_width or len(str(total_pages))
+            page = f'{row["page"]:0{width}d}/{total_pages:0{width}d}'
+        else:
+            page = str(row["page"])
+        table_rows.append(
+            [
+                page,
+                row["type"],
+                row["resolution"],
+                row["image_size_px"],
+                row.get("quality", "-"),
+                row["orientation"],
+                row["page_size"],
+            ]
+        )
 
-    widths = [len(header) for header in headers]
+    widths = [0 if compact else len(header) for header in headers]
     for row in table_rows:
         for idx, value in enumerate(row):
             widths[idx] = max(widths[idx], len(value))
@@ -615,16 +935,22 @@ def format_page_info_report(
                 )
             )
 
+        if compact:
+            return "\n".join(
+                (border, *(format_row(row) for row in table_rows), border)
+            )
         return "\n".join(
             (border, format_row(headers), border,
              *(format_row(row) for row in table_rows), border)
         )
 
-    rendered_rows = [
-        "  ".join(
-            header.ljust(widths[idx]) for idx, header in enumerate(headers)
+    rendered_rows = []
+    if not compact:
+        rendered_rows.append(
+            "  ".join(
+                header.ljust(widths[idx]) for idx, header in enumerate(headers)
+            )
         )
-    ]
     for row in table_rows:
         rendered_rows.append(
             "  ".join(
@@ -716,20 +1042,112 @@ def _resolve_form_page_size(
     page_size: Tuple[float, float],
     source_width: float,
     source_height: float,
+    force_orientation: Optional[str] = None,
 ) -> Tuple[float, float]:
+    if force_orientation == "landscape":
+        return max(page_size), min(page_size)
+    if force_orientation == "portrait":
+        return min(page_size), max(page_size)
     width, height = page_size
     if source_width > source_height:
         return height, width
     return width, height
 
 
+def _resolve_text_page_size(
+    page_size: Tuple[float, float],
+    force_orientation: Optional[str],
+) -> Tuple[float, float]:
+    """Use the selected text sheet size, applying an explicit orientation."""
+    if force_orientation == "landscape":
+        return max(page_size), min(page_size)
+    if force_orientation == "portrait":
+        return min(page_size), max(page_size)
+    return page_size
+
+
+def _normalize_crop(crop: Optional[Sequence[Any]]):
+    """Parse TOP RIGHT BOTTOM LEFT crop values into amounts and units."""
+    if crop is None:
+        return None
+    if isinstance(crop, str) or len(crop) != 4:
+        raise ValueError(
+            "crop must contain exactly four values: TOP RIGHT BOTTOM LEFT"
+        )
+
+    normalized = []
+    for value in crop:
+        match = _CROP_VALUE_RE.fullmatch(str(value))
+        if match is None:
+            raise ValueError(
+                "crop values must be non-negative numbers followed by % or px"
+            )
+        amount = float(match.group(1))
+        unit = match.group(2)
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError("crop values must be finite and non-negative")
+        if unit is None and amount != 0:
+            raise ValueError("crop values must use % or px (except zero)")
+        normalized.append((amount, unit))
+    return tuple(normalized)
+
+
+def _crop_margins(
+    crop, width: float, height: float
+) -> Tuple[float, float, float, float]:
+    """Resolve a normalized crop to top, right, bottom, left dimensions."""
+    if crop is None:
+        return (0.0, 0.0, 0.0, 0.0)
+
+    dimensions = (height, width, height, width)
+    margins = tuple(
+        amount * dimension / 100.0 if unit == "%" else amount
+        for (amount, unit), dimension in zip(crop, dimensions)
+    )
+    top, right, bottom, left = margins
+    if width - left - right <= 0 or height - top - bottom <= 0:
+        raise ValueError("crop leaves no visible source area")
+    return margins
+
+
+def _cropped_rect(fitz: Any, source_rect: Any, crop) -> Any:
+    """Return the visible source rectangle after applying ``crop``."""
+    width, height = _rect_dimensions(source_rect)
+    top, right, bottom, left = _crop_margins(crop, width, height)
+    if hasattr(source_rect, "x0"):
+        x0, y0 = source_rect.x0, source_rect.y0
+    else:
+        x0, y0 = source_rect[0], source_rect[1]
+    return _build_rect(
+        fitz,
+        x0 + left,
+        y0 + top,
+        x0 + width - right,
+        y0 + height - bottom,
+    )
+
+
+def _crop_image(image: Any, crop) -> Any:
+    """Crop a Pillow image before it is sized for its destination."""
+    if crop is None:
+        return image
+    width, height = image.size
+    top, right, bottom, left = _crop_margins(crop, width, height)
+    cropped = image.crop((left, top, width - right, height - bottom))
+    if not all(cropped.size):
+        raise ValueError("crop leaves no visible source area")
+    return cropped
+
+
 def _image_source_dimensions(
     input_file: str,
+    crop=None,
 ) -> Tuple[int, int, Optional[Tuple[float, float]]]:
     """Return image pixels and its physical DPI when it is trustworthy."""
     from PIL import Image  # noqa pylint: disable=C0415
 
     with Image.open(input_file) as image:
+        image = _crop_image(image, crop)
         width, height = image.size
         dpi = image.info.get("dpi")
         if not dpi or len(dpi) < 2:
@@ -745,6 +1163,7 @@ def _form_image_bytes(
     dest_rect: Any,
     dpi: int,
     quality: int,
+    crop=None,
 ) -> bytes:
     """Encode an image no larger than its placed size at ``dpi``."""
     from PIL import Image  # noqa pylint: disable=C0415
@@ -755,7 +1174,7 @@ def _form_image_bytes(
     ext = os.path.splitext(input_file)[1].lower()
 
     with Image.open(input_file) as source:
-        image = source.copy()
+        image = _crop_image(source, crop).copy()
         source_width, source_height = image.size
         scale = min(
             1.0,
@@ -784,10 +1203,127 @@ def _form_image_bytes(
         return output.getvalue()
 
 
+def _read_text_file(input_file: str) -> str:
+    """Read a supported text file, preferring UTF-8 over Windows-1251."""
+    with open(input_file, "rb") as source:
+        payload = source.read()
+
+    try:
+        text = payload.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = payload.decode("cp1251")
+
+    return (
+        text.replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\t", "    ")
+    )
+
+
+def _load_form_text_sources(
+    input_files: Iterable[str], verbose: bool
+) -> Optional[Dict[str, str]]:
+    """Decode every TXT source before form output can be created."""
+    text_sources = {}
+    for input_file in input_files:
+        if os.path.splitext(input_file)[1].lower() not in _TEXT_EXTENSIONS:
+            continue
+        try:
+            text_sources[input_file] = _read_text_file(input_file)
+        except (OSError, UnicodeDecodeError) as exc:
+            if verbose:
+                logger.warning(
+                    "pdf.form: failed to read text file %s: %s",
+                    input_file,
+                    exc,
+                )
+            else:
+                logger.error(
+                    "pdf.form: failed to read text file: %s", input_file
+                )
+            return None
+    return text_sources
+
+
+def _wrap_text_lines(text: str, available_width: float) -> List[str]:
+    """Wrap normalized text while retaining blank input lines."""
+    chars_per_line = max(1, int(available_width / (_TEXT_FONT_SIZE * 0.6)))
+    wrapper = textwrap.TextWrapper(
+        width=chars_per_line,
+        expand_tabs=False,
+        replace_whitespace=False,
+        drop_whitespace=False,
+        break_long_words=True,
+        break_on_hyphens=False,
+    )
+    lines = []
+    for source_line in text.split("\n"):
+        lines.extend(wrapper.wrap(source_line) or [""])
+    return lines
+
+
+def _pdf_text(value: str) -> str:
+    """Replace values that cannot be represented as Unicode PDF text."""
+    return "".join(
+        "?" if 0xD800 <= ord(char) <= 0xDFFF or ord(char) in (0xFFFE, 0xFFFF)
+        else char
+        for char in value
+    )
+
+
+def _render_text_pages(
+    fitz: Any,
+    out_doc: Any,
+    text: str,
+    page_size: Tuple[float, float],
+    debug_fill: bool = False,
+) -> int:
+    """Add selectable Courier text pages to ``out_doc``."""
+    width, height = page_size
+    lines = _wrap_text_lines(text, width - 2 * _TEXT_MARGIN)
+    lines_per_page = max(
+        1, int((height - 2 * _TEXT_MARGIN) / _TEXT_LINE_HEIGHT)
+    )
+    font = fitz.Font(fontname="cour")
+
+    pages_added = 0
+    for start in range(0, len(lines), lines_per_page):
+        page = out_doc.new_page(width=width, height=height)
+        if debug_fill:
+            _draw_form_debug_fill(fitz, page, width, height)
+        writer = fitz.TextWriter(_build_rect(fitz, 0, 0, width, height))
+        page_lines = lines[start:start + lines_per_page]
+        for line_number, line in enumerate(page_lines):
+            point = (
+                _TEXT_MARGIN,
+                _TEXT_MARGIN
+                + _TEXT_FONT_SIZE
+                + line_number * _TEXT_LINE_HEIGHT,
+            )
+            try:
+                writer.append(
+                    point, _pdf_text(line), font=font, fontsize=_TEXT_FONT_SIZE
+                )
+            except (RuntimeError, ValueError):
+                # PyMuPDF's automatic fallback covers normal Unicode. If it
+                # cannot find a glyph, retain the layout with an ASCII marker.
+                writer.append(
+                    point,
+                    "?" * len(line),
+                    font=font,
+                    fontsize=_TEXT_FONT_SIZE,
+                )
+        writer.write_text(page)
+        pages_added += 1
+    return pages_added
+
+
 def _validate_form_sources(
     fitz: Any,
     input_files: Sequence[str],
     verbose: bool,
+    crop=None,
+    rendered_html_sources: Optional[Dict[str, str]] = None,
 ) -> bool:
     """Check every source before a result document can be created."""
     from PIL import Image  # noqa pylint: disable=C0415
@@ -799,20 +1335,36 @@ def _validate_form_sources(
             return False
 
         ext = os.path.splitext(input_file)[1].lower()
-        if ext == ".pdf":
+        if ext == ".pdf" or ext in _HTML_EXTENSIONS:
+            if crop is not None and any(unit == "px" for _, unit in crop):
+                logger.error(
+                    "pdf.form: px crop is not supported for PDF or HTML: %s",
+                    input_file,
+                )
+                return False
             try:
-                with _open_pdf(fitz, input_file, "form"):
-                    pass
+                source_path = input_file
+                if ext in _HTML_EXTENSIONS:
+                    source_path = rendered_html_sources[input_file]
+                with _open_pdf(fitz, source_path, "form") as doc:
+                    for page_idx in range(doc.page_count):
+                        page_rect = _get_page_rect(doc.load_page(page_idx))
+                        _cropped_rect(fitz, page_rect, crop)
             except (OSError, RuntimeError, ValueError):
                 logger.error("pdf.form: failed to open pdf: %s", input_file)
                 return False
         elif ext in _IMAGE_EXTENSIONS:
             try:
                 with Image.open(input_file) as image:
+                    _crop_margins(crop, *image.size)
                     image.verify()
-            except (OSError, ValueError):
+            except (OSError, RuntimeError, ValueError):
                 logger.error("pdf.form: invalid image: %s", input_file)
                 return False
+        elif ext in _TEXT_EXTENSIONS:
+            # TXT files were decoded by _load_form_text_sources before this
+            # validation pass, so no result document can exist on failure.
+            continue
         else:
             if verbose:
                 logger.warning("pdf.form: file not supported: %s", input_file)
@@ -904,8 +1456,10 @@ def form_files(
     rename_processed: bool = False,
     verbose: bool = False,
     rewrite: bool = False,
+    force_orientation: Optional[str] = None,
+    crop: Optional[Sequence[Any]] = None,
 ) -> bool:
-    """Place PDF pages and images on consistently sized, oriented sheets."""
+    """Place PDF, image, TXT, and HTML pages on consistently sized sheets."""
     files = list(input_files)
     if not files:
         if verbose:
@@ -923,6 +1477,11 @@ def form_files(
         base_width, base_height = page_size
         if base_width <= 0 or base_height <= 0:
             raise ValueError("page size must be positive")
+        if force_orientation not in (None, "landscape", "portrait"):
+            raise ValueError(
+                "force orientation must be landscape or portrait"
+            )
+        normalized_crop = _normalize_crop(crop)
     except (TypeError, ValueError) as exc:
         logger.error("pdf.form: invalid option: %s", exc)
         return False
@@ -941,25 +1500,54 @@ def form_files(
             return False
 
     fitz = _import_fitz("form creation")
-    if not _validate_form_sources(fitz, files, verbose):
+    text_sources = _load_form_text_sources(files, verbose)
+    if text_sources is None:
         return False
 
-    try:
-        with fitz.open() as out_doc:
+    # HTML is rendered before source validation and before the output document
+    # exists: unlike merge, form must leave no partial output on a failure.
+    with tempfile.TemporaryDirectory(prefix="davo-html-") as html_temp_dir:
+        rendered_html_sources = {}
+        for input_file in files:
+            if os.path.splitext(input_file)[1].lower() not in _HTML_EXTENSIONS:
+                continue
+            try:
+                rendered_html_sources[input_file] = _render_html_to_pdf(
+                    fitz, input_file, html_temp_dir, verbose=verbose
+                )
+            except HtmlRenderError as exc:
+                logger.error(
+                    "pdf.form: failed to render HTML %s: %s", input_file, exc
+                )
+                return False
+        if not _validate_form_sources(
+            fitz, files, verbose, normalized_crop, rendered_html_sources
+        ):
+            return False
+
+        try:
+            out_doc = fitz.open()
             for input_file in files:
                 ext = os.path.splitext(input_file)[1].lower()
-                if ext == ".pdf":
-                    with _open_pdf(fitz, input_file, "form") as src:
+                if ext == ".pdf" or ext in _HTML_EXTENSIONS:
+                    source_path = rendered_html_sources.get(
+                        input_file, input_file
+                    )
+                    with _open_pdf(fitz, source_path, "form") as src:
                         for page_idx in range(src.page_count):
                             source_page = src.load_page(page_idx)
                             source_rect = _get_page_rect(source_page)
+                            crop_rect = _cropped_rect(
+                                fitz, source_rect, normalized_crop
+                            )
                             source_width, source_height = _rect_dimensions(
-                                source_rect
+                                crop_rect
                             )
                             target_size = _resolve_form_page_size(
                                 (base_width, base_height),
                                 source_width,
                                 source_height,
+                                force_orientation=force_orientation,
                             )
                             target_width, target_height = target_size
                             dest_page = out_doc.new_page(
@@ -976,14 +1564,29 @@ def form_files(
                                 source_height,
                                 target_width,
                                 target_height,
+                                allow_upscale=normalized_crop is not None,
                             )
                             if hasattr(dest_page, "show_pdf_page"):
-                                dest_page.show_pdf_page(
-                                    dest_rect, src, page_idx,
-                                    keep_proportion=True,
-                                )
+                                if normalized_crop is None:
+                                    dest_page.show_pdf_page(
+                                        dest_rect, src, page_idx,
+                                        keep_proportion=True,
+                                    )
+                                else:
+                                    dest_page.show_pdf_page(
+                                        dest_rect, src, page_idx,
+                                        keep_proportion=True, clip=crop_rect,
+                                    )
                             elif hasattr(dest_page, "showPDFpage"):
-                                dest_page.showPDFpage(dest_rect, src, page_idx)
+                                if normalized_crop is None:
+                                    dest_page.showPDFpage(
+                                        dest_rect, src, page_idx
+                                    )
+                                else:
+                                    dest_page.showPDFpage(
+                                        dest_rect, src, page_idx,
+                                        clip=crop_rect,
+                                    )
                             else:
                                 raise RuntimeError(
                                     "PyMuPDF page object does not support "
@@ -991,11 +1594,25 @@ def form_files(
                                 )
                     continue
 
+                if ext in _TEXT_EXTENSIONS:
+                    target_size = _resolve_text_page_size(
+                        (base_width, base_height), force_orientation
+                    )
+                    _render_text_pages(
+                        fitz,
+                        out_doc,
+                        text_sources[input_file],
+                        target_size,
+                        debug_fill=debug_fill,
+                    )
+                    continue
+
                 width_px, height_px, image_dpi = _image_source_dimensions(
-                    input_file
+                    input_file, normalized_crop
                 )
                 target_width, target_height = _resolve_form_page_size(
-                    (base_width, base_height), width_px, height_px
+                    (base_width, base_height), width_px, height_px,
+                    force_orientation=force_orientation,
                 )
                 if image_dpi is None:
                     # Pixels have no physical size in this case, so fitting is
@@ -1006,7 +1623,7 @@ def form_files(
                     x_dpi, y_dpi = image_dpi
                     source_width = width_px * 72.0 / x_dpi
                     source_height = height_px * 72.0 / y_dpi
-                    allow_upscale = False
+                    allow_upscale = normalized_crop is not None
                 dest_page = out_doc.new_page(
                     width=target_width, height=target_height
                 )
@@ -1023,7 +1640,7 @@ def form_files(
                         dest_rect,
                         stream=_form_image_bytes(
                             input_file, dest_rect, normalized_dpi,
-                            normalized_quality,
+                            normalized_quality, normalized_crop,
                         ),
                         keep_proportion=False,
                     )
@@ -1032,7 +1649,7 @@ def form_files(
                         dest_rect,
                         stream=_form_image_bytes(
                             input_file, dest_rect, normalized_dpi,
-                            normalized_quality,
+                            normalized_quality, normalized_crop,
                         ),
                     )
                 else:
@@ -1058,9 +1675,11 @@ def form_files(
                     set_to_gray=False,
                 )
             out_doc.save(output_path, garbage=3, deflate=True, clean=True)
-    except (OSError, RuntimeError, ValueError) as exc:
-        logger.error("pdf.form: failed to form pdf %s", str(exc))
-        return False
+            if hasattr(out_doc, "close"):
+                out_doc.close()
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.error("pdf.form: failed to form pdf %s", str(exc))
+            return False
 
     if rename_processed and not _rename_processed_form_sources(renames):
         return False
@@ -1276,34 +1895,103 @@ def merge_files(
     ):
         return False
 
-    with fitz.open() as result_pdf:
-        for file_path in files:
-            if not os.path.exists(file_path):
+    with tempfile.TemporaryDirectory(prefix="davo-html-") as html_temp_dir:
+        with fitz.open() as result_pdf:
+            rendered_generated_pages = 0
+            for file_path in files:
+                if not os.path.exists(file_path):
+                    if verbose:
+                        logger.warning(
+                            "pdf.merge: file not found: %s", file_path
+                        )
+                    continue
+
+                ext = os.path.splitext(file_path)[1].lower()
+                if ext == ".pdf":
+                    with fitz.open(file_path) as doc:
+                        result_pdf.insert_pdf(doc)
+                    continue
+
+                if ext in _IMAGE_EXTENSIONS:
+                    with fitz.open(file_path) as img_doc:
+                        pdf_bytes = img_doc.convert_to_pdf()
+                    with fitz.open("pdf", pdf_bytes) as img_pdf:
+                        result_pdf.insert_pdf(img_pdf)
+                    continue
+
+                if ext in _TEXT_EXTENSIONS:
+                    try:
+                        text = _read_text_file(file_path)
+                        rendered_generated_pages += _render_text_pages(
+                            fitz,
+                            result_pdf,
+                            text,
+                            _PAPER_FORMATS["a4"],
+                        )
+                    except (
+                        OSError, RuntimeError, UnicodeDecodeError, ValueError
+                    ):
+                        if verbose:
+                            logger.warning(
+                                "pdf.merge: failed to read text file: %s",
+                                file_path,
+                            )
+                    continue
+
+                if ext in _HTML_EXTENSIONS:
+                    try:
+                        rendered_path = _render_html_to_pdf(
+                            fitz, file_path, html_temp_dir, verbose=verbose
+                        )
+                        with _open_pdf(
+                            fitz, rendered_path, "merge"
+                        ) as html_pdf:
+                            for page_idx in range(html_pdf.page_count):
+                                source_page = html_pdf.load_page(page_idx)
+                                dest_page = result_pdf.new_page(
+                                    width=_PAPER_FORMATS["a4"][0],
+                                    height=_PAPER_FORMATS["a4"][1],
+                                )
+                                dest_rect = _fit_rect_within(
+                                    fitz,
+                                    _get_page_rect(source_page),
+                                    *_PAPER_FORMATS["a4"],
+                                )
+                                if hasattr(dest_page, "show_pdf_page"):
+                                    dest_page.show_pdf_page(
+                                        dest_rect, html_pdf, page_idx,
+                                        keep_proportion=True,
+                                    )
+                                elif hasattr(dest_page, "showPDFpage"):
+                                    dest_page.showPDFpage(
+                                        dest_rect, html_pdf, page_idx
+                                    )
+                                else:
+                                    raise RuntimeError(
+                                        "PyMuPDF page object does not support "
+                                        "page placement API"
+                                    )
+                                rendered_generated_pages += 1
+                    except (
+                        HtmlRenderError, OSError, RuntimeError, ValueError
+                    ):
+                        if verbose:
+                            logger.warning(
+                                "pdf.merge: failed to render HTML: %s",
+                                file_path,
+                            )
+                    continue
+
                 if verbose:
-                    logger.warning("pdf.merge: file not found: %s", file_path)
-                continue
+                    logger.warning(
+                        "pdf.merge: file not supported: %s", file_path
+                    )
 
-            ext = os.path.splitext(file_path)[1].lower()
-            if ext == ".pdf":
-                with fitz.open(file_path) as doc:
-                    result_pdf.insert_pdf(doc)
-                continue
+            if result_pdf.page_count == 0 and rendered_generated_pages == 0:
+                return False
 
-            if ext in _IMAGE_EXTENSIONS:
-                with fitz.open(file_path) as img_doc:
-                    pdf_bytes = img_doc.convert_to_pdf()
-                with fitz.open("pdf", pdf_bytes) as img_pdf:
-                    result_pdf.insert_pdf(img_pdf)
-                continue
-
-            if verbose:
-                logger.warning("pdf.merge: file not supported: %s", file_path)
-
-        if result_pdf.page_count == 0:
-            return False
-
-        result_pdf.save(output_path)
-        return True
+            result_pdf.save(output_path)
+            return True
 
 
 def rotate_pages(

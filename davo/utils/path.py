@@ -10,6 +10,17 @@ from davo import constants, errors
 logger = logging.getLogger(__name__)
 
 
+def is_excluded(path, exclude=()):
+    """Return whether *path* matches an exclusion rule."""
+    for excl in exclude:
+        if excl.startswith("^"):
+            if re.match(excl, path):
+                return True
+        elif excl in path:
+            return True
+    return False
+
+
 def iter_files(root_path, recursive=False, exclude=(), depth=None):
     """
     Iterate file in path.
@@ -26,13 +37,8 @@ def iter_files(root_path, recursive=False, exclude=(), depth=None):
         path_ = os.path.join(dir_, file_)
         if not os.path.isfile(path_):
             return None
-        if exclude:
-            for excl in exclude:
-                if excl.startswith("^"):
-                    if re.match(excl, path_):
-                        return None
-                elif excl in path_:
-                    return None
+        if is_excluded(path_, exclude):
+            return None
         return path_
 
     if os.path.isdir(root_path):

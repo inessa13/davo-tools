@@ -1,4 +1,5 @@
 import datetime
+import glob
 import logging
 import math
 import os
@@ -10,6 +11,7 @@ try:
     import cv2
 except ImportError:
     cv2 = None
+import numpy
 from PIL import Image
 
 import davo.utils
@@ -21,12 +23,41 @@ try:
 except ImportError:
     pass
 
-from . import clients, fingerprint, pdf, replace_classes, utils
+from . import (
+    clients,
+    fingerprint,
+    image_info,
+    pdf,
+    replace_classes,
+    utils,
+    video_info,
+)
 
 logger = logging.getLogger(__name__)
 
 P_LIVE = r"(:?IMG_\d{8}_\d{6} \()?IMG_(?P<num>\d+)\)?\.(?P<ext>.*)$"
 FAST_DIFF_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".heic"})
+JPEG_FORMATS = frozenset({"JPEG", "MPO"})
+MAGENTA = (255, 0, 255, 255)
+VIDEO_EXTENSIONS = frozenset(
+    {
+        ".3gp",
+        ".avi",
+        ".flv",
+        ".m2ts",
+        ".m4v",
+        ".mkv",
+        ".mov",
+        ".mp4",
+        ".mpeg",
+        ".mpg",
+        ".mts",
+        ".ogv",
+        ".ts",
+        ".webm",
+        ".wmv",
+    }
+)
 
 
 def command_tree(root, reverse, commit=False):
@@ -342,6 +373,125 @@ def command_clips_web(inf, output, verbose=False, commit=False, **kwargs):
         status, output, verbose=verbose, commit=commit, **kwargs
     )
     return status
+
+
+def _clips_compress_inputs(inputs, recursive=False):
+    """Return unique, sorted video files selected from command inputs."""
+    files = []
+    seen = set()
+    for input_path in inputs:
+        if os.path.isfile(input_path):
+            candidates = [input_path]
+        elif os.path.isdir(input_path):
+            candidates = utils.iter_files(
+                input_path, recursive=recursive, sort=True
+            )
+        else:
+            logger.warning("skipped missing input: %s", input_path)
+            continue
+
+        for candidate in candidates:
+            stem, extension = os.path.splitext(candidate)
+            key = os.path.normcase(os.path.abspath(candidate))
+            if (
+                key in seen
+                or extension.lower() not in VIDEO_EXTENSIONS
+                or stem.lower().endswith("_compressed")
+            ):
+                continue
+            seen.add(key)
+            files.append(candidate)
+    return files
+
+
+def command_clips_compress(
+    inputs: list[str],
+    crf: int = 23,
+    height: int | None = None,
+    mp4: bool = False,
+    dry_run: bool = False,
+    rewrite: bool = False,
+    recursive: bool = False,
+    replace_source: bool = False,
+):
+    """Compress selected videos, continuing after individual failures."""
+    successful_sizes = []
+    for input_file in _clips_compress_inputs(inputs, recursive=recursive):
+        stem, extension = os.path.splitext(input_file)
+        output_file = f"{stem}_compressed{'.mp4' if mp4 else extension}"
+        replacement_file = f"{stem}.mp4" if mp4 else input_file
+
+        if (
+            replace_source
+            and mp4
+            and extension.lower() != ".mp4"
+            and os.path.exists(replacement_file)
+        ):
+            logger.error(
+                "%s: cannot replace source; target exists: %s",
+                input_file,
+                replacement_file,
+            )
+            continue
+
+        if os.path.exists(output_file) and not rewrite:
+            logger.info("%s: exists", input_file)
+            continue
+
+        command = clients.run_ffmpeg(
+            input_file,
+            output_file,
+            video_codec="libx264",
+            crf=crf,
+            height=height,
+            audio_codec="copy",
+            overwrite=rewrite,
+            timeout=14400,
+            commit=not dry_run,
+        )
+        if dry_run:
+            logger.info(command)
+            continue
+        if not command:
+            logger.error("%s: failed", input_file)
+            continue
+
+        try:
+            source_size = os.path.getsize(input_file)
+            result_size = os.path.getsize(output_file)
+            if replace_source:
+                os.replace(output_file, replacement_file)
+                if mp4 and extension.lower() != ".mp4":
+                    os.remove(input_file)
+        except OSError as exc:
+            logger.error("%s: failed: %s", input_file, exc)
+            continue
+
+        successful_sizes.append((source_size, result_size))
+        reduction = _clips_compress_reduction(source_size, result_size)
+        logger.info(
+            "%s: %s -> %s (%.2f%% reduction)",
+            input_file,
+            format_utils.humanize_bytes(source_size),
+            format_utils.humanize_bytes(result_size),
+            reduction,
+        )
+
+    if len(successful_sizes) > 1:
+        source_size = sum(sizes[0] for sizes in successful_sizes)
+        result_size = sum(sizes[1] for sizes in successful_sizes)
+        logger.info(
+            "total: %s -> %s (%.2f%% reduction)",
+            format_utils.humanize_bytes(source_size),
+            format_utils.humanize_bytes(result_size),
+            _clips_compress_reduction(source_size, result_size),
+        )
+
+
+def _clips_compress_reduction(source_size, result_size):
+    if not source_size:
+        return 0.0
+    return (source_size - result_size) * 100.0 / source_size
 
 
 def command_thumbs(
@@ -661,6 +811,476 @@ def command_downscale(
 
 def command_fingerprint(image: str):
     print(fingerprint.format_fingerprint(image))
+
+
+def command_image_info(
+    images: list[str],
+    verbose: bool = False,
+    table: bool = False,
+    compact: bool = False,
+    exif: bool = False,
+    exif_full: bool = False,
+):
+    """Print readonly Pillow metadata for image paths in argv order."""
+    if not images:
+        images = sorted(glob.glob("*"))
+
+    inspections = []
+    total_images = len(images)
+    for index, input_file in enumerate(images, start=1):
+        row = image_info.inspect_image(input_file, verbose=verbose)
+        if row is not None:
+            row["image"] = index
+            row["total_images"] = total_images
+            inspections.append((input_file, row))
+
+    if not inspections:
+        return
+
+    image_number_width = max(
+        len(str(total_images)),
+        len(str(max(row["image"] for _, row in inspections))),
+    )
+    include_exif = exif
+
+    if compact and not exif_full:
+        print(
+            image_info.format_image_info_report(
+                [row for _, row in inspections],
+                table=table,
+                compact=True,
+                include_exif=include_exif,
+                image_number_width=image_number_width,
+            )
+        )
+        return
+
+    if compact and table and exif_full:
+        report = image_info.format_image_info_report(
+            [row for _, row in inspections],
+            table=True,
+            compact=True,
+            image_number_width=image_number_width,
+        )
+        blocks = []
+        for _, row in inspections:
+            exif_block = image_info.format_exif_block(row)
+            if exif_block:
+                width = image_number_width
+                number = "{image:0{width}d}/{total:0{width}d}".format(
+                    image=row["image"],
+                    total=row["total_images"],
+                    width=width,
+                )
+                blocks.append("{}\n{}".format(number, exif_block))
+        print("\n".join((report, *blocks)))
+        return
+
+    reports = []
+    for input_file, row in inspections:
+        report = image_info.format_image_info_report(
+            [row],
+            table=table,
+            compact=compact,
+            include_exif=include_exif,
+            image_number_width=image_number_width,
+        )
+        if not compact:
+            report = "{}\n{}".format(
+                os.path.relpath(input_file, os.getcwd()), report
+            )
+        if exif_full:
+            exif_block = image_info.format_exif_block(row)
+            if exif_block:
+                report = "{}\n{}".format(report, exif_block)
+        reports.append(report)
+
+    print(("\n" if compact else "\n\n").join(reports))
+
+
+def command_clips_info(
+    inputs: list[str],
+    verbose: bool = False,
+    table: bool = False,
+    compact: bool = False,
+    meta: bool = False,
+    *,
+    detailed: bool = False,
+):
+    """Print readonly MediaInfo metadata for media paths in argv order."""
+    if not inputs:
+        inputs = sorted(glob.glob("*"))
+
+    inspections = []
+    total_videos = len(inputs)
+    for index, input_file in enumerate(inputs, start=1):
+        row = video_info.inspect_video(input_file, verbose=verbose)
+        if row is not None:
+            row["video_number"] = index
+            row["total_videos"] = total_videos
+            inspections.append((input_file, row))
+
+    if not inspections:
+        return
+
+    video_number_width = max(
+        len(str(total_videos)),
+        len(str(max(row["video_number"] for _, row in inspections))),
+    )
+    rows = [row for _, row in inspections]
+    if meta:
+        print(
+            video_info.format_video_info_metadata_report(
+                inspections,
+                meta_level="full",
+                table=table,
+                compact=compact,
+                detailed=detailed,
+                video_number_width=video_number_width,
+            )
+        )
+        return
+
+    if compact:
+        print(
+            video_info.format_video_info_report(
+                rows,
+                table=table,
+                compact=True,
+                detailed=detailed,
+                video_number_width=video_number_width,
+            )
+        )
+        return
+
+    reports = []
+    for input_file, row in inspections:
+        report = video_info.format_video_info_report(
+            [row],
+            table=table,
+            compact=compact,
+            detailed=detailed,
+            video_number_width=video_number_width,
+        )
+        if not compact:
+            report = "{}\n{}".format(
+                os.path.relpath(input_file, os.getcwd()), report
+            )
+        if len(row["video_tracks"]) > 1 or len(row["audio_tracks"]) > 1:
+            track_blocks = video_info.format_basic_meta_blocks(
+                row, include_general=False
+            )
+            if track_blocks:
+                report = f"{report}\n{track_blocks}"
+        reports.append(report)
+
+    print(("\n" if compact else "\n\n").join(reports))
+
+
+def command_image_merge(
+    images: list[str],
+    vertical: bool,
+    out: str = None,
+    debug_fill: bool = False,
+    smart: bool = False,
+):
+    """Merge image files without altering their source files."""
+    if len(images) < 2:
+        raise errors.UserError("At least two images are required for merge")
+
+    loaded_images, source_formats = _load_merge_images(images)
+    output_path, output_format = _merge_output_path(
+        images, source_formats, out
+    )
+    _validate_merge_output(output_path, images)
+
+    if smart:
+        loaded_images, offsets, size = _smart_merge_layout(
+            loaded_images, vertical
+        )
+    else:
+        offsets, size = _plain_merge_layout(loaded_images, vertical)
+
+    fill = MAGENTA if debug_fill else (0, 0, 0, 0)
+    result = Image.new("RGBA", size, fill)
+    for image, offset in zip(loaded_images, offsets):
+        result.alpha_composite(image, offset)
+
+    try:
+        if output_format in JPEG_FORMATS:
+            background = MAGENTA[:3] if debug_fill else (255, 255, 255)
+            flattened = Image.new("RGB", result.size, background)
+            flattened.paste(result, mask=result.getchannel("A"))
+            flattened.save(output_path, format=output_format)
+        else:
+            result.save(output_path, format=output_format)
+    except (OSError, ValueError) as exc:
+        raise errors.UserError(
+            "Cannot save merged image {}: {}".format(output_path, exc)
+        ) from exc
+
+
+def _load_merge_images(paths):
+    loaded_images = []
+    source_formats = []
+    for path in paths:
+        if not os.path.isfile(path):
+            raise errors.UserError(
+                "Image is not a regular file: {}".format(path)
+            )
+        try:
+            with Image.open(path) as image:
+                image.load()
+                if image.format is None:
+                    raise errors.UserError(
+                        "Cannot determine image format: {}".format(path)
+                    )
+                loaded_images.append(image.convert("RGBA"))
+                source_formats.append(image.format.upper())
+        except (OSError, ValueError) as exc:
+            raise errors.UserError(
+                "Cannot read image {}: {}".format(path, exc)
+            ) from exc
+    return loaded_images, source_formats
+
+
+def _merge_output_path(paths, source_formats, out):
+    if out is not None:
+        extension = os.path.splitext(out)[1].lower()
+        output_format = Image.registered_extensions().get(extension)
+        if output_format is None:
+            raise errors.UserError(
+                "Unsupported output image extension: {}".format(
+                    extension or "(missing)"
+                )
+            )
+        return out, output_format.upper()
+
+    first_path = paths[0]
+    root, extension = os.path.splitext(first_path)
+    if len(set(source_formats)) == 1 and extension:
+        output_format = source_formats[0]
+        output_path = "{}_merged{}".format(root, extension)
+    else:
+        output_format = "JPEG"
+        output_path = "{}_merged.jpg".format(root)
+    return output_path, output_format
+
+
+def _validate_merge_output(output_path, input_paths):
+    output_real_path = os.path.realpath(os.path.abspath(output_path))
+    for input_path in input_paths:
+        input_real_path = os.path.realpath(os.path.abspath(input_path))
+        if output_real_path == input_real_path:
+            raise errors.UserError(
+                "Output image must not replace an input image"
+            )
+    if os.path.lexists(output_path):
+        raise errors.UserError(
+            "Output image already exists: {}".format(output_path)
+        )
+
+
+def _plain_merge_layout(images, vertical):
+    if vertical:
+        width = max(image.width for image in images)
+        height = sum(image.height for image in images)
+        offsets = []
+        top = 0
+        for image in images:
+            offsets.append(((width - image.width) // 2, top))
+            top += image.height
+        return offsets, (width, height)
+
+    width = sum(image.width for image in images)
+    height = max(image.height for image in images)
+    offsets = []
+    left = 0
+    for image in images:
+        offsets.append((left, (height - image.height) // 2))
+        left += image.width
+    return offsets, (width, height)
+
+
+def _smart_merge_layout(images, vertical):
+    if cv2 is None:
+        raise errors.UserError("Smart merge requires OpenCV")
+
+    aligned_images = [images[0]]
+    offsets = [(0, 0)]
+    for current in images[1:]:
+        previous = aligned_images[-1]
+        registration = _find_merge_registration(previous, current, vertical)
+        if registration is None:
+            raise errors.UserError(
+                "No strong overlap found between adjacent images"
+            )
+        scaled, translation = registration
+        previous_offset = offsets[-1]
+        offsets.append(
+            (
+                previous_offset[0] + translation[0],
+                previous_offset[1] + translation[1],
+            )
+        )
+        aligned_images.append(scaled)
+
+    left = min(offset[0] for offset in offsets)
+    top = min(offset[1] for offset in offsets)
+    right = max(
+        offset[0] + image.width
+        for image, offset in zip(aligned_images, offsets)
+    )
+    bottom = max(
+        offset[1] + image.height
+        for image, offset in zip(aligned_images, offsets)
+    )
+    normalized_offsets = [
+        (offset[0] - left, offset[1] - top) for offset in offsets
+    ]
+    return aligned_images, normalized_offsets, (right - left, bottom - top)
+
+
+def _find_merge_registration(previous, current, vertical):
+    """Return a scaled current image and its origin relative to *previous*."""
+    best = _find_merge_scale(
+        previous, current, vertical, _merge_scale_values()
+    )
+    if best is None:
+        return None
+
+    scale, _score, _translation, _scaled = best
+    refinement = _merge_scale_values(scale - 0.01, scale + 0.01, 0.002)
+    refined = _find_merge_scale(previous, current, vertical, refinement)
+    if refined is not None:
+        best = refined
+    _scale, _score, translation, scaled = best
+    return scaled, translation
+
+
+def _merge_scale_values(start=0.90, stop=1.10, step=0.01):
+    values = []
+    value = max(0.90, start)
+    while value <= min(1.10, stop) + 0.000001:
+        values.append(round(value, 3))
+        value += step
+    return values
+
+
+def _find_merge_scale(previous, current, vertical, scales):
+    previous_gray = _merge_gray(previous)
+    best = None
+    best_score = -1
+    for scale in scales:
+        scaled = _scale_merge_image(current, scale)
+        registration = _find_merge_translation(
+            previous_gray, _merge_gray(scaled), vertical
+        )
+        if registration is None:
+            continue
+        score, translation = registration
+        if score > best_score:
+            best = (scale, score, translation, scaled)
+            best_score = score
+    return best
+
+
+def _scale_merge_image(image, scale):
+    size = (
+        max(1, round(image.width * scale)),
+        max(1, round(image.height * scale)),
+    )
+    return image.resize(size, Image.Resampling.LANCZOS)
+
+
+def _find_merge_translation(previous, current, vertical):
+    """Find a consensus edge translation using three independent probes."""
+    previous_main = previous.shape[0] if vertical else previous.shape[1]
+    current_main = current.shape[0] if vertical else current.shape[1]
+    previous_cross = previous.shape[1] if vertical else previous.shape[0]
+    current_cross = current.shape[1] if vertical else current.shape[0]
+    # A 16-pixel probe permits the deliberately small overlaps this command is
+    # intended for.  Several cross-axis probes provide the needed
+    # protection against a coincidental short match.
+    probe_main = min(16, current_main, previous_main)
+    if probe_main < 16 or min(previous_cross, current_cross) < 16:
+        return None
+
+    matches = []
+    for start, end in _merge_probe_ranges(current_cross):
+        template = (
+            current[:probe_main, start:end]
+            if vertical
+            else current[start:end, :probe_main]
+        )
+        if (
+            template.shape[0] > previous.shape[0]
+            or template.shape[1] > previous.shape[1]
+        ):
+            continue
+        _minimum, score, _minimum_location, location = cv2.minMaxLoc(
+            cv2.matchTemplate(previous, template, cv2.TM_CCOEFF_NORMED)
+        )
+        if not numpy.isfinite(score) or score < 0.90:
+            continue
+        translation = (
+            location[0] - (start if vertical else 0),
+            location[1] - (0 if vertical else start),
+        )
+        matches.append((score, translation))
+
+    if len(matches) < 3:
+        return None
+    translations = [translation for _score, translation in matches]
+    median = tuple(
+        int(
+            round(
+                numpy.median(
+                    [translation[axis] for translation in translations]
+                )
+            )
+        )
+        for axis in (0, 1)
+    )
+    matches = [
+        (score, translation)
+        for score, translation in matches
+        if (
+            abs(translation[0] - median[0]) <= 2
+            and abs(translation[1] - median[1]) <= 2
+        )
+    ]
+    if len(matches) < 3:
+        return None
+
+    main_translation = median[1] if vertical else median[0]
+    cross_translation = median[0] if vertical else median[1]
+    cross_limit = min(256, max(previous_cross, current_cross) // 10)
+    if (
+        main_translation <= 0
+        or main_translation >= previous_main
+        or abs(cross_translation) > cross_limit
+    ):
+        return None
+    return numpy.mean([score for score, _translation in matches]), median
+
+
+def _merge_probe_ranges(cross_axis):
+    probe = max(8, cross_axis // 4)
+    probe = min(probe, cross_axis)
+    maximum_start = cross_axis - probe
+    return [
+        (
+            round(maximum_start * fraction),
+            round(maximum_start * fraction) + probe,
+        )
+        for fraction in (0.1, 0.3, 0.5, 0.7, 0.9)
+    ]
+
+
+def _merge_gray(image):
+    rgb = numpy.asarray(image.convert("RGB"))
+    return cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
 
 
 def command_fingerprint_diff(
@@ -1219,6 +1839,8 @@ def command_pdf_form(
     rename_processed: bool = False,
     verbose: bool = False,
     rewrite: bool = False,
+    force_orientation: str = None,
+    crop: list = None,
 ):
     if size_cm is not None:
         page_size = tuple(value * 72.0 / 2.54 for value in size_cm)
@@ -1228,9 +1850,11 @@ def command_pdf_form(
         [_pdf_path(root, file_path) for file_path in inf],
         _pdf_path(root, out),
         page_size=page_size,
+        force_orientation=force_orientation,
         dpi=dpi,
         quality=quality,
         debug_fill=debug_fill,
+        crop=crop,
         rename_processed=rename_processed,
         rewrite=rewrite,
         verbose=verbose,
@@ -1243,7 +1867,12 @@ def command_pdf_form(
             output_path = pdf._default_output(  # pylint: disable=W0212
                 _pdf_path(root, inf[0]), "_formed"
             )
-        command_pdf_info(None, output_path, verbose=verbose)
+        command_pdf_info(
+            None,
+            output_path,
+            verbose=verbose,
+            show_paths=False,
+        )
 
 
 def command_pdf_extract(
@@ -1271,22 +1900,66 @@ def command_pdf_extract(
 
 def command_pdf_info(
     root,
-    inf: str,
+    inf: str | list[str],
     pages: list = None,
     verbose: bool = False,
     pt: bool = False,
     table: bool = False,
+    compact: bool = False,
+    show_paths: bool = True,
 ):
-    rows = pdf.inspect_pages(
-        _pdf_path(root, inf),
-        pages=pages,
-        verbose=verbose,
-        pt=pt,
-    )
-    if rows is None:
-        return
+    input_files = [inf] if isinstance(inf, str) else inf or []
+    if not input_files:
+        input_files = sorted(glob.glob("*"))
+    inspections = []
+    for input_file in input_files:
+        input_path = _pdf_path(root, input_file)
+        rows = pdf.inspect_pages(
+            input_path,
+            pages=pages,
+            verbose=verbose,
+            pt=pt,
+        )
+        if rows is None:
+            continue
+        inspections.append((input_path, rows))
 
-    print(pdf.format_page_info_report(rows, table=table))
+    page_number_width = None
+    if compact:
+        page_number_width = max(
+            (
+                len(str(row["total_pages"]))
+                for _input_path, rows in inspections
+                for row in rows
+            ),
+            default=1,
+        )
+
+    reports = []
+    for input_path, rows in inspections:
+        report = pdf.format_page_info_report(
+            rows,
+            table=table,
+            compact=compact,
+            page_number_width=page_number_width,
+        )
+        if show_paths and not compact:
+            report = "{}\n{}".format(
+                os.path.relpath(input_path, os.getcwd()),
+                report,
+            )
+        reports.append(report)
+
+    if reports:
+        if compact and table:
+            reports = [
+                reports[0],
+                *(
+                    "\n".join(report.splitlines()[1:])
+                    for report in reports[1:]
+                ),
+            ]
+        print(("\n" if compact else "\n\n").join(reports))
 
 
 def command_pdf_scale(

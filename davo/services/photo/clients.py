@@ -15,6 +15,11 @@ def run_ffmpeg(
     copy_antz=False,
     quiet=False,
     save_mtime=False,
+    video_codec=None,
+    crf=None,
+    height=None,
+    audio_codec=None,
+    overwrite=False,
     timeout=1 * 60 * 60,
     commit=True,
 ):
@@ -29,11 +34,14 @@ def run_ffmpeg(
     :param bool copy_antz:
     :param bool quiet:
     :param bool save_mtime:
+    :param int height:
     :param int timeout:
     :param bool commit:
     :return:
     """
-    chain = ["/usr/bin/ffmpeg"]
+    chain = ["ffmpeg"]
+    if overwrite:
+        chain.append("-y")
     if seek:
         chain += ["-ss", seek]
     chain += ["-i", inf]
@@ -43,6 +51,14 @@ def run_ffmpeg(
         chain += ["-c", "copy", "-avoid_negative_ts", "make_zero"]
     elif copy:
         chain += ["-c", "copy"]
+    if video_codec:
+        chain += ["-vcodec", video_codec]
+    if crf is not None:
+        chain += ["-crf", str(crf)]
+    if height is not None:
+        chain += ["-vf", f"scale=-2:min(ih\\,{height})"]
+    if audio_codec:
+        chain += ["-acodec", audio_codec]
     if to:
         chain += ["-to", to]
     chain.append(out)
@@ -80,7 +96,7 @@ def check_ffmpeg_faststart(path):
         stream = "v"
 
     cmd = [
-        "/usr/bin/ffprobe",
+        "ffprobe",
         "-v",
         "error",
         "-show_entries",

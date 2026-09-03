@@ -9,7 +9,7 @@ import time
 import exif
 import pymediainfo
 import reprint
-from PIL import Image
+from PIL import Image, ImageFile
 
 import davo.utils
 
@@ -240,24 +240,35 @@ def image_convert(
     if not image:
         return
 
-    if thumbnail:
-        image.thumbnail((thumbnail, thumbnail))
+    load_truncated_images = ImageFile.LOAD_TRUNCATED_IMAGES
+    if image.format == "JPEG":
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-    save_options = {}
+    try:
+        if thumbnail:
+            image.thumbnail((thumbnail, thumbnail))
 
-    if save_exif and (exif_ := image.info.get("exif")):
-        save_options["exif"] = exif_
+        save_options = {}
 
-    if drop_alpha:
-        image = image.convert("RGB")
+        if save_exif and (exif_ := image.info.get("exif")):
+            save_options["exif"] = exif_
 
-    if commit:
-        image.save(path_dest, **save_options)
-        if save_mtime:
-            os.utime(
-                path_dest,
-                (os.path.getatime(path_source), os.path.getmtime(path_source)),
-            )
+        if drop_alpha:
+            image = image.convert("RGB")
+
+        if commit:
+            image.save(path_dest, **save_options)
+            if save_mtime:
+                os.utime(
+                    path_dest,
+                    (
+                        os.path.getatime(path_source),
+                        os.path.getmtime(path_source),
+                    ),
+                )
+    finally:
+        ImageFile.LOAD_TRUNCATED_IMAGES = load_truncated_images
+        image.close()
 
 
 def int2frac(value):

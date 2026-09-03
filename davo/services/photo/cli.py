@@ -23,6 +23,16 @@ def _form_dpi(value):
     return dpi
 
 
+def _video_compress_height(value):
+    try:
+        height = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("height must be an integer") from exc
+    if not 144 <= height <= 2160:
+        raise argparse.ArgumentTypeError("height must be from 144 to 2160")
+    return height // 2 * 2
+
+
 def init_parser(parser=None, subparsers=None, commands=()):
     if parser is None:
         parser = argparse.ArgumentParser()
@@ -273,9 +283,6 @@ def init_parser(parser=None, subparsers=None, commands=()):
             )
         )
 
-    if not commands or "clips" in commands:
-        init_parser_clips(parser, subparsers, prefix="clips-")
-
     if not commands or "iphone-clean-live" in commands:
         cmd = subparsers.add_parser(
             "iphone-clean-live",
@@ -494,6 +501,90 @@ def init_parser(parser=None, subparsers=None, commands=()):
             )
         )
 
+    if not commands or "info" in commands:
+        cmd = subparsers.add_parser(
+            "info",
+            help="show image metadata (Pillow)",
+        )
+        cmd.add_argument("-v", "--verbose", action="store_true")
+        cmd.add_argument(
+            "-t",
+            "--table",
+            action="store_true",
+            help="print an ASCII table",
+        )
+        cmd.add_argument(
+            "-c",
+            "--compact",
+            action="store_true",
+            help="print image rows without file names or column headers",
+        )
+        exif_group = cmd.add_mutually_exclusive_group()
+        exif_group.add_argument(
+            "-e",
+            "--exif",
+            action="store_true",
+            help="include basic EXIF date and camera columns",
+        )
+        exif_group.add_argument(
+            "-E",
+            "--exif-full",
+            action="store_true",
+            help="print all available EXIF tags after each image",
+        )
+        cmd.add_argument("images", metavar="IMAGE", nargs="*")
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_image_info(
+                images=namespace.images,
+                verbose=namespace.verbose,
+                table=namespace.table,
+                compact=namespace.compact,
+                exif=namespace.exif,
+                exif_full=namespace.exif_full,
+            )
+        )
+
+    if not commands or "merge" in commands:
+        cmd = subparsers.add_parser(
+            "merge",
+            help="merge images sequentially",
+        )
+        direction = cmd.add_mutually_exclusive_group(required=True)
+        direction.add_argument(
+            "-V",
+            "--vertical",
+            action="store_true",
+            help="place images from top to bottom",
+        )
+        direction.add_argument(
+            "-H",
+            "--horizontal",
+            action="store_true",
+            help="place images from left to right",
+        )
+        cmd.add_argument("-o", "--out", help="output image path")
+        cmd.add_argument(
+            "--debug-fill",
+            action="store_true",
+            help="fill unused and transparent areas with magenta",
+        )
+        cmd.add_argument(
+            "-S",
+            "--smart",
+            action="store_true",
+            help="align adjacent overlaps, sideways shifts, and scale",
+        )
+        cmd.add_argument("images", metavar="IMAGE", nargs="+")
+        cmd.set_defaults(
+            func=lambda namespace: helpers.command_image_merge(
+                images=namespace.images,
+                vertical=namespace.vertical,
+                out=namespace.out,
+                debug_fill=namespace.debug_fill,
+                smart=namespace.smart,
+            )
+        )
+
     if not commands or "pdf" in commands:
         init_parser_pdf(
             parser,
@@ -510,8 +601,8 @@ def init_parser(parser=None, subparsers=None, commands=()):
     return parser, subparsers
 
 
-def init_parser_clips(parser=None, subparsers=None, prefix=""):
-    """Register video commands with either grouped or legacy names."""
+def init_parser_clips(parser=None, subparsers=None):
+    """Register video commands under the ``vid`` command group."""
     if parser is None:
         parser = argparse.ArgumentParser()
 
@@ -538,11 +629,45 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
     if subparsers is None:
         subparsers = parser.add_subparsers(title="list of commands")
 
-    def command_name(name):
-        return "{}{}".format(prefix, name)
+    cmd = subparsers.add_parser(
+        "info",
+        help="show media metadata (MediaInfo)",
+    )
+    cmd.add_argument("-v", "--verbose", action="store_true")
+    cmd.add_argument(
+        "-t", "--table", action="store_true", help="print an ASCII table"
+    )
+    cmd.add_argument(
+        "-c",
+        "--compact",
+        action="store_true",
+        help="print media rows without file names or column headers",
+    )
+    cmd.add_argument(
+        "-d",
+        "--detailed",
+        action="store_true",
+        help="show all summary columns with full duration and FPS precision",
+    )
+    cmd.add_argument(
+        "--meta",
+        action="store_true",
+        help="print all non-empty raw MediaInfo fields by track",
+    )
+    cmd.add_argument("inputs", metavar="INPUT", nargs="*")
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_clips_info(
+            inputs=namespace.inputs,
+            verbose=namespace.verbose,
+            table=namespace.table,
+            compact=namespace.compact,
+            meta=namespace.meta,
+            detailed=namespace.detailed,
+        )
+    )
 
     cmd = subparsers.add_parser(
-        command_name("convert"),
+        "convert",
         parents=p_prcvs,
         help="convert video (ffmpeg)",
     )
@@ -561,7 +686,7 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
     )
 
     cmd = subparsers.add_parser(
-        command_name("split"),
+        "split",
         parents=[p_commit, p_silent, p_verbose],
         help="split video to clips (ffmpeg)",
     )
@@ -580,7 +705,7 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
     )
 
     cmd = subparsers.add_parser(
-        command_name("trim"),
+        "trim",
         parents=p_prcvs,
         help="trim video (ffmpeg)",
     )
@@ -598,7 +723,7 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
     )
 
     cmd = subparsers.add_parser(
-        command_name("web"),
+        "web",
         parents=p_prcvs,
         help="encode +faststart (ffmpeg)",
     )
@@ -613,7 +738,7 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
     )
 
     cmd = subparsers.add_parser(
-        command_name("isweb"),
+        "isweb",
         parents=[p_root, p_recursive, p_silent],
         help="check is video encoded with +faststart (ffmpeg)",
     )
@@ -622,6 +747,60 @@ def init_parser_clips(parser=None, subparsers=None, prefix=""):
             root=namespace.path,
             recursive=namespace.recursive,
             silent=namespace.silent,
+        )
+    )
+
+    cmd = subparsers.add_parser(
+        "compress",
+        help="compress videos with H.264 (ffmpeg)",
+    )
+    cmd.add_argument(
+        "--crf",
+        type=int,
+        default=23,
+        help="H.264 constant rate factor, by default %(default)s",
+    )
+    cmd.add_argument(
+        "-H",
+        "--height",
+        type=_video_compress_height,
+        help="maximum output height in pixels (144 to 2160)",
+    )
+    cmd.add_argument(
+        "--mp4",
+        action="store_true",
+        help="write compressed files as .mp4",
+    )
+    cmd.add_argument(
+        "--replace-source",
+        action="store_true",
+        help="replace each source after it is successfully compressed",
+    )
+    cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print ffmpeg commands without running them",
+    )
+    cmd.add_argument(
+        "-W",
+        "--rewrite",
+        action="store_true",
+        help="overwrite existing compressed output files",
+    )
+    cmd.add_argument(
+        "-r", "--recursive", action="store_true", help="recursive scan"
+    )
+    cmd.add_argument("inputs", metavar="INPUT", nargs="+")
+    cmd.set_defaults(
+        func=lambda namespace: helpers.command_clips_compress(
+            inputs=namespace.inputs,
+            crf=namespace.crf,
+            height=namespace.height,
+            mp4=namespace.mp4,
+            replace_source=namespace.replace_source,
+            dry_run=namespace.dry_run,
+            rewrite=namespace.rewrite,
+            recursive=namespace.recursive,
         )
     )
 
@@ -682,7 +861,12 @@ def init_parser_pdf(
         cmd = subparsers.add_parser(
             "{}merge".format(prefix),
             parents=write_parents,
-            help="merge pdf files (PyMuPDF)",
+            help="merge PDF, image, TXT, and HTML files (PyMuPDF)",
+            description=(
+                "TXT is decoded as UTF-8 or Windows-1251 and rendered as "
+                "wrapped selectable text on A4 portrait sheets. HTML is "
+                "printed by system Chrome or Chromium."
+            ),
         )
         cmd.add_argument("-o", "--out", action="store")
         add_input_argument(cmd, multiple=True)
@@ -842,7 +1026,15 @@ def init_parser_pdf(
         cmd = subparsers.add_parser(
             "{}form".format(prefix),
             parents=write_parents,
-            help="form PDF and image pages to a paper size (PyMuPDF)",
+            help=(
+                "form PDF, image, TXT, and HTML pages to a paper size "
+                "(PyMuPDF)"
+            ),
+            description=(
+                "TXT is decoded as UTF-8 or Windows-1251 and rendered as "
+                "wrapped selectable text with 1 cm margins. HTML is printed "
+                "by system Chrome or Chromium before forming."
+            ),
         )
         cmd.add_argument("-o", "--out", action="store")
         format_group = cmd.add_mutually_exclusive_group(required=True)
@@ -861,6 +1053,17 @@ def init_parser_pdf(
         format_group.add_argument(
             "-s", "--size", nargs=2, type=float, metavar=("WIDTH", "HEIGHT"),
             help="custom paper size in centimetres",
+        )
+        orientation_group = cmd.add_mutually_exclusive_group()
+        orientation_group.add_argument(
+            "--force-landscape", dest="force_orientation",
+            action="store_const", const="landscape",
+            help="use landscape sheets for all output pages",
+        )
+        orientation_group.add_argument(
+            "--force-portrait", dest="force_orientation",
+            action="store_const", const="portrait",
+            help="use portrait sheets for all output pages",
         )
         dpi_group = cmd.add_mutually_exclusive_group()
         dpi_group.add_argument(
@@ -901,6 +1104,12 @@ def init_parser_pdf(
             help="fill page margins with magenta for layout debugging",
         )
         cmd.add_argument(
+            "--crop",
+            nargs=4,
+            metavar=("TOP", "RIGHT", "BOTTOM", "LEFT"),
+            help="crop source edges with %% or px values",
+        )
+        cmd.add_argument(
             "-R", "--rename-processed",
             action="store_true",
             help="rename each source with a _processed suffix after success",
@@ -914,9 +1123,11 @@ def init_parser_pdf(
                 inf=namespace.inf,
                 paper_format=namespace.paper_format,
                 size_cm=namespace.size,
+                force_orientation=namespace.force_orientation,
                 dpi=namespace.dpi,
                 quality=namespace.quality,
                 debug_fill=namespace.debug_fill,
+                crop=namespace.crop,
                 rename_processed=namespace.rename_processed,
                 rewrite=namespace.rewrite,
                 verbose=namespace.verbose,
@@ -969,7 +1180,10 @@ def init_parser_pdf(
             parents=parents,
             help="pdf: show page metadata (PyMuPDF)",
         )
-        add_input_argument(cmd)
+        if legacy:
+            add_input_argument(cmd, multiple=True)
+        else:
+            cmd.add_argument("inf", nargs="*", metavar="INPUT")
         cmd.add_argument(
             "-p",
             "--pages",
@@ -988,6 +1202,11 @@ def init_parser_pdf(
             action="store_true",
             help="print an ASCII table",
         )
+        cmd.add_argument(
+            "--compact",
+            action="store_true",
+            help="print page rows without file names or column headers",
+        )
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_info(  # noqa
                 root=root(namespace),
@@ -996,6 +1215,7 @@ def init_parser_pdf(
                 verbose=namespace.verbose,
                 pt=namespace.pt,
                 table=namespace.table,
+                compact=namespace.compact,
             )
         )
 

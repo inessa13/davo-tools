@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 import pprint
+import re
 import time
 
 import reprint
@@ -15,6 +16,97 @@ from . import cache, conf, const, tasks, utils, workers
 logger = logging.getLogger(__name__)
 
 _CONFIRM_PERMANENT = {}
+_MD5_ETAG_RE = re.compile(r"[0-9a-fA-F]{32}")
+
+
+def _normalise_md5_etag(etag):
+    """Return a normalised MD5 ETag, or ``None`` when it is not one."""
+    if etag and etag.startswith('"') and etag.endswith('"'):
+        etag = etag[1:-1]
+
+    if etag and _MD5_ETAG_RE.fullmatch(etag):
+        return etag.lower()
+
+    return None
+
+
+def _diff_display_lines(files, all_files, root_key="", verbose=False):
+    """Return sorted diff lines, collapsing wholly missing directory trees."""
+    if verbose:
+        return [
+            "{} {} {}".format(
+                data["state"], key, ", ".join(data.get("comment", []))
+            )
+            for key, data in files.items()
+        ]
+
+    root_key = root_key.rstrip("/")
+    root_prefix = "{}/".format(root_key) if root_key else ""
+    candidates = {}
+    for key, data in files.items():
+        state = data["state"]
+        if state not in {
+            constants.STATE_LOCAL_NEW,
+            constants.STATE_LOCAL_MISSING,
+        }:
+            continue
+
+        parts = key.split("/")[:-1]
+        for index in range(1, len(parts) + 1):
+            directory = "/".join(parts[:index])
+            if not root_prefix or directory.startswith(root_prefix):
+                candidates[directory] = state
+
+    collapsed = {}
+    for directory, state in candidates.items():
+        descendants = [
+            data
+            for key, data in all_files.items()
+            if key.startswith(directory + "/")
+        ]
+        if len(descendants) > 1 and all(
+            data["state"] == state for data in descendants
+        ):
+            collapsed[directory] = len(descendants)
+
+    # A parent directory represents all of its descendants, so only retain
+    # outermost candidates.
+    collapsed = {
+        directory: count
+        for directory, count in collapsed.items()
+        if not any(
+            directory.startswith(parent + "/") for parent in collapsed
+        )
+    }
+
+    lines = []
+    emitted = set()
+    for key, data in sorted(files.items()):
+        directory = next(
+            (
+                parent
+                for parent in collapsed
+                if key.startswith(parent + "/")
+            ),
+            None,
+        )
+        if directory:
+            if directory not in emitted:
+                lines.append(
+                    "{} {}/ ({} files)".format(
+                        data["state"], directory, collapsed[directory]
+                    )
+                )
+                emitted.add(directory)
+            continue
+
+        lines.append(
+            "{} {} {}".format(
+                data["state"], key, ", ".join(data.get("comment", []))
+            )
+        )
+
+    return lines
 
 
 def on_config(namespace):
@@ -126,6 +218,9 @@ def on_diff(namespace, print_details=True):
     )
 
     for file_ in ls_remote:
+        if davo.utils.path.is_excluded(file_.name, conf.get("IGNORE")):
+            continue
+
         if not utils.check_file_type(file_.name, namespace.file_types):
             continue
 
@@ -138,7 +233,8 @@ def on_diff(namespace, print_details=True):
             name=file_.name,
             size=file_.size,
             modified=file_.last_modified,
-            md5=file_.etag[1:-1] if file_.etag else None,
+            md5=_normalise_md5_etag(file_.etag),
+            etag=file_.etag,
             state=constants.STATE_LOCAL_MISSING,
             comment=[],
             local_path=utils.file_path(file_.name),
@@ -170,9 +266,25 @@ def on_diff(namespace, print_details=True):
                 remote["comment"].append("size: {:.2f}%".format(diff))
 
             elif namespace.md5:
-                if davo.utils.path.file_hash(f_path) != remote["md5"]:
+                local_md5 = davo.utils.path.file_hash(f_path).hexdigest()
+                remote_md5 = remote["md5"]
+                if remote_md5 is None:
+                    logger.warning(
+                        "cannot compare MD5 for %s: S3 ETag %r is not a "
+                        "single-part MD5",
+                        remote["name"],
+                        remote["etag"],
+                    )
+                elif local_md5 != remote_md5:
                     equal = False
-                    remote["comment"].append("md5: different")
+                    if getattr(namespace, "verbose", False):
+                        remote["comment"].append(
+                            "md5: local {}, remote {}".format(
+                                local_md5, remote_md5
+                            )
+                        )
+                    else:
+                        remote["comment"].append("md5: different")
 
             if equal:
                 remote.update(state=constants.STATE_EQUAL, comment=[])
@@ -229,7 +341,9 @@ def on_diff(namespace, print_details=True):
                 if ext not in conf.get("ALLOWED_EXTENSIONS"):
                     remote_files[key]["state"] = constants.STATE_INVALID_TYPE
             if namespace.md5:
-                remote_files[key]["md5"] = davo.utils.path.file_hash(f_path)
+                remote_files[key]["md5"] = davo.utils.path.file_hash(
+                    f_path
+                ).hexdigest()
 
     # find renames
     if constants.STATE_RENAMED in modes:
@@ -256,19 +370,20 @@ def on_diff(namespace, print_details=True):
         for key in to_del:
             del remote_files[key]
 
+    all_files = remote_files
     remote_files = {
         k: v for k, v in remote_files.items() if v["state"] in modes
     }
 
     if print_details and not namespace.brief:
-        keys = remote_files.keys()
-        for key in keys:
-            data = remote_files[key]
-            print(
-                "{} {} {}".format(
-                    data["state"], key, ", ".join(data.get("comment", []))
-                )
-            )
+        root_key = utils.file_key(path)
+        for line in _diff_display_lines(
+            remote_files,
+            all_files,
+            root_key=root_key,
+            verbose=getattr(namespace, "verbose", False),
+        ):
+            print(line)
 
     davo.utils.path.count_diff(remote_files, verbose=True)
 

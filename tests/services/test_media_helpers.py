@@ -1,9 +1,10 @@
 import re
+from pathlib import Path
 
 import pytest
 
 from davo import errors
-from davo.services.photo import helpers
+from davo.services.photo import clients, helpers
 
 _FILES = [
     "/test_media/a.mp4",  # converted
@@ -179,6 +180,296 @@ def iter_files(mocker):
     mocker.patch("davo.services.photo.utils.iter_files", _iter_files)
 
 
+def test_run_ffmpeg_uses_path_binary():
+    result = clients.run_ffmpeg("/a.avi", "/a-web.avi", commit=False)
+
+    assert result == "ffmpeg -i /a.avi /a-web.avi"
+
+
+def test_run_ffmpeg_builds_compression_command():
+    result = clients.run_ffmpeg(
+        "/a.mov",
+        "/a_compressed.mp4",
+        video_codec="libx264",
+        crf=20,
+        audio_codec="copy",
+        overwrite=True,
+        commit=False,
+    )
+
+    assert result == (
+        "ffmpeg -y -i /a.mov -vcodec libx264 -crf 20 "
+        "-acodec copy /a_compressed.mp4"
+    )
+
+
+def test_run_ffmpeg_limits_height_without_upscaling():
+    result = clients.run_ffmpeg(
+        "/a.mov",
+        "/a_compressed.mp4",
+        video_codec="libx264",
+        crf=20,
+        height=720,
+        audio_codec="copy",
+        commit=False,
+    )
+
+    assert result == (
+        "ffmpeg -i /a.mov -vcodec libx264 -crf 20 "
+        "-vf scale=-2:min(ih\\,720) -acodec copy /a_compressed.mp4"
+    )
+
+
+def test_clips_compress_selects_unique_videos_in_stable_order(mocker):
+    mocker.patch.object(
+        helpers.os.path,
+        "isfile",
+        side_effect=lambda path: path in {"one.mov", "one-alias.mov"},
+    )
+    mocker.patch.object(
+        helpers.os.path, "isdir", side_effect=lambda path: path == "videos"
+    )
+    mocker.patch.object(
+        helpers.os.path,
+        "abspath",
+        side_effect=lambda path: (
+            "one.mov" if path == "one-alias.mov" else path
+        ),
+    )
+    mocker.patch.object(
+        helpers.utils,
+        "iter_files",
+        return_value=[
+            "videos/a.mp4",
+            "videos/a_compressed.mp4",
+            "videos/note.txt",
+            "videos/z.MKV",
+        ],
+    )
+
+    assert helpers._clips_compress_inputs(
+        ["one.mov", "videos", "one-alias.mov"], recursive=True
+    ) == ["one.mov", "videos/a.mp4", "videos/z.MKV"]
+
+
+def test_clips_compress_dry_run_and_rewrite(mocker, caplog):
+    caplog.set_level("INFO")
+    mocker.patch.object(
+        helpers,
+        "_clips_compress_inputs",
+        return_value=["one.mov", "two.mkv"],
+    )
+    mocker.patch.object(helpers.os.path, "exists", return_value=False)
+    ffmpeg = mocker.patch.object(
+        helpers.clients, "run_ffmpeg", return_value="ffmpeg command"
+    )
+
+    helpers.command_clips_compress(
+        ["one.mov", "two.mkv"], crf=18, mp4=True, dry_run=True, rewrite=True
+    )
+
+    assert ffmpeg.call_count == 2
+    assert ffmpeg.call_args_list[0].args == (
+        "one.mov",
+        "one_compressed.mp4",
+    )
+    assert ffmpeg.call_args_list[0].kwargs == {
+        "video_codec": "libx264",
+        "crf": 18,
+        "height": None,
+        "audio_codec": "copy",
+        "overwrite": True,
+        "timeout": 14400,
+        "commit": False,
+    }
+    assert "ffmpeg command" in caplog.text
+
+
+def test_clips_compress_skips_existing_output_without_rewrite(mocker):
+    mocker.patch.object(
+        helpers, "_clips_compress_inputs", return_value=["one.mov"]
+    )
+    mocker.patch.object(helpers.os.path, "exists", return_value=True)
+    ffmpeg = mocker.patch.object(helpers.clients, "run_ffmpeg")
+
+    helpers.command_clips_compress(["one.mov"])
+
+    ffmpeg.assert_not_called()
+
+
+def test_clips_compress_reports_sizes_and_total(tmp_path, mocker, caplog):
+    caplog.set_level("INFO")
+    first = tmp_path / "first.mov"
+    second = tmp_path / "second.mkv"
+    first.write_bytes(b"a" * 100)
+    second.write_bytes(b"b" * 200)
+    mocker.patch.object(
+        helpers,
+        "_clips_compress_inputs",
+        return_value=[str(first), str(second)],
+    )
+
+    def compress(_source, output, **_kwargs):
+        Path(output).write_bytes(b"x" * (50 if "first" in output else 300))
+        return True
+
+    mocker.patch.object(helpers.clients, "run_ffmpeg", side_effect=compress)
+
+    helpers.command_clips_compress([str(first), str(second)])
+
+    assert "first.mov:" in caplog.text
+    assert "(50.00% reduction)" in caplog.text
+    assert "second.mkv:" in caplog.text
+    assert "(-50.00% reduction)" in caplog.text
+    assert "total:" in caplog.text
+    assert "(-16.67% reduction)" in caplog.text
+    assert "_compressed" not in caplog.text
+
+
+def test_clips_compress_does_not_report_total_for_one_success(
+    tmp_path, mocker, caplog
+):
+    caplog.set_level("INFO")
+    source = tmp_path / "movie.mov"
+    source.write_bytes(b"a" * 100)
+    mocker.patch.object(
+        helpers, "_clips_compress_inputs", return_value=[str(source)]
+    )
+
+    def compress(_source, output, **_kwargs):
+        Path(output).write_bytes(b"x" * 50)
+        return True
+
+    mocker.patch.object(helpers.clients, "run_ffmpeg", side_effect=compress)
+
+    helpers.command_clips_compress([str(source)])
+
+    assert "total:" not in caplog.text
+
+
+def test_clips_compress_replace_source_after_success(tmp_path, mocker):
+    source = tmp_path / "movie.mov"
+    source.write_bytes(b"a" * 100)
+    mocker.patch.object(
+        helpers, "_clips_compress_inputs", return_value=[str(source)]
+    )
+
+    def compress(_source, output, **_kwargs):
+        Path(output).write_bytes(b"compressed")
+        return True
+
+    mocker.patch.object(helpers.clients, "run_ffmpeg", side_effect=compress)
+
+    helpers.command_clips_compress([str(source)], replace_source=True)
+
+    assert source.read_bytes() == b"compressed"
+    assert not (tmp_path / "movie_compressed.mov").exists()
+
+
+def test_clips_compress_replace_source_keeps_source_after_failure(
+    tmp_path, mocker
+):
+    source = tmp_path / "movie.mov"
+    source.write_bytes(b"original")
+    mocker.patch.object(
+        helpers, "_clips_compress_inputs", return_value=[str(source)]
+    )
+    mocker.patch.object(helpers.clients, "run_ffmpeg", return_value=False)
+
+    helpers.command_clips_compress([str(source)], replace_source=True)
+
+    assert source.read_bytes() == b"original"
+
+
+def test_clips_compress_replace_source_mp4(tmp_path, mocker):
+    source = tmp_path / "movie.mov"
+    target = tmp_path / "movie.mp4"
+    source.write_bytes(b"original")
+    mocker.patch.object(
+        helpers, "_clips_compress_inputs", return_value=[str(source)]
+    )
+
+    def compress(_source, output, **_kwargs):
+        Path(output).write_bytes(b"compressed")
+        return True
+
+    mocker.patch.object(helpers.clients, "run_ffmpeg", side_effect=compress)
+
+    helpers.command_clips_compress(
+        [str(source)], mp4=True, replace_source=True
+    )
+
+    assert not source.exists()
+    assert target.read_bytes() == b"compressed"
+    assert not (tmp_path / "movie_compressed.mp4").exists()
+
+
+def test_clips_compress_replace_source_existing_mp4(tmp_path, mocker):
+    source = tmp_path / "movie.mp4"
+    source.write_bytes(b"original")
+    mocker.patch.object(
+        helpers, "_clips_compress_inputs", return_value=[str(source)]
+    )
+
+    def compress(_source, output, **_kwargs):
+        Path(output).write_bytes(b"compressed")
+        return True
+
+    mocker.patch.object(helpers.clients, "run_ffmpeg", side_effect=compress)
+
+    helpers.command_clips_compress(
+        [str(source)], mp4=True, replace_source=True
+    )
+
+    assert source.read_bytes() == b"compressed"
+    assert not (tmp_path / "movie_compressed.mp4").exists()
+
+
+def test_clips_compress_replace_source_mp4_skips_existing_target(
+    tmp_path, mocker, caplog
+):
+    caplog.set_level("ERROR")
+    source = tmp_path / "movie.mov"
+    target = tmp_path / "movie.mp4"
+    source.write_bytes(b"original")
+    target.write_bytes(b"keep")
+    mocker.patch.object(
+        helpers, "_clips_compress_inputs", return_value=[str(source)]
+    )
+    ffmpeg = mocker.patch.object(helpers.clients, "run_ffmpeg")
+
+    helpers.command_clips_compress(
+        [str(source)], mp4=True, replace_source=True, rewrite=True
+    )
+
+    ffmpeg.assert_not_called()
+    assert source.read_bytes() == b"original"
+    assert target.read_bytes() == b"keep"
+    assert "target exists" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ["path", "stream"],
+    [
+        ("/a.mp3", "a"),
+        ("/a.avi", "v"),
+    ],
+)
+def test_check_ffmpeg_faststart_uses_path_binary(
+    mocker, path, stream
+):
+    run_subproc = mocker.patch(
+        "davo.services.photo.clients.concur.run_subproc",
+        return_value=b"pos=501",
+    )
+
+    assert clients.check_ffmpeg_faststart(path) is True
+    cmd = run_subproc.call_args.args[0]
+    assert cmd[0] == "ffprobe"
+    assert cmd[cmd.index("-select_streams") + 1] == stream
+    assert run_subproc.call_args.kwargs == {"quiet": False, "pipe": True}
+
+
 @pytest.mark.skip
 @pytest.mark.parametrize("path", ("/test_media", "/test_media/short"))
 @pytest.mark.parametrize("points", ("00:10", "00:10 00:15", "00:00.00.1234"))
@@ -256,7 +547,7 @@ def test_r_command_clips_web(
             True,
             _OUT_SINGLE_DRY_C.replace(
                 "*cmd*",
-                "/usr/bin/ffmpeg -i /a.avi -movflags +faststart "
+                "ffmpeg -i /a.avi -movflags +faststart "
                 "-c copy /a-web.avi",
             ),
         ),
@@ -267,7 +558,7 @@ def test_r_command_clips_web(
             False,
             _OUT_SINGLE_DRY_C.replace(
                 "*cmd*",
-                "/usr/bin/ffmpeg -i /a.avi -movflags +faststart "
+                "ffmpeg -i /a.avi -movflags +faststart "
                 "-c copy /a-web.avi",
             ),
         ),
@@ -310,7 +601,7 @@ def test_r2_command_clips_web(
             False,
             _OUT_SINGLE_DRY_C.replace(
                 "*cmd*",
-                "/usr/bin/ffmpeg -ss 10 -i /a.avi -movflags +faststart "
+                "ffmpeg -ss 10 -i /a.avi -movflags +faststart "
                 "/a-trimmed.avi",
             ),
         ),

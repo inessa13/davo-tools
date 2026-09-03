@@ -4,7 +4,7 @@ import logging
 import logging.config
 import os
 
-from . import services, settings, utils, version
+from . import errors, services, settings, utils, version
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ def init_parser():
         "fns-rename", help="name FNS receipt HTML files"
     )
     fns_rename.add_argument("path", nargs="?", default=os.getcwd())
+    fns_rename.add_argument("--config", help="path to project .dtconf")
     fns_rename.add_argument(
         "-c", "--commit", action="store_true", help="apply changes"
     )
@@ -44,6 +45,43 @@ def init_parser():
             root=namespace.path,
             commit=namespace.commit,
             rename=namespace.rename,
+            config=namespace.config,
+        )
+    )
+
+    fns_extract = arch_subparsers.add_parser(
+        "fns-extract", help="render FNS JSON receipts as HTML"
+    )
+    fns_extract.add_argument("json_path")
+    fns_extract.add_argument("-o", "--out-dir")
+    fns_extract.add_argument("--config", help="path to project .dtconf")
+    fns_extract.add_argument("--dry-run", action="store_true")
+    fns_extract.set_defaults(func=_run_fns_extract)
+
+    fns_config = arch_subparsers.add_parser(
+        "fns-config", help="manage FNS receipt settings"
+    )
+    fns_config_subparsers = fns_config.add_subparsers(title="list of commands")
+    fns_init_map = fns_config_subparsers.add_parser(
+        "init-map", help="add retail places from FNS JSON to .dtconf"
+    )
+    fns_init_map.add_argument("json_path")
+    fns_init_map.add_argument("--config", help="path to project .dtconf")
+    fns_init_map.add_argument("-v", "--verbose", action="store_true")
+    fns_init_map.set_defaults(
+        func=lambda namespace: services.arch.command_fns_config_init_map(
+            namespace.json_path,
+            config=namespace.config,
+            verbose=namespace.verbose,
+        )
+    )
+    fns_show_map = fns_config_subparsers.add_parser(
+        "show-map", help="show effective FNS store aliases"
+    )
+    fns_show_map.add_argument("--config", help="path to project .dtconf")
+    fns_show_map.set_defaults(
+        func=lambda namespace: services.arch.command_fns_config_show_map(
+            config=namespace.config
         )
     )
 
@@ -54,7 +92,7 @@ def init_parser():
     )
     services.common.init_parser(cmd, _subparsers, commands=("compare",))
 
-    cmd = subparsers.add_parser("clips", help="video tools")
+    cmd = subparsers.add_parser("vid", help="video tools")
     services.photo.cli.init_parser_clips(cmd)
 
     cmd = subparsers.add_parser("im", help="image tools")
@@ -67,6 +105,8 @@ def init_parser():
             "downscale",
             "fp",
             "diff",
+            "info",
+            "merge",
         ),
     )
 
@@ -103,6 +143,20 @@ def init_parser():
     )
 
     return parser
+
+
+def _run_fns_extract(namespace):
+    """Make extraction failures observable as a non-zero CLI exit status."""
+    try:
+        return services.arch.command_fns_extract(
+            namespace.json_path,
+            out_dir=namespace.out_dir,
+            config=namespace.config,
+            dry_run=namespace.dry_run,
+        )
+    except errors.UserError as exc:
+        logger.error(exc)
+        raise SystemExit(1) from exc
 
 
 def main():

@@ -123,7 +123,12 @@ def init_parser(parser=None, subparsers=None, commands=()):
         help="file types (extension) for compare",
     )
     common_diff.add_argument("--no-cache", action="store_true")
-    common_diff.add_argument("-v", "--verbose", action="store_true")
+    common_diff.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="show individual files instead of collapsed missing folders",
+    )
 
     if not commands or "diff" in commands:
         name = _command("diff", commands)
