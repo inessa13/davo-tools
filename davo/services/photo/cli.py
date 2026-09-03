@@ -861,7 +861,12 @@ def init_parser_pdf(
         cmd = subparsers.add_parser(
             "{}merge".format(prefix),
             parents=write_parents,
-            help="merge pdf files (PyMuPDF)",
+            help="merge PDF, image, TXT, and HTML files (PyMuPDF)",
+            description=(
+                "TXT is decoded as UTF-8 or Windows-1251 and rendered as "
+                "wrapped selectable text on A4 portrait sheets. HTML is "
+                "printed by system Chrome or Chromium."
+            ),
         )
         cmd.add_argument("-o", "--out", action="store")
         add_input_argument(cmd, multiple=True)
@@ -1021,7 +1026,15 @@ def init_parser_pdf(
         cmd = subparsers.add_parser(
             "{}form".format(prefix),
             parents=write_parents,
-            help="form PDF and image pages to a paper size (PyMuPDF)",
+            help=(
+                "form PDF, image, TXT, and HTML pages to a paper size "
+                "(PyMuPDF)"
+            ),
+            description=(
+                "TXT is decoded as UTF-8 or Windows-1251 and rendered as "
+                "wrapped selectable text with 1 cm margins. HTML is printed "
+                "by system Chrome or Chromium before forming."
+            ),
         )
         cmd.add_argument("-o", "--out", action="store")
         format_group = cmd.add_mutually_exclusive_group(required=True)

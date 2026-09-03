@@ -1,6 +1,7 @@
 # pylint: disable=too-many-lines
 import argparse
 import io
+import tempfile
 import types
 from pathlib import Path
 
@@ -32,6 +33,7 @@ class FakeOutputPage:
         self.clips = []
         self.inserted = []
         self.drawn = []
+        self.text_writers = []
         self.operations = []
 
     def draw_rect(self, rect, color=None, fill=None, overlay=True):
@@ -52,6 +54,24 @@ class FakeOutputPage:
     def insertImage(self, rect, stream):
         self.inserted.append((rect, stream, True))
         self.operations.append("insertImage")
+
+
+class FakeFont:
+    def __init__(self, fontname):
+        self.fontname = fontname
+
+
+class FakeTextWriter:
+    def __init__(self, rect):
+        self.rect = rect
+        self.appended = []
+
+    def append(self, point, text, font, fontsize):
+        self.appended.append((point, text, font, fontsize))
+
+    def write_text(self, page):
+        page.text_writers.append(self)
+        page.operations.append("write_text")
 
 
 class FakePage:
@@ -202,6 +222,8 @@ def fake_fitz(mocker):
         open=_open,
         Matrix=lambda x, y: (x, y),
         Rect=lambda x0, y0, x1, y1: (x0, y0, x1, y1),
+        Font=FakeFont,
+        TextWriter=FakeTextWriter,
     )
     mocker.patch("davo.services.photo.pdf._import_fitz", return_value=fitz_mod)
     return docs
@@ -631,18 +653,64 @@ def test_form_files_does_not_draw_debug_fill_by_default(fake_fitz):
     assert fake_fitz["__created__"][0].new_pages[0].drawn == []
 
 
-def test_form_files_rejects_unsupported_source_before_creating_result(
-    fake_fitz,
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ("Привет\r\n\tмир".encode(), "Привет\n    мир"),
+        ("Привет".encode("utf-8-sig"), "Привет"),
+        ("Привет".encode("cp1251"), "Привет"),
+    ],
+)
+def test_read_text_file_supports_expected_encodings(
+    tmp_path, payload, expected
 ):
-    status = pdf.form_files(
-        ["/a.txt"], "/out.pdf", paper_format="a4"
+    source = tmp_path / "input.TXT"
+    source.write_bytes(payload)
+
+    assert pdf._read_text_file(str(source)) == expected  # pylint: disable=W0212
+
+
+def test_form_files_renders_txt_on_selected_sheet(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "input.txt"
+    source.write_text("first\n\nsecond")
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
     )
 
-    assert status is False
+    assert pdf.form_files(
+        [str(source)], str(tmp_path / "out.pdf"), paper_format="a6",
+        crop=["49%", "49%", "49%", "49%"], debug_fill=True,
+    )
+
+    page = fake_fitz["__created__"][0].new_pages[0]
+    assert (page.width, page.height) == pdf._PAPER_FORMATS["a6"]
+    assert page.operations == ["draw_rect", "write_text"]
+    assert [entry[1] for entry in page.text_writers[0].appended] == [
+        "first", "", "second"
+    ]
+    assert page.text_writers[0].appended[0][2].fontname == "cour"
+
+
+def test_form_files_rejects_invalid_txt_before_creating_result(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "invalid.txt"
+    source.write_bytes(b"\x98")
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+
+    assert not pdf.form_files(
+        [str(source)], str(tmp_path / "out.pdf"), paper_format="a4"
+    )
     assert fake_fitz["__created__"] == []
 
 
-@pytest.mark.parametrize("extension", [".pdf", ".jpg", ".png", ".bmp"])
+@pytest.mark.parametrize(
+    "extension", [".pdf", ".jpg", ".png", ".bmp", ".txt"]
+)
 def test_form_files_renames_processed_sources_after_saving(
     fake_fitz, monkeypatch, tmp_path, extension
 ):
@@ -650,6 +718,8 @@ def test_form_files_renames_processed_sources_after_saving(
     if extension == ".pdf":
         source.write_bytes(b"pdf")
         fake_fitz[str(source)] = FakeDoc()
+    elif extension == ".txt":
+        source.write_text("text")
     else:
         Image.new("RGB", (8, 8), "red").save(source)
     output = tmp_path / "formed.pdf"
@@ -890,6 +960,445 @@ def test_merge_files_returns_false_when_nothing_added(monkeypatch, fake_fitz):
     status = pdf.merge_files(["/missing.pdf"], "/out.pdf", verbose=True)
 
     assert status is False
+
+
+def test_merge_files_inserts_txt_as_a4_portrait(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "note.TXT"
+    source.write_text("hello")
+    output = tmp_path / "merged.pdf"
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+
+    assert pdf.merge_files([str(source)], str(output))
+
+    result = fake_fitz["__created__"][0]
+    page = result.new_pages[0]
+    assert (page.width, page.height) == pdf._PAPER_FORMATS["a4"]
+    assert [entry[1] for entry in page.text_writers[0].appended] == ["hello"]
+
+
+def test_merge_files_places_html_as_a4_portrait_pdf(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "receipt.HTML"
+    source.write_text("<p>receipt</p>")
+    rendered = "/rendered-html.pdf"
+    fake_fitz[rendered] = FakeDoc(pages=[FakePage(rect=FakeRect(400, 200))])
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+    monkeypatch.setattr(
+        pdf, "_render_html_to_pdf", lambda *_args, **_kwargs: rendered
+    )
+
+    assert pdf.merge_files([str(source)], str(tmp_path / "merged.pdf"))
+
+    page = fake_fitz["__created__"][0].new_pages[0]
+    assert (page.width, page.height) == pdf._PAPER_FORMATS["a4"]
+    assert page.shown[0][1] is fake_fitz[rendered]
+    assert page.shown[0][3] is True
+
+
+def test_render_html_to_pdf_uses_safe_file_uri_and_browser_command(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "чек with space.html"
+    source.write_text("<p>receipt</p>")
+    calls = []
+    signals = []
+    monkeypatch.setattr(pdf, "_find_html_browser", lambda: "/browser")
+    monkeypatch.setattr(
+        pdf.os.path,
+        "isfile",
+        lambda path: Path(path).exists() or str(path).endswith(".pdf"),
+    )
+    monkeypatch.setattr(pdf.os.path, "getsize", lambda _path: 1)
+    monkeypatch.setattr(
+        pdf.os, "killpg", lambda pid, sig: signals.append((pid, sig))
+    )
+    process = types.SimpleNamespace(
+        returncode=0,
+        pid=999999,
+        poll=lambda: None,
+        communicate=lambda **_kwargs: (b"", b""),
+    )
+    monkeypatch.setattr(
+        pdf.subprocess,
+        "Popen",
+        lambda command, **kwargs: (
+            calls.append((command, kwargs))
+            or process
+        ),
+    )
+    fitz = types.SimpleNamespace(open=lambda _path: FakeDoc(page_count=1))
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        rendered = pdf._render_html_to_pdf(fitz, str(source), temp_dir)
+
+    command, kwargs = calls[0]
+    assert command[0] == "/browser"
+    assert "--allow-file-access-from-files" in command
+    assert "--no-pdf-header-footer" in command
+    assert (
+        f"--timeout={pdf._HTML_BROWSER_CAPTURE_TIMEOUT_MILLISECONDS}"
+        in command
+    )
+    assert command[-1] == source.resolve().as_uri()
+    assert any(item == f"--print-to-pdf={rendered}" for item in command)
+    assert kwargs == {
+        "start_new_session": True,
+        "stdout": kwargs["stdout"],
+        "stderr": kwargs["stderr"],
+    }
+    assert kwargs["stdout"] is not pdf.subprocess.PIPE
+    assert kwargs["stderr"] is not pdf.subprocess.PIPE
+    assert signals == [(999999, pdf.signal.SIGTERM)]
+
+
+def test_render_html_to_pdf_adds_macos_browser_dialog_flags(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "receipt.html"
+    source.write_text("<p>receipt</p>")
+    calls = []
+    monkeypatch.setattr(pdf, "_find_html_browser", lambda: "/browser")
+    monkeypatch.setattr(pdf.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        pdf.os.path,
+        "isfile",
+        lambda path: Path(path).exists() or str(path).endswith(".pdf"),
+    )
+    monkeypatch.setattr(pdf.os.path, "getsize", lambda _path: 1)
+    monkeypatch.setattr(
+        pdf.subprocess,
+        "Popen",
+        lambda command, **_kwargs: (
+            calls.append(command)
+            or types.SimpleNamespace(
+                returncode=0,
+                pid=999999,
+                poll=lambda: None,
+                communicate=lambda **_kwargs: (b"", b""),
+            )
+        ),
+    )
+    fitz = types.SimpleNamespace(open=lambda _path: FakeDoc(page_count=1))
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        pdf._render_html_to_pdf(fitz, str(source), temp_dir)
+
+    assert "--use-mock-keychain" in calls[0]
+    assert "--disable-features=DialMediaRouteProvider" in calls[0]
+    assert "--no-first-run" in calls[0]
+    assert "--no-default-browser-check" in calls[0]
+
+
+def test_render_html_to_pdf_does_not_add_macos_flags_elsewhere(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "receipt.html"
+    source.write_text("<p>receipt</p>")
+    calls = []
+    monkeypatch.setattr(pdf, "_find_html_browser", lambda: "/browser")
+    monkeypatch.setattr(pdf.sys, "platform", "linux")
+    monkeypatch.setattr(
+        pdf.os.path,
+        "isfile",
+        lambda path: Path(path).exists() or str(path).endswith(".pdf"),
+    )
+    monkeypatch.setattr(pdf.os.path, "getsize", lambda _path: 1)
+    monkeypatch.setattr(
+        pdf.subprocess,
+        "Popen",
+        lambda command, **_kwargs: (
+            calls.append(command)
+            or types.SimpleNamespace(
+                returncode=0,
+                pid=999999,
+                poll=lambda: None,
+                communicate=lambda **_kwargs: (b"", b""),
+            )
+        ),
+    )
+    fitz = types.SimpleNamespace(open=lambda _path: FakeDoc(page_count=1))
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        pdf._render_html_to_pdf(fitz, str(source), temp_dir)
+
+    assert "--use-mock-keychain" not in calls[0]
+    assert "--disable-features=DialMediaRouteProvider" not in calls[0]
+
+
+def test_render_html_to_pdf_verbose_includes_chrome_stderr(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "receipt.html"
+    source.write_text("<p>receipt</p>")
+    calls = []
+    monkeypatch.setattr(pdf, "_find_html_browser", lambda: "/browser")
+    def popen(command, **kwargs):
+        calls.append(command)
+        kwargs["stderr"].write(b"Chrome diagnostic")
+        return types.SimpleNamespace(
+            returncode=1,
+            poll=lambda: 1,
+            communicate=lambda **_kwargs: (b"", b"Chrome diagnostic"),
+        )
+
+    monkeypatch.setattr(pdf.subprocess, "Popen", popen)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with pytest.raises(pdf.HtmlRenderError) as error:
+            pdf._render_html_to_pdf(
+                object(), str(source), temp_dir, verbose=True
+            )
+
+    assert "--enable-logging=stderr" in calls[0]
+    assert "--v=1" not in calls[0]
+    assert "Chrome command: /browser" in str(error.value)
+    assert "Chrome diagnostic" in str(error.value)
+
+
+def test_render_html_to_pdf_hides_chrome_stderr_without_verbose(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "receipt.html"
+    source.write_text("<p>receipt</p>")
+    monkeypatch.setattr(pdf, "_find_html_browser", lambda: "/browser")
+    monkeypatch.setattr(
+        pdf.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            returncode=1,
+            poll=lambda: 1,
+            communicate=lambda **_kwargs: (b"", b"Chrome diagnostic"),
+        ),
+    )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with pytest.raises(pdf.HtmlRenderError) as error:
+            pdf._render_html_to_pdf(object(), str(source), temp_dir)
+
+    assert str(error.value) == "browser failed to render HTML (exit 1)"
+
+
+def test_render_html_to_pdf_timeout_stops_browser_process_group(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "receipt.html"
+    source.write_text("<p>receipt</p>")
+    signals = []
+
+    class TimedOutProcess:
+        pid = 123
+        returncode = None
+
+        def __init__(self):
+            self.calls = 0
+
+        def poll(self):
+            return None
+
+        def communicate(self, **_kwargs):
+            self.calls += 1
+            if self.calls < 2:
+                raise pdf.subprocess.TimeoutExpired("browser", 10)
+            return (b"", b"Chrome timeout diagnostic")
+
+    monkeypatch.setattr(pdf, "_find_html_browser", lambda: "/browser")
+    def popen(*_args, **kwargs):
+        kwargs["stderr"].write(b"Chrome timeout diagnostic")
+        return TimedOutProcess()
+
+    monkeypatch.setattr(pdf.subprocess, "Popen", popen)
+    monkeypatch.setattr(
+        pdf.os, "killpg", lambda pid, sig: signals.append((pid, sig))
+    )
+    monkeypatch.setattr(pdf, "_HTML_RENDER_TIMEOUT_SECONDS", 0)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with pytest.raises(pdf.HtmlRenderError, match="timed out") as error:
+            pdf._render_html_to_pdf(
+                object(), str(source), temp_dir, verbose=True
+            )
+
+    assert signals == [
+        (123, pdf.signal.SIGTERM),
+        (123, pdf.signal.SIGKILL),
+    ]
+    assert "Chrome timeout diagnostic" in str(error.value)
+    assert "Chrome process stopped after SIGKILL" in str(error.value)
+
+
+def test_render_html_to_pdf_rejects_missing_pdf_after_browser_success(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "receipt.html"
+    source.write_text("<p>receipt</p>")
+    monkeypatch.setattr(pdf, "_find_html_browser", lambda: "/browser")
+    monkeypatch.setattr(
+        pdf.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            returncode=0,
+            poll=lambda: 0,
+            communicate=lambda **_kwargs: (b"", b""),
+        ),
+    )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with pytest.raises(pdf.HtmlRenderError, match="did not create a PDF"):
+            pdf._render_html_to_pdf(object(), str(source), temp_dir)
+
+
+def test_render_html_to_pdf_rejects_unopenable_pdf(monkeypatch, tmp_path):
+    source = tmp_path / "receipt.html"
+    source.write_text("<p>receipt</p>")
+
+    class Process:
+        returncode = 0
+
+        def __init__(self):
+            self.polls = iter((None, 0))
+
+        def poll(self):
+            return next(self.polls)
+
+    def popen(command, **_kwargs):
+        output = next(arg.split("=", 1)[1] for arg in command
+                      if arg.startswith("--print-to-pdf="))
+        Path(output).write_bytes(b"not a PDF")
+        return Process()
+
+    monkeypatch.setattr(pdf, "_find_html_browser", lambda: "/browser")
+    monkeypatch.setattr(pdf.subprocess, "Popen", popen)
+    monkeypatch.setattr(pdf.time, "sleep", lambda _seconds: None)
+    fitz = types.SimpleNamespace(
+        open=lambda _path: (_ for _ in ()).throw(ValueError("bad PDF"))
+    )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with pytest.raises(pdf.HtmlRenderError, match="invalid PDF"):
+            pdf._render_html_to_pdf(fitz, str(source), temp_dir)
+
+
+def test_render_html_to_pdf_rejects_pdf_that_never_stabilizes(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "receipt.html"
+    source.write_text("<p>receipt</p>")
+
+    class Process:
+        returncode = 0
+
+        def __init__(self):
+            self.polls = iter((None, 0))
+
+        def poll(self):
+            return next(self.polls)
+
+    def popen(command, **_kwargs):
+        output = next(arg.split("=", 1)[1] for arg in command
+                      if arg.startswith("--print-to-pdf="))
+        Path(output).write_bytes(b"PDF")
+        return Process()
+
+    sizes = iter((1, 2, 2))
+    monkeypatch.setattr(pdf, "_find_html_browser", lambda: "/browser")
+    monkeypatch.setattr(pdf.subprocess, "Popen", popen)
+    monkeypatch.setattr(pdf.os.path, "getsize", lambda _path: next(sizes))
+    monkeypatch.setattr(pdf.time, "sleep", lambda _seconds: None)
+    fitz = types.SimpleNamespace(open=lambda _path: FakeDoc(page_count=1))
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with pytest.raises(pdf.HtmlRenderError, match="stable PDF"):
+            pdf._render_html_to_pdf(fitz, str(source), temp_dir)
+
+
+def test_form_files_prepares_html_as_pdf_before_creating_result(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "receipt.htm"
+    source.write_text("<p>receipt</p>")
+    rendered = "/rendered-html.pdf"
+    fake_fitz[rendered] = FakeDoc(pages=[FakePage(rect=FakeRect(100, 200))])
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+    monkeypatch.setattr(
+        pdf, "_render_html_to_pdf", lambda *_args, **_kwargs: rendered
+    )
+
+    assert pdf.form_files(
+        [str(source)], str(tmp_path / "formed.pdf"), paper_format="a6",
+        force_orientation="landscape", debug_fill=True,
+        crop=["5%", "5%", "5%", "5%"],
+    )
+
+    page = fake_fitz["__created__"][0].new_pages[0]
+    assert (page.width, page.height) == tuple(
+        reversed(pdf._PAPER_FORMATS["a6"])
+    )
+    assert page.operations == ["draw_rect", "show_pdf_page"]
+
+
+def test_form_files_rejects_html_pixel_crop_before_creating_result(
+    fake_fitz, monkeypatch, tmp_path
+):
+    source = tmp_path / "receipt.html"
+    source.write_text("<p>receipt</p>")
+    rendered = "/rendered-html.pdf"
+    fake_fitz[rendered] = FakeDoc()
+    monkeypatch.setattr(
+        pdf.os.path, "exists", lambda path: Path(path).exists()
+    )
+    monkeypatch.setattr(
+        pdf, "_render_html_to_pdf", lambda *_args, **_kwargs: rendered
+    )
+
+    assert not pdf.form_files(
+        [str(source)], str(tmp_path / "formed.pdf"), paper_format="a4",
+        crop=["1px", "0", "0", "0"],
+    )
+    assert fake_fitz["__created__"] == []
+
+
+def test_text_layout_wraps_long_words_and_adds_blank_page(fake_fitz):
+    result = FakeDoc(page_count=0)
+    width = 72.0
+    pdf._render_text_pages(  # pylint: disable=W0212
+        types.SimpleNamespace(
+            Rect=lambda *values: values,
+            Font=FakeFont,
+            TextWriter=FakeTextWriter,
+        ),
+        result,
+        "x" * 20,
+        (width, 100.0),
+    )
+
+    rendered = [
+        entry[1]
+        for page in result.new_pages
+        for entry in page.text_writers[0].appended
+    ]
+    assert rendered == ["xx"] * 10
+
+    blank_result = FakeDoc(page_count=0)
+    pdf._render_text_pages(  # pylint: disable=W0212
+        types.SimpleNamespace(
+            Rect=lambda *values: values,
+            Font=FakeFont,
+            TextWriter=FakeTextWriter,
+        ),
+        blank_result,
+        "",
+        pdf._PAPER_FORMATS["a4"],
+    )
+    assert len(blank_result.new_pages) == 1
 
 
 def test_extract_images_uses_default_prefix_and_global_counter(
