@@ -32,7 +32,7 @@ def init_parser():
     fns_rename.add_argument("path", nargs="?", default=os.getcwd())
     fns_rename.add_argument("--config", help="path to project .dtconf")
     fns_rename.add_argument(
-        "-c", "--commit", action="store_true", help="apply changes"
+        "-C", "--commit", action="store_true", help="apply changes"
     )
     fns_rename.add_argument(
         "-R",
@@ -55,7 +55,7 @@ def init_parser():
     fns_extract.add_argument("json_path")
     fns_extract.add_argument("-o", "--out-dir")
     fns_extract.add_argument("--config", help="path to project .dtconf")
-    fns_extract.add_argument("--dry-run", action="store_true")
+    fns_extract.add_argument("-0", "--dry-run", action="store_true")
     fns_extract.set_defaults(func=_run_fns_extract)
 
     fns_config = arch_subparsers.add_parser(

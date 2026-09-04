@@ -166,13 +166,20 @@ def test_normalise_user_removes_legal_forms_quotes_and_recognises_fio(
     assert arch._normalise_user(user) == expected
 
 
-@pytest.mark.parametrize("option", ["-c", "--commit"])
+@pytest.mark.parametrize("option", ["-C", "--commit"])
 def test_cli_commit_options(option):
     from davo import cli
 
     namespace = cli.init_parser().parse_args(["arch", "fns-rename", option])
 
     assert namespace.commit is True
+
+
+def test_cli_fns_rename_rejects_old_commit_short_option():
+    from davo import cli
+
+    with pytest.raises(SystemExit):
+        cli.init_parser().parse_args(["arch", "fns-rename", "-c"])
 
 
 @pytest.mark.parametrize("option", ["-R", "--rename"])

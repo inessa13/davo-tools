@@ -51,7 +51,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
 
     p_commit = argparse.ArgumentParser(add_help=False)
     p_commit.add_argument(
-        "-c", "--commit", action="store_true", help="commit mode"
+        "-C", "--commit", action="store_true", help="commit mode"
     )
 
     p_verbose = argparse.ArgumentParser(add_help=False)
@@ -141,7 +141,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
             help="replace pattern, default %(default)s",
         )
         cmd.add_argument("-l", "--limit", action="store", type=int, default=0)
-        cmd.add_argument("-C", "--copy", action="store_true")
+        cmd.add_argument("-c", "--copy", action="store_true")
         cmd.add_argument(
             "-F", "--filter", action="append", help="filter pattern"
         )
@@ -217,7 +217,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
             "been changed",
         )
         cmd.add_argument(
-            "-C",
+            "-c",
             "--copy",
             action="store_true",
             help="make backup copies of source images on  conversion if "
@@ -613,7 +613,7 @@ def init_parser_clips(parser=None, subparsers=None):
 
     p_commit = argparse.ArgumentParser(add_help=False)
     p_commit.add_argument(
-        "-c", "--commit", action="store_true", help="commit mode"
+        "-C", "--commit", action="store_true", help="commit mode"
     )
 
     p_verbose = argparse.ArgumentParser(add_help=False)
@@ -777,6 +777,7 @@ def init_parser_clips(parser=None, subparsers=None):
         help="replace each source after it is successfully compressed",
     )
     cmd.add_argument(
+        "-0",
         "--dry-run",
         action="store_true",
         help="print ffmpeg commands without running them",
@@ -1087,7 +1088,7 @@ def init_parser_pdf(
             help="target image DPI: 96",
         )
         dpi_group.add_argument(
-            "--dpi", type=_form_dpi, metavar="N",
+            "-d", "--dpi", type=_form_dpi, metavar="N",
             help="target image DPI, from 72 to 800",
         )
         cmd.add_argument(
@@ -1203,7 +1204,7 @@ def init_parser_pdf(
             help="print an ASCII table",
         )
         cmd.add_argument(
-            "--compact",
+            "-c", "--compact",
             action="store_true",
             help="print page rows without file names or column headers",
         )

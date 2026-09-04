@@ -243,7 +243,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
             action="store_true",
             help="force non-safe action like remove files",
         )
-        cmd.add_argument("--commit", action="store_true")
+        cmd.add_argument("-C", "--commit", action="store_true")
         cmd.set_defaults(
             func=lambda namespace: command_compare_dirs(
                 root1=namespace.root1,

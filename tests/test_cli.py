@@ -193,6 +193,7 @@ def test_parser_keeps_pdf_commands(command):
         (["-M"], 200),
         (["-l"], 150),
         (["-L"], 96),
+        (["-d", "800"], 800),
         (["--dpi", "800"], 800),
     ],
 )
@@ -295,6 +296,112 @@ def test_file_keeps_compare():
     namespace = cli.init_parser().parse_args(["file", "compare"])
 
     assert callable(namespace.func)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["arch", "fns-extract", "-0", "export.json"],
+        ["arch", "fns-extract", "--dry-run", "export.json"],
+        ["vid", "compress", "-0", "movie.mov"],
+    ],
+)
+def test_parser_accepts_dry_run_short_option(arguments):
+    namespace = cli.init_parser().parse_args(arguments)
+
+    assert namespace.dry_run is True
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["file", "rename", "-C"],
+        ["file", "iphone-clean-live", "-C"],
+        ["file", "compare", "-C"],
+        ["vid", "convert", "-C"],
+        ["vid", "split", "-C", "input.mp4", "00:00:10"],
+        ["vid", "trim", "-C"],
+        ["vid", "web", "-C"],
+        ["im", "convert", "-C"],
+        ["im", "recover", "-C"],
+        ["im", "downscale", "-C"],
+    ],
+)
+def test_parser_uses_uppercase_short_option_for_commit(arguments):
+    namespace = cli.init_parser().parse_args(arguments)
+
+    assert namespace.commit is True
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["file", "rename", "-c"],
+        ["im", "convert", "-c"],
+    ],
+)
+def test_parser_uses_lowercase_short_option_for_copy(arguments):
+    namespace = cli.init_parser().parse_args(arguments)
+
+    assert namespace.copy is True
+    assert namespace.commit is False
+
+
+@pytest.mark.parametrize(
+    ("arguments", "handler_name"),
+    [
+        (["file", "rename", "-c", "-C"], "command_regexp"),
+        (["im", "convert", "-c", "-C"], "command_convert"),
+    ],
+)
+def test_parser_forwards_copy_and_commit_options(
+    mocker, arguments, handler_name
+):
+    handler = mocker.patch.object(photo_cli.helpers, handler_name)
+    namespace = cli.init_parser().parse_args(arguments)
+
+    namespace.func(namespace)
+
+    assert handler.call_args.kwargs["copy"] is True
+    assert handler.call_args.kwargs["commit"] is True
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["pdf", "info", "-c"],
+        ["pdf", "info", "--compact"],
+    ],
+)
+def test_parser_accepts_compact_pdf_info_option(arguments):
+    namespace = cli.init_parser().parse_args(arguments)
+
+    assert namespace.compact is True
+
+
+@pytest.mark.parametrize("option", ["-a", "--all"])
+def test_cit_parser_accepts_all_short_option(option):
+    namespace = cli.init_parser().parse_args(["cit", option])
+
+    assert namespace.all is True
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["arch", "fns-rename", "-c"],
+        ["vid", "convert", "-c"],
+        ["vid", "split", "-c", "input.mp4", "00:00:10"],
+        ["vid", "trim", "-c"],
+        ["vid", "web", "-c"],
+        ["im", "recover", "-c"],
+        ["im", "downscale", "-c"],
+        ["cit", "-A"],
+    ],
+)
+def test_parser_rejects_removed_conflicting_short_options(arguments):
+    with pytest.raises(SystemExit):
+        cli.init_parser().parse_args(arguments)
 
 
 @pytest.mark.parametrize(
