@@ -63,20 +63,39 @@ def init_parser():
     )
     fns_config_subparsers = fns_config.add_subparsers(title="list of commands")
     fns_init_map = fns_config_subparsers.add_parser(
-        "init-map", help="add retail places from FNS JSON to .dtconf"
+        "init-map", help="add sellers from FNS JSON to .dtconf"
     )
     fns_init_map.add_argument("json_path")
     fns_init_map.add_argument("--config", help="path to project .dtconf")
     fns_init_map.add_argument("-v", "--verbose", action="store_true")
+    fns_init_map.add_argument(
+        "-n",
+        "--normalise",
+        action="store_true",
+        help="pre-fill new aliases with normalized seller names",
+    )
+    fns_init_map.add_argument(
+        "-0",
+        "--dry-run", action="store_true", help="show changes without writing"
+    )
+    fns_init_map.add_argument(
+        "-e",
+        "--extra-meta",
+        action="store_true",
+        help="add receipt metadata comments for new sellers",
+    )
     fns_init_map.set_defaults(
         func=lambda namespace: services.arch.command_fns_config_init_map(
             namespace.json_path,
             config=namespace.config,
             verbose=namespace.verbose,
+            normalise=namespace.normalise,
+            dry_run=namespace.dry_run,
+            extra_meta=namespace.extra_meta,
         )
     )
     fns_show_map = fns_config_subparsers.add_parser(
-        "show-map", help="show effective FNS store aliases"
+        "show-map", help="show effective FNS seller aliases"
     )
     fns_show_map.add_argument("--config", help="path to project .dtconf")
     fns_show_map.set_defaults(

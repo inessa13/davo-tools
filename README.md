@@ -48,23 +48,34 @@ davo arch fns-extract extract.json
 davo arch fns-extract extract.json -o receipts --dry-run
 davo arch fns-config init-map extract.json
 davo arch fns-config init-map -v extract.json
+davo arch fns-config init-map -n extract.json
+davo arch fns-config init-map -0 extract.json
+davo arch fns-config init-map -e extract.json
 davo arch fns-config show-map
 ```
 
-Store aliases live alongside other project settings and are optional:
+Seller aliases live alongside other project settings and are optional. Keys are
+the exact FNS `user` values:
 
 ```yaml
 fns:
-  store_names:
-    ozon.ru: Озон
+  user_names:
+    "ООО «Интернет Решения»": Озон
 ```
 
-Unknown stores use a safe normalized version of `retailPlace`; `init-map`
-adds them without replacing existing aliases. With `-v/--verbose`, it reports
-each distinct store as `added` or `existing` and shows its resulting name.
+Unknown sellers use a safe normalized version of `user`; legal forms and
+quotes are removed, and recognized personal names become `ИП <Фамилия>`.
+`init-map` adds exact users with an empty alias by default, so their seller
+name is omitted from generated filenames. `--normalise` pre-fills those
+aliases instead. Neither option replaces existing aliases. With `-v/--verbose`,
+it reports each distinct seller as `added` or `existing` and shows its
+resulting name; `-0/--dry-run` reports the same plan without writing a config.
+Use `-e/--extra-meta` to add comments for new sellers with every distinct
+`retailPlace`, `userInn`, `retailPlaceAddress`, and `sellerAddress` found in
+the export. `-n/--normalise` and `-0/--dry-run` also have short forms.
 Generated names include `REC`
 and `autogen`, for example `20260730 REC Озон autogen 1.html`. Receipts with
-the same date and store are numbered. Existing unrelated files are never
+the same date and seller are numbered. Existing unrelated files are never
 overwritten; the next free suffix is used instead.
 
 Each generated file contains its fiscal identity and a PNG QR code. A later
