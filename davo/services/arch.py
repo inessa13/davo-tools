@@ -231,8 +231,8 @@ def _display_path(path, root):
     return path.relative_to(root)
 
 
-def command_fns_rename(root, commit=False, rename=False, config=None):
-    """Plan or apply names for FNS receipt HTML files in one directory."""
+def command_fns_rename(root, rename=False, config=None):
+    """Copy receipts immediately, or rename them when explicitly requested."""
     root = Path(root)
     if not root.is_dir():
         logger.warning("fns-rename: directory not found: %s", root)
@@ -256,8 +256,6 @@ def command_fns_rename(root, commit=False, rename=False, config=None):
             _display_path(item.source, root),
             _display_path(item.target, root),
         )
-        if not commit:
-            continue
         try:
             if rename:
                 # link() atomically refuses an existing target.  Both files
@@ -470,9 +468,7 @@ def command_fns_extract(json_path, out_dir=None, config=None, dry_run=False):
         raise errors.UserError(
             "fns-extract: output directory not found: {}".format(root)
         )
-    user_names, _config_path = load_fns_user_names(
-        os.getcwd(), config=config
-    )
+    user_names, _config_path = load_fns_user_names(os.getcwd(), config=config)
     receipts, failed = [], []
     for index, entry in enumerate(entries, start=1):
         try:
@@ -617,9 +613,7 @@ def _dump_fns_config(contents, metadata, preserved_comments):
     for user, comments in comments_by_user.items():
         if not comments:
             continue
-        entry = _yaml_mapping_entry(
-            user, contents["fns"]["user_names"][user]
-        )
+        entry = _yaml_mapping_entry(user, contents["fns"]["user_names"][user])
         try:
             index = lines.index("    " + entry)
         except ValueError:

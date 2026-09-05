@@ -5,7 +5,6 @@ Single index of **order and priority** for davo-tools. Process: [`docs/shared/do
 ## Now
 
 - [Bug: s3sync replace-upload cache not updating](specs/20260512-bug-replace-upload-cache.md) — `davo/services/s3sync/`
-- [photo/helpers] Implement copy behavior when `file_path == file_path_new` in convert flow (`davo/services/photo/helpers.py:508`)
 
 ## Next
 

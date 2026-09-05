@@ -412,25 +412,24 @@ def command_clips_compress(
     dry_run: bool = False,
     rewrite: bool = False,
     recursive: bool = False,
-    replace_source: bool = False,
+    rename_processed: bool = False,
 ):
     """Compress selected videos, continuing after individual failures."""
     successful_sizes = []
     for input_file in _clips_compress_inputs(inputs, recursive=recursive):
         stem, extension = os.path.splitext(input_file)
         output_file = f"{stem}_compressed{'.mp4' if mp4 else extension}"
-        replacement_file = f"{stem}.mp4" if mp4 else input_file
-
-        if (
-            replace_source
-            and mp4
-            and extension.lower() != ".mp4"
-            and os.path.exists(replacement_file)
+        processed_file = f"{stem}_processed{extension}"
+        if rename_processed and (
+            stem.endswith("_processed")
+            or os.path.exists(processed_file)
+            or os.path.normcase(os.path.abspath(processed_file))
+            == os.path.normcase(os.path.abspath(output_file))
         ):
             logger.error(
-                "%s: cannot replace source; target exists: %s",
+                "%s: processed target unavailable: %s",
                 input_file,
-                replacement_file,
+                processed_file,
             )
             continue
 
@@ -459,10 +458,9 @@ def command_clips_compress(
         try:
             source_size = os.path.getsize(input_file)
             result_size = os.path.getsize(output_file)
-            if replace_source:
-                os.replace(output_file, replacement_file)
-                if mp4 and extension.lower() != ".mp4":
-                    os.remove(input_file)
+            if rename_processed:
+                os.link(input_file, processed_file)
+                os.unlink(input_file)
         except OSError as exc:
             logger.error("%s: failed: %s", input_file, exc)
             continue
@@ -601,12 +599,12 @@ def command_convert(
     root,
     replace,
     recursive,
-    copy,
-    delete,
     thumbnail,
     skip_no_exif,
     drop_alpha,
     commit=False,
+    rename_processed=False,
+    rewrite=False,
 ):
     """
     Convert command.
@@ -614,8 +612,6 @@ def command_convert(
     :param str root:
     :param str replace: replace pattern
     :param boot recursive:
-    :param bool copy:
-    :param bool delete: delete source on convert (for rename use copy option)
     :param int thumbnail:
     :param bool skip_no_exif: skip files with no exif data
     :param bool drop_alpha: drop alpha channel
@@ -641,13 +637,35 @@ def command_convert(
         logger.info("%-41s %s", file_base, new_name)
 
         file_path_new = os.path.join(file_root, new_name)
+        is_default = replace == "[source]_converted.[Ext]"
+        if os.path.exists(file_path_new):
+            if not (is_default and rewrite):
+                logger.warning("output exists, skipped: %s", file_path_new)
+                continue
+        if os.path.normcase(os.path.abspath(file_path)) == os.path.normcase(
+            os.path.abspath(file_path_new)
+        ):
+            logger.warning(
+                "output must differ from source, skipped: %s", file_path
+            )
+            continue
+        processed_path = (
+            os.path.splitext(file_path)[0]
+            + "_processed"
+            + os.path.splitext(file_path)[1]
+        )
+        if rename_processed and (
+            os.path.exists(processed_path)
+            or os.path.splitext(file_path)[0].endswith("_processed")
+            or processed_path == file_path_new
+        ):
+            logger.warning(
+                "processed target unavailable, skipped: %s", file_path
+            )
+            continue
         davo.utils.path.ensure(file_path_new, commit=commit)
 
         if thumbnail or not utils.is_ext_same(file_base, new_name):
-            if copy and file_path == file_path_new:
-                raise errors.NotImpl(
-                    "--copy for inplace convert not implemented yet"
-                )
             utils.image_convert(
                 path_source=file_path,
                 path_dest=file_path_new,
@@ -657,24 +675,18 @@ def command_convert(
                 drop_alpha=drop_alpha,
                 commit=commit,
             )
-            # TODO: copy on file_path == file_path_new
-            if commit and delete and file_path != file_path_new:
-                os.remove(file_path)
+            if commit and rename_processed:
+                os.link(file_path, processed_path)
+                os.unlink(file_path)
             converted += 1
             continue
 
-        if file_path == file_path_new:
-            continue
-
-        if copy:
-            if commit:
-                shutil.copy2(file_path, file_path_new)
-            converted += 1
-
-        else:
-            if commit:
-                os.rename(file_path, file_path_new)
-            converted += 1
+        if commit:
+            shutil.copy2(file_path, file_path_new)
+            if rename_processed:
+                os.link(file_path, processed_path)
+                os.unlink(file_path)
+        converted += 1
 
         index += 1
 
@@ -1315,6 +1327,7 @@ def command_fingerprint_diff(
     files_started_at = None
 
     try:
+
         def report_files_progress(ready, filename):
             if not show_progress:
                 return
@@ -1347,9 +1360,7 @@ def command_fingerprint_diff(
                         if skip_invalid:
                             continue
                         raise errors.UserError(
-                            "Image is not a regular file: {}".format(
-                                candidate
-                            )
+                            "Image is not a regular file: {}".format(candidate)
                         )
                     if os.path.splitext(candidate)[1].lower() not in (
                         FAST_DIFF_EXTENSIONS
@@ -1357,9 +1368,7 @@ def command_fingerprint_diff(
                         if skip_invalid:
                             continue
                         raise errors.UserError(
-                            "Unsupported image extension: {}".format(
-                                candidate
-                            )
+                            "Unsupported image extension: {}".format(candidate)
                         )
                     try:
                         size = os.stat(candidate).st_size
@@ -1456,9 +1465,7 @@ def command_fingerprint_diff(
                     left_path, left_size, left_parent, _ = left_image
                     right_path, right_size, right_parent, _ = right_image
                     status = (
-                        "same_size"
-                        if left_size == right_size
-                        else "different"
+                        "same_size" if left_size == right_size else "different"
                     )
                     l2_percent = phash_percent = "—"
                 else:
@@ -1504,27 +1511,15 @@ def command_fingerprint_diff(
                     (
                         left_path,
                         right_path,
-                        (
-                            l2_percent
-                            if fast
-                            else f"{l2_percent:.2f}"
-                        ),
-                        (
-                            phash_percent
-                            if fast
-                            else f"{phash_percent:.2f}"
-                        ),
+                        (l2_percent if fast else f"{l2_percent:.2f}"),
+                        (phash_percent if fast else f"{phash_percent:.2f}"),
                         status,
                     )
                 )
-                if (
-                    left_parent != right_parent
-                    and status
-                    in (
-                        {"same_size"}
-                        if fast
-                        else {"identical", "duplicate", "similar"}
-                    )
+                if left_parent != right_parent and status in (
+                    {"same_size"}
+                    if fast
+                    else {"identical", "duplicate", "similar"}
                 ):
                     if parent_order[left_parent] < parent_order[right_parent]:
                         pair = (left_parent, right_parent)
@@ -1560,9 +1555,11 @@ def command_fingerprint_diff(
         for status in statuses
         if (count := sum(row[-1] == status for row in rows))
     )
-    visible_rows = rows if show_all or len(rows) == 1 else [
-        row for row in rows if row[-1] != "different"
-    ]
+    visible_rows = (
+        rows
+        if show_all or len(rows) == 1
+        else [row for row in rows if row[-1] != "different"]
+    )
     if not visible_rows:
         print("total {}".format(summary))
         return
@@ -1717,11 +1714,13 @@ def command_pdf_merge(
     inf: list,
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ):
     status = pdf.merge_files(
         [_pdf_path(root, file_path) for file_path in inf],
         _pdf_path(root, out),
         rewrite=rewrite,
+        rename_processed=rename_processed,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -1735,12 +1734,14 @@ def command_pdf_rotate(
     direction: str,
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ):
     status = pdf.rotate_pages(
         _pdf_path(root, inf),
         _pdf_path(root, out),
         direction,
         rewrite=rewrite,
+        rename_processed=rename_processed,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -1754,12 +1755,14 @@ def command_pdf_delete(
     pages: list,
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ):
     status = pdf.delete_pages(
         _pdf_path(root, inf),
         _pdf_path(root, out),
         pages,
         rewrite=rewrite,
+        rename_processed=rename_processed,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -1773,12 +1776,14 @@ def command_pdf_split(
     pages: list,
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ):
     status = pdf.split_pages(
         _pdf_path(root, inf),
         _pdf_path(root, out),
         pages,
         rewrite=rewrite,
+        rename_processed=rename_processed,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -1791,11 +1796,13 @@ def command_pdf_clean(
     inf: str,
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ):
     status = pdf.clean_file(
         _pdf_path(root, inf),
         _pdf_path(root, out),
         rewrite=rewrite,
+        rename_processed=rename_processed,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -1812,6 +1819,7 @@ def command_pdf_compress(
     rebuild: bool = True,
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ):
     status = pdf.compress_file(
         _pdf_path(root, inf),
@@ -1821,6 +1829,7 @@ def command_pdf_compress(
         grayscale=grayscale,
         rebuild=rebuild,
         rewrite=rewrite,
+        rename_processed=rename_processed,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -1884,6 +1893,7 @@ def command_pdf_extract(
     whole_page: bool = False,
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ):
     status = pdf.extract_images(
         _pdf_path(root, inf),
@@ -1892,6 +1902,7 @@ def command_pdf_extract(
         output_type=output_type,
         whole_page=whole_page,
         rewrite=rewrite,
+        rename_processed=rename_processed,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"
@@ -1970,6 +1981,7 @@ def command_pdf_scale(
     paper_format: str = "a4",
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ):
     status = pdf.scale_file(
         _pdf_path(root, inf),
@@ -1977,6 +1989,7 @@ def command_pdf_scale(
         pages=pages,
         paper_format=paper_format,
         rewrite=rewrite,
+        rename_processed=rename_processed,
         verbose=verbose,
     )
     status_h = "prepared" if status else "failed"

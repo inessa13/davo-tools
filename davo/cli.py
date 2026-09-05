@@ -32,9 +32,6 @@ def init_parser():
     fns_rename.add_argument("path", nargs="?", default=os.getcwd())
     fns_rename.add_argument("--config", help="path to project .dtconf")
     fns_rename.add_argument(
-        "-C", "--commit", action="store_true", help="apply changes"
-    )
-    fns_rename.add_argument(
         "-R",
         "--rename",
         action="store_true",
@@ -43,7 +40,6 @@ def init_parser():
     fns_rename.set_defaults(
         func=lambda namespace: services.arch.command_fns_rename(
             root=namespace.path,
-            commit=namespace.commit,
             rename=namespace.rename,
             config=namespace.config,
         )
@@ -76,7 +72,9 @@ def init_parser():
     )
     fns_init_map.add_argument(
         "-0",
-        "--dry-run", action="store_true", help="show changes without writing"
+        "--dry-run",
+        action="store_true",
+        help="show changes without writing",
     )
     fns_init_map.add_argument(
         "-e",

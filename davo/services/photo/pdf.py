@@ -323,6 +323,7 @@ def _allow_output_targets(
     input_files: Iterable[str],
     output_files: Iterable[str],
     rewrite: bool = False,
+    automatic_output: bool = False,
 ) -> bool:
     inputs = list(input_files)
     outputs = list(output_files)
@@ -341,12 +342,14 @@ def _allow_output_targets(
     existing = [
         output_file for output_file in outputs if os.path.exists(output_file)
     ]
-    if existing and not rewrite:
+    if existing and (not automatic_output or not rewrite):
         logger.error(
-            "pdf.%s: output files already exist: %s; "
-            "use -W/--rewrite to overwrite",
+            "pdf.%s: output files already exist: %s%s",
             action,
             existing,
+            "; use -W/--rewrite to overwrite automatic output"
+            if automatic_output
+            else "",
         )
         return False
 
@@ -357,6 +360,59 @@ def _allow_output_targets(
                 action,
                 output_file,
             )
+    return True
+
+
+def _plan_processed_renames(
+    action: str, input_files: Iterable[str], output_files: Iterable[str]
+) -> Optional[List[Tuple[str, str]]]:
+    """Validate source markers before an output is written."""
+    planned, seen = [], set()
+    outputs = list(output_files)
+    for source in input_files:
+        key = os.path.normcase(os.path.realpath(os.path.abspath(source)))
+        if key in seen:
+            continue
+        seen.add(key)
+        stem, ext = os.path.splitext(source)
+        if stem.endswith("_processed"):
+            logger.error(
+                "pdf.%s: source is already processed: %s", action, source
+            )
+            return None
+        target = f"{stem}_processed{ext}"
+        if os.path.exists(target) or any(
+            _paths_refer_to_same_file(target, output) for output in outputs
+        ):
+            logger.error(
+                "pdf.%s: processed target is unavailable: %s", action, target
+            )
+            return None
+        planned.append((source, target))
+    return planned
+
+
+def _rename_processed_sources(
+    action: str, renames: Iterable[Tuple[str, str]]
+) -> bool:
+    """Rename without replacement and roll back claims from this call."""
+    claimed = []
+    try:
+        for source, target in renames:
+            os.link(source, target)
+            claimed.append((source, target))
+        for source, _target in claimed:
+            os.unlink(source)
+    except OSError as exc:
+        for _source, target in claimed:
+            try:
+                os.unlink(target)
+            except OSError:
+                pass
+        logger.error(
+            "pdf.%s: failed to rename processed sources: %s", action, exc
+        )
+        return False
     return True
 
 
@@ -522,7 +578,7 @@ def _normalize_output_prefix(
     output_path: Optional[str],
 ) -> str:
     if output_path is None:
-        return os.path.splitext(input_file)[0]
+        return f"{os.path.splitext(input_file)[0]}_extracted"
 
     prefix = output_path
     if not os.path.isabs(prefix):
@@ -781,9 +837,10 @@ def _format_page_size(rect: Any, pt: bool = False) -> str:
     width_mm = width_pt * 25.4 / 72.0
     height_mm = height_pt * 25.4 / 72.0
 
-    for paper_format, (paper_width_mm, paper_height_mm) in (
-        _ISO_PAGE_FORMATS_MM.items()
-    ):
+    for paper_format, (
+        paper_width_mm,
+        paper_height_mm,
+    ) in _ISO_PAGE_FORMATS_MM.items():
         if (
             abs(width_mm - paper_width_mm) <= 1
             and abs(height_mm - paper_height_mm) <= 1
@@ -848,7 +905,7 @@ def inspect_pages(
                     else:
                         resolution = f"{x_resolution}x{y_resolution} dpi"
                     image_size_px = (
-                        f'{dominant["width_px"]}x{dominant["height_px"]} px'
+                        f"{dominant['width_px']}x{dominant['height_px']} px"
                     )
                     quality = _estimate_jpeg_quality(
                         dominant["image_bytes"], dominant["image_format"]
@@ -901,7 +958,7 @@ def format_page_info_report(
         if compact:
             total_pages = row["total_pages"]
             width = page_number_width or len(str(total_pages))
-            page = f'{row["page"]:0{width}d}/{total_pages:0{width}d}'
+            page = f"{row['page']:0{width}d}/{total_pages:0{width}d}"
         else:
             page = str(row["page"])
         table_rows.append(
@@ -922,14 +979,13 @@ def format_page_info_report(
             widths[idx] = max(widths[idx], len(value))
 
     if table:
-        border = "+{}+".format(
-            "+".join("-" * (width + 2) for width in widths)
-        )
+        border = "+{}+".format("+".join("-" * (width + 2) for width in widths))
 
         def format_row(row: Sequence[str]) -> str:
             return "| {} |".format(
                 " | ".join(
-                    value.rjust(widths[index]) if index == 0
+                    value.rjust(widths[index])
+                    if index == 0
                     else value.ljust(widths[index])
                     for index, value in enumerate(row)
                 )
@@ -940,8 +996,13 @@ def format_page_info_report(
                 (border, *(format_row(row) for row in table_rows), border)
             )
         return "\n".join(
-            (border, format_row(headers), border,
-             *(format_row(row) for row in table_rows), border)
+            (
+                border,
+                format_row(headers),
+                border,
+                *(format_row(row) for row in table_rows),
+                border,
+            )
         )
 
     rendered_rows = []
@@ -1033,9 +1094,7 @@ def _fit_dimensions_within(
     fitted_height = source_height * scale
     x0 = (target_width - fitted_width) / 2.0
     y0 = (target_height - fitted_height) / 2.0
-    return _build_rect(
-        fitz, x0, y0, x0 + fitted_width, y0 + fitted_height
-    )
+    return _build_rect(fitz, x0, y0, x0 + fitted_width, y0 + fitted_height)
 
 
 def _resolve_form_page_size(
@@ -1213,11 +1272,7 @@ def _read_text_file(input_file: str) -> str:
     except UnicodeDecodeError:
         text = payload.decode("cp1251")
 
-    return (
-        text.replace("\r\n", "\n")
-        .replace("\r", "\n")
-        .replace("\t", "    ")
-    )
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\t", "    ")
 
 
 def _load_form_text_sources(
@@ -1265,7 +1320,8 @@ def _wrap_text_lines(text: str, available_width: float) -> List[str]:
 def _pdf_text(value: str) -> str:
     """Replace values that cannot be represented as Unicode PDF text."""
     return "".join(
-        "?" if 0xD800 <= ord(char) <= 0xDFFF or ord(char) in (0xFFFE, 0xFFFF)
+        "?"
+        if 0xD800 <= ord(char) <= 0xDFFF or ord(char) in (0xFFFE, 0xFFFF)
         else char
         for char in value
     )
@@ -1292,7 +1348,7 @@ def _render_text_pages(
         if debug_fill:
             _draw_form_debug_fill(fitz, page, width, height)
         writer = fitz.TextWriter(_build_rect(fitz, 0, 0, width, height))
-        page_lines = lines[start:start + lines_per_page]
+        page_lines = lines[start : start + lines_per_page]
         for line_number, line in enumerate(page_lines):
             point = (
                 _TEXT_MARGIN,
@@ -1426,9 +1482,7 @@ def _plan_form_processed_renames(
     return planned
 
 
-def _rename_processed_form_sources(
-    renames: Iterable[Tuple[str, str]]
-) -> bool:
+def _rename_processed_form_sources(renames: Iterable[Tuple[str, str]]) -> bool:
     """Atomically claim every processed name without overwriting it."""
     for source_path, processed_path in renames:
         try:
@@ -1478,24 +1532,27 @@ def form_files(
         if base_width <= 0 or base_height <= 0:
             raise ValueError("page size must be positive")
         if force_orientation not in (None, "landscape", "portrait"):
-            raise ValueError(
-                "force orientation must be landscape or portrait"
-            )
+            raise ValueError("force orientation must be landscape or portrait")
         normalized_crop = _normalize_crop(crop)
     except (TypeError, ValueError) as exc:
         logger.error("pdf.form: invalid option: %s", exc)
         return False
 
-    if output_path is None:
+    automatic_output = output_path is None
+    if automatic_output:
         output_path = _default_output(files[0], "_formed")
     if not _allow_output_targets(
-        "form", files, [output_path], rewrite=rewrite
+        "form",
+        files,
+        [output_path],
+        rewrite=rewrite,
+        automatic_output=automatic_output,
     ):
         return False
 
     renames = []
     if rename_processed:
-        renames = _plan_form_processed_renames(files, output_path)
+        renames = _plan_processed_renames("form", files, [output_path])
         if renames is None:
             return False
 
@@ -1555,8 +1612,10 @@ def form_files(
                             )
                             if debug_fill:
                                 _draw_form_debug_fill(
-                                    fitz, dest_page,
-                                    target_width, target_height,
+                                    fitz,
+                                    dest_page,
+                                    target_width,
+                                    target_height,
                                 )
                             dest_rect = _fit_dimensions_within(
                                 fitz,
@@ -1569,13 +1628,18 @@ def form_files(
                             if hasattr(dest_page, "show_pdf_page"):
                                 if normalized_crop is None:
                                     dest_page.show_pdf_page(
-                                        dest_rect, src, page_idx,
+                                        dest_rect,
+                                        src,
+                                        page_idx,
                                         keep_proportion=True,
                                     )
                                 else:
                                     dest_page.show_pdf_page(
-                                        dest_rect, src, page_idx,
-                                        keep_proportion=True, clip=crop_rect,
+                                        dest_rect,
+                                        src,
+                                        page_idx,
+                                        keep_proportion=True,
+                                        clip=crop_rect,
                                     )
                             elif hasattr(dest_page, "showPDFpage"):
                                 if normalized_crop is None:
@@ -1584,7 +1648,9 @@ def form_files(
                                     )
                                 else:
                                     dest_page.showPDFpage(
-                                        dest_rect, src, page_idx,
+                                        dest_rect,
+                                        src,
+                                        page_idx,
                                         clip=crop_rect,
                                     )
                             else:
@@ -1611,7 +1677,9 @@ def form_files(
                     input_file, normalized_crop
                 )
                 target_width, target_height = _resolve_form_page_size(
-                    (base_width, base_height), width_px, height_px,
+                    (base_width, base_height),
+                    width_px,
+                    height_px,
                     force_orientation=force_orientation,
                 )
                 if image_dpi is None:
@@ -1632,15 +1700,22 @@ def form_files(
                         fitz, dest_page, target_width, target_height
                     )
                 dest_rect = _fit_dimensions_within(
-                    fitz, source_width, source_height,
-                    target_width, target_height, allow_upscale=allow_upscale,
+                    fitz,
+                    source_width,
+                    source_height,
+                    target_width,
+                    target_height,
+                    allow_upscale=allow_upscale,
                 )
                 if hasattr(dest_page, "insert_image"):
                     dest_page.insert_image(
                         dest_rect,
                         stream=_form_image_bytes(
-                            input_file, dest_rect, normalized_dpi,
-                            normalized_quality, normalized_crop,
+                            input_file,
+                            dest_rect,
+                            normalized_dpi,
+                            normalized_quality,
+                            normalized_crop,
                         ),
                         keep_proportion=False,
                     )
@@ -1648,8 +1723,11 @@ def form_files(
                     dest_page.insertImage(
                         dest_rect,
                         stream=_form_image_bytes(
-                            input_file, dest_rect, normalized_dpi,
-                            normalized_quality, normalized_crop,
+                            input_file,
+                            dest_rect,
+                            normalized_dpi,
+                            normalized_quality,
+                            normalized_crop,
                         ),
                     )
                 else:
@@ -1681,7 +1759,7 @@ def form_files(
             logger.error("pdf.form: failed to form pdf %s", str(exc))
             return False
 
-    if rename_processed and not _rename_processed_form_sources(renames):
+    if rename_processed and not _rename_processed_sources("form", renames):
         return False
 
     return True
@@ -1692,9 +1770,7 @@ def _draw_form_debug_fill(
 ) -> None:
     """Paint the debug background beneath the placed source content."""
     if not hasattr(page, "draw_rect"):
-        raise RuntimeError(
-            "PyMuPDF page object does not support drawing API"
-        )
+        raise RuntimeError("PyMuPDF page object does not support drawing API")
     page.draw_rect(
         fitz.Rect(0, 0, width, height),
         color=None,
@@ -1778,6 +1854,7 @@ def scale_file(
     paper_format: Optional[str] = None,
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ) -> bool:
     fitz = _import_fitz("scaling")
 
@@ -1785,14 +1862,26 @@ def scale_file(
         return False
 
     normalized_format = _normalize_scale_format(paper_format)
-    if output_path is None:
+    automatic_output = output_path is None
+    if automatic_output:
         output_path = _default_output(
             input_file,
             f"_scaled_{normalized_format}",
         )
     if not _allow_output_targets(
-        "scale", [input_file], [output_path], rewrite=rewrite
+        "scale",
+        [input_file],
+        [output_path],
+        rewrite=rewrite,
+        automatic_output=automatic_output,
     ):
+        return False
+    renames = (
+        _plan_processed_renames("scale", [input_file], [output_path])
+        if rename_processed
+        else []
+    )
+    if renames is None:
         return False
 
     try:
@@ -1841,7 +1930,7 @@ def scale_file(
         logger.error("pdf.scale: failed to scale pdf %s", str(exc))
         return False
 
-    return True
+    return not rename_processed or _rename_processed_sources("scale", renames)
 
 
 def _write_extracted_image(
@@ -1879,6 +1968,7 @@ def merge_files(
     output_path: Optional[str],
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ) -> bool:
     fitz = _import_fitz("merge")
 
@@ -1888,11 +1978,23 @@ def merge_files(
             logger.warning("pdf.merge: no input files provided")
         return False
 
-    if output_path is None:
-        output_path = os.path.join(os.path.dirname(files[0]), "merged.pdf")
+    automatic_output = output_path is None
+    if automatic_output:
+        output_path = _default_output(files[0], "_merged")
     if not _allow_output_targets(
-        "merge", files, [output_path], rewrite=rewrite
+        "merge",
+        files,
+        [output_path],
+        rewrite=rewrite,
+        automatic_output=automatic_output,
     ):
+        return False
+    renames = (
+        _plan_processed_renames("merge", files, [output_path])
+        if rename_processed
+        else []
+    )
+    if renames is None:
         return False
 
     with tempfile.TemporaryDirectory(prefix="davo-html-") as html_temp_dir:
@@ -1929,7 +2031,10 @@ def merge_files(
                             _PAPER_FORMATS["a4"],
                         )
                     except (
-                        OSError, RuntimeError, UnicodeDecodeError, ValueError
+                        OSError,
+                        RuntimeError,
+                        UnicodeDecodeError,
+                        ValueError,
                     ):
                         if verbose:
                             logger.warning(
@@ -1959,7 +2064,9 @@ def merge_files(
                                 )
                                 if hasattr(dest_page, "show_pdf_page"):
                                     dest_page.show_pdf_page(
-                                        dest_rect, html_pdf, page_idx,
+                                        dest_rect,
+                                        html_pdf,
+                                        page_idx,
                                         keep_proportion=True,
                                     )
                                 elif hasattr(dest_page, "showPDFpage"):
@@ -1973,7 +2080,10 @@ def merge_files(
                                     )
                                 rendered_generated_pages += 1
                     except (
-                        HtmlRenderError, OSError, RuntimeError, ValueError
+                        HtmlRenderError,
+                        OSError,
+                        RuntimeError,
+                        ValueError,
                     ):
                         if verbose:
                             logger.warning(
@@ -1991,7 +2101,7 @@ def merge_files(
                 return False
 
             result_pdf.save(output_path)
-            return True
+    return not rename_processed or _rename_processed_sources("merge", renames)
 
 
 def rotate_pages(
@@ -1999,9 +2109,9 @@ def rotate_pages(
     output_path: Optional[str],
     direction: Any = "clockwise",
     pages: Optional[Iterable[int]] = None,
-    inplace: bool = False,
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ) -> bool:
     fitz = _import_fitz("rotation")
 
@@ -2010,17 +2120,23 @@ def rotate_pages(
 
     angle = _parse_rotation_angle(direction)
 
-    replace_when_done = False
-    if output_path is None:
-        if inplace:
-            fd, output_path = tempfile.mkstemp(suffix=".pdf")
-            os.close(fd)
-            replace_when_done = True
-        else:
-            output_path = _default_output(input_file, "_rotated")
-    if not replace_when_done and not _allow_output_targets(
-        "rotate", [input_file], [output_path], rewrite=rewrite
+    automatic_output = output_path is None
+    if automatic_output:
+        output_path = _default_output(input_file, "_rotated")
+    if not _allow_output_targets(
+        "rotate",
+        [input_file],
+        [output_path],
+        rewrite=rewrite,
+        automatic_output=automatic_output,
     ):
+        return False
+    renames = (
+        _plan_processed_renames("rotate", [input_file], [output_path])
+        if rename_processed
+        else []
+    )
+    if renames is None:
         return False
 
     with _open_pdf(fitz, input_file, "rotate") as doc:
@@ -2039,10 +2155,7 @@ def rotate_pages(
 
         doc.save(output_path)
 
-    if replace_when_done:
-        os.replace(output_path, input_file)
-
-    return True
+    return not rename_processed or _rename_processed_sources("rotate", renames)
 
 
 def extract_images(
@@ -2053,6 +2166,7 @@ def extract_images(
     whole_page: bool = False,
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ) -> bool:
     normalized_type = _normalize_extract_type(output_type)
     fitz = _import_fitz("image extraction")
@@ -2060,6 +2174,7 @@ def extract_images(
     if not _validate_source_pdf("extract", input_file, verbose):
         return False
 
+    automatic_output = output_path is None
     output_prefix = _normalize_output_prefix(input_file, output_path)
 
     try:
@@ -2084,13 +2199,22 @@ def extract_images(
                 for i in range(1, len(payloads) + 1)
             ]
             if not _allow_output_targets(
-                "extract", [input_file], targets, rewrite=rewrite
+                "extract",
+                [input_file],
+                targets,
+                rewrite=rewrite,
+                automatic_output=automatic_output,
             ):
                 return False
+            renames = (
+                _plan_processed_renames("extract", [input_file], targets)
+                if rename_processed
+                else []
+            )
+            if renames is None:
+                return False
 
-            preexisting = {
-                path for path in targets if os.path.exists(path)
-            }
+            preexisting = {path for path in targets if os.path.exists(path)}
             created: List[str] = []
             try:
                 for (payload_type, payload_value), target in zip(
@@ -2124,7 +2248,9 @@ def extract_images(
         logger.error("pdf.extract: failed to extract images %s", str(exc))
         return False
 
-    return True
+    return not rename_processed or _rename_processed_sources(
+        "extract", renames
+    )
 
 
 def delete_pages(
@@ -2133,6 +2259,7 @@ def delete_pages(
     pages: Optional[Iterable[int]] = None,
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ) -> bool:
     fitz = _import_fitz("page deletion")
 
@@ -2144,11 +2271,23 @@ def delete_pages(
             logger.warning("pdf.delete: no pages provided")
         return False
 
-    if output_path is None:
+    automatic_output = output_path is None
+    if automatic_output:
         output_path = _default_output(input_file, "_deleted")
     if not _allow_output_targets(
-        "delete", [input_file], [output_path], rewrite=rewrite
+        "delete",
+        [input_file],
+        [output_path],
+        rewrite=rewrite,
+        automatic_output=automatic_output,
     ):
+        return False
+    renames = (
+        _plan_processed_renames("delete", [input_file], [output_path])
+        if rename_processed
+        else []
+    )
+    if renames is None:
         return False
 
     with _open_pdf(fitz, input_file, "delete") as doc:
@@ -2166,7 +2305,7 @@ def delete_pages(
 
         doc.save(output_path)
 
-    return True
+    return not rename_processed or _rename_processed_sources("delete", renames)
 
 
 def _build_split_ranges(
@@ -2190,6 +2329,7 @@ def split_pages(
     pages: Optional[Iterable[int]] = None,
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ) -> bool:
     fitz = _import_fitz("splitting")
 
@@ -2223,18 +2363,31 @@ def split_pages(
                 logger.warning("pdf.split: no valid ranges computed")
             return False
 
+        automatic_output = output_path is None
         if output_path:
             base, ext = os.path.splitext(output_path)
         else:
             base, ext = os.path.splitext(input_file)
+            base = f"{base}_split"
 
         if not ext:
             ext = ".pdf"
 
-        targets = [f"{base}_{i + 1}{ext}" for i in range(len(ranges))]
+        targets = [f"{base}_{i + 1:03d}{ext}" for i in range(len(ranges))]
         if not _allow_output_targets(
-            "split", [input_file], targets, rewrite=rewrite
+            "split",
+            [input_file],
+            targets,
+            rewrite=rewrite,
+            automatic_output=automatic_output,
         ):
+            return False
+        renames = (
+            _plan_processed_renames("split", [input_file], targets)
+            if rename_processed
+            else []
+        )
+        if renames is None:
             return False
 
         preexisting = {path for path in targets if os.path.exists(path)}
@@ -2258,7 +2411,7 @@ def split_pages(
                     pass
             raise
 
-    return True
+    return not rename_processed or _rename_processed_sources("split", renames)
 
 
 def clean_file(
@@ -2266,17 +2419,30 @@ def clean_file(
     output_path: Optional[str],
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ) -> bool:
     fitz = _import_fitz("cleanup")
 
     if not _validate_source_pdf("clean", input_file, verbose):
         return False
 
-    if output_path is None:
+    automatic_output = output_path is None
+    if automatic_output:
         output_path = _default_output(input_file, "_cleaned")
     if not _allow_output_targets(
-        "clean", [input_file], [output_path], rewrite=rewrite
+        "clean",
+        [input_file],
+        [output_path],
+        rewrite=rewrite,
+        automatic_output=automatic_output,
     ):
+        return False
+    renames = (
+        _plan_processed_renames("clean", [input_file], [output_path])
+        if rename_processed
+        else []
+    )
+    if renames is None:
         return False
 
     try:
@@ -2286,7 +2452,7 @@ def clean_file(
         logger.error("pdf.clean: failed to process pdf %s", str(exc))
         return False
 
-    return True
+    return not rename_processed or _rename_processed_sources("clean", renames)
 
 
 def compress_file(
@@ -2298,6 +2464,7 @@ def compress_file(
     rebuild: bool = False,
     verbose: bool = False,
     rewrite: bool = False,
+    rename_processed: bool = False,
 ) -> bool:
     fitz = _import_fitz("compression")
 
@@ -2307,13 +2474,25 @@ def compress_file(
     normalized_dpi = _normalize_compress_dpi(dpi)
     normalized_quality = _normalize_compress_quality(quality)
 
-    if output_path is None:
+    automatic_output = output_path is None
+    if automatic_output:
         output_path = _default_output(
             input_file, f"_compressed_{normalized_dpi}dpi"
         )
     if not _allow_output_targets(
-        "compress", [input_file], [output_path], rewrite=rewrite
+        "compress",
+        [input_file],
+        [output_path],
+        rewrite=rewrite,
+        automatic_output=automatic_output,
     ):
+        return False
+    renames = (
+        _plan_processed_renames("compress", [input_file], [output_path])
+        if rename_processed
+        else []
+    )
+    if renames is None:
         return False
 
     try:
@@ -2350,4 +2529,6 @@ def compress_file(
         logger.error("pdf.compress: failed to process pdf %s", str(exc))
         return False
 
-    return True
+    return not rename_processed or _rename_processed_sources(
+        "compress", renames
+    )
