@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,12 @@ _AUTOGEN_ID_RE = re.compile(
     r"fn=(?P<fn>[^\s]+)\s+fd=(?P<fd>[^\s]+)\s+fp=(?P<fp>[^\s]+)\s*-->",
     re.IGNORECASE,
 )
+_PDF_AUTOGEN_ID_RE = re.compile(
+    r"davo-fns-autogen\s+fiscal-identity:\s*"
+    r"fn=(?P<fn>[^\s]+)\s+fd=(?P<fd>[^\s]+)\s+fp=(?P<fp>[^\s;]+)",
+    re.IGNORECASE,
+)
+_FNS_EXTRACT_TYPES = {"html", "pdf"}
 _UNSAFE_FILENAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _FNS_META_FIELDS = (
     "retailPlace",
@@ -423,39 +430,132 @@ src="data:image/png;base64,{qr}"></body></html>""".format(
     )
 
 
-def _existing_fiscal_identities(root):
+def _existing_fiscal_identities(root, output_type):
+    """Return identities already exported in the requested output type."""
     existing = set()
     for path in root.iterdir():
-        if path.is_file() and path.suffix.lower() in {".htm", ".html"}:
+        if not path.is_file():
+            continue
+        if output_type == "html" and path.suffix.lower() in {".htm", ".html"}:
             try:
                 match = _AUTOGEN_ID_RE.search(path.read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError):
                 continue
             if match:
                 existing.add((match["fn"], match["fd"], match["fp"]))
+        elif output_type == "pdf" and path.suffix.lower() == ".pdf":
+            try:
+                from davo.services.photo import pdf  # pylint: disable=C0415
+
+                fitz = pdf._import_fitz(  # pylint: disable=W0212
+                    "FNS receipt inspection"
+                )
+                with pdf._open_pdf(  # pylint: disable=W0212
+                    fitz, str(path), "FNS receipt inspection"
+                ) as doc:
+                    match = _PDF_AUTOGEN_ID_RE.search(
+                        (doc.metadata or {}).get(  # pylint: disable=E1101
+                            "keywords"
+                        )
+                        or ""
+                    )
+            except Exception:  # pylint: disable=W0718
+                # Foreign and corrupt PDFs are irrelevant here.
+                continue
+            if match:
+                existing.add((match["fn"], match["fd"], match["fp"]))
     return existing
 
 
-def _target_name(receipt, multiple, root, reserved):
+def _target_name(
+    receipt, multiple, root, reserved, *, output_type, no_autogen
+):
     parts = [receipt.date, "REC"]
     if receipt.user:
         parts.append(receipt.user)
-    parts.append("autogen")
+    if not no_autogen:
+        parts.append("autogen")
     base = " ".join(parts)
+    suffix = ".{}".format(output_type)
     if not multiple:
-        candidate = root / (base + ".html")
+        candidate = root / (base + suffix)
         if candidate not in reserved and not candidate.exists():
             return candidate
     index = 1
     while True:
-        candidate = root / "{} {}.html".format(base, index)
+        candidate = root / "{} {}{}".format(base, index, suffix)
         if candidate not in reserved and not candidate.exists():
             return candidate
         index += 1
 
 
-def command_fns_extract(json_path, out_dir=None, config=None, dry_run=False):
+def _pdf_metadata_identity(receipt):
+    fn, fd, fp = receipt.identity
+    return "davo-fns-autogen fiscal-identity: fn={} fd={} fp={}".format(
+        fn, fd, fp
+    )
+
+
+def _write_fns_pdf(target, receipt_html, receipt):
+    """Render receipt HTML into a checked PDF carrying its resume marker."""
+    from davo.services.photo import pdf  # pylint: disable=C0415
+
+    try:
+        fitz = pdf._import_fitz("FNS receipt creation")  # pylint: disable=W0212
+        with tempfile.TemporaryDirectory(prefix="davo-fns-") as temp_dir:
+            source = Path(temp_dir) / "receipt.html"
+            source.write_text(receipt_html, encoding="utf-8")
+            rendered = pdf._render_html_to_pdf(  # pylint: disable=W0212
+                fitz, str(source), temp_dir
+            )
+            marked = Path(temp_dir) / "receipt.pdf"
+            with pdf._open_pdf(  # pylint: disable=W0212
+                fitz, rendered, "FNS receipt creation"
+            ) as doc:
+                metadata = dict(doc.metadata or {})  # pylint: disable=E1101
+                keywords = metadata.get("keywords") or ""
+                marker = _pdf_metadata_identity(receipt)
+                metadata["keywords"] = "; ".join(
+                    part for part in (keywords, marker) if part
+                )
+                doc.set_metadata(metadata)  # pylint: disable=E1101
+                doc.save(str(marked))
+            with pdf._open_pdf(  # pylint: disable=W0212
+                fitz, str(marked), "FNS receipt creation"
+            ) as doc:
+                if doc.page_count == 0:
+                    raise ValueError("renderer produced an empty PDF")
+            created = False
+            try:
+                with target.open("xb") as output:
+                    created = True
+                    with marked.open("rb") as source_pdf:
+                        shutil.copyfileobj(source_pdf, output)
+            except Exception:
+                # Only remove a file created here; never replace a collision.
+                if created and target.exists():
+                    target.unlink()
+                raise
+    except Exception as exc:
+        raise errors.UserError(
+            "fns-extract: PDF render failed: {}".format(exc)
+        ) from exc
+
+
+def command_fns_extract(
+    json_path,
+    out_dir=None,
+    config=None,
+    dry_run=False,
+    *,
+    output_type="html",
+    no_autogen=False,
+):
     """Render FNS JSON receipts and return generated paths."""
+    if output_type not in _FNS_EXTRACT_TYPES:
+        raise errors.UserError(
+            "fns-extract: invalid output type: {}".format(output_type)
+        )
     source = Path(json_path)
     try:
         entries = json.loads(source.read_text(encoding="utf-8"))
@@ -487,7 +587,7 @@ def command_fns_extract(json_path, out_dir=None, config=None, dry_run=False):
         raise errors.UserError(
             "fns-extract: input contains duplicate fiscal identities"
         )
-    existing = _existing_fiscal_identities(root)
+    existing = _existing_fiscal_identities(root, output_type)
     missing = [item for item in receipts if item.identity not in existing]
     if not missing:
         if failed:
@@ -503,7 +603,12 @@ def command_fns_extract(json_path, out_dir=None, config=None, dry_run=False):
     reserved, plan = set(), []
     for item in missing:
         target = _target_name(
-            item, counts[(item.date, item.user)] > 1, root, reserved
+            item,
+            counts[(item.date, item.user)] > 1,
+            root,
+            reserved,
+            output_type=output_type,
+            no_autogen=no_autogen,
         )
         reserved.add(target)
         plan.append((item, target))
@@ -512,14 +617,19 @@ def command_fns_extract(json_path, out_dir=None, config=None, dry_run=False):
             logger.info("fns-extract: existing receipt %s", item.identity)
     rendered = []
     try:
-        rendered = [(target, _receipt_html(item)) for item, target in plan]
+        rendered = [
+            (item, target, _receipt_html(item)) for item, target in plan
+        ]
     except (TypeError, ValueError, KeyError) as exc:
         raise errors.UserError("fns-extract: invalid receipt: {}".format(exc))
-    for target, receipt_html in rendered:
+    for item, target, receipt_html in rendered:
         message = "would create" if dry_run else "create"
         logger.info("fns-extract: %s %s", message, target.name)
         if not dry_run:
-            target.write_text(receipt_html, encoding="utf-8")
+            if output_type == "html":
+                target.write_text(receipt_html, encoding="utf-8")
+            else:
+                _write_fns_pdf(target, receipt_html, item)
     if failed:
         raise errors.UserError(
             "fns-extract: {} invalid receipt(s)".format(len(failed))

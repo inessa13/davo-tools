@@ -1,5 +1,6 @@
 import json
 import logging
+from pathlib import Path
 
 import pytest
 import yaml
@@ -310,6 +311,76 @@ def test_fns_extract_writes_valid_receipts_but_reports_invalid_ones(tmp_path):
         arch.command_fns_extract(source, out_dir=tmp_path)
 
     assert (tmp_path / "20260730 REC ozon.ru autogen.html").exists()
+
+
+def test_fns_extract_no_autogen_changes_only_filename(tmp_path):
+    source = _write_json(tmp_path, [_json_entry(1, 11)])
+
+    generated = arch.command_fns_extract(
+        source, out_dir=tmp_path, no_autogen=True
+    )
+
+    assert [path.name for path in generated] == ["20260730 REC ozon.ru.html"]
+    assert "davo-fns-autogen fiscal-identity" in generated[0].read_text(
+        encoding="utf-8"
+    )
+
+
+def test_fns_extract_pdf_stores_identity_and_resumes_by_type(
+    tmp_path, monkeypatch
+):
+    from davo.services.photo import pdf
+
+    source = _write_json(tmp_path, [_json_entry(1, 11)])
+    rendered_html = []
+
+    def render(fitz, input_file, temp_dir):
+        rendered_html.append(Path(input_file).read_text(encoding="utf-8"))
+        path = Path(temp_dir) / "browser.pdf"
+        doc = fitz.open()
+        doc.new_page()
+        doc.save(path)
+        doc.close()
+        return str(path)
+
+    monkeypatch.setattr(pdf, "_render_html_to_pdf", render)
+    generated = arch.command_fns_extract(
+        source, out_dir=tmp_path, output_type="pdf", no_autogen=True
+    )
+
+    assert [path.name for path in generated] == ["20260730 REC ozon.ru.pdf"]
+    assert rendered_html and "КАССОВЫЙ ЧЕК" in rendered_html[0]
+    assert not list(tmp_path.glob("20260730 REC ozon.ru.html"))
+    fitz = pdf._import_fitz("test")
+    with fitz.open(generated[0]) as document:
+        assert "davo-fns-autogen fiscal-identity: fn=123 fd=1 fp=11" in (
+            document.metadata["keywords"]
+        )
+    with pytest.raises(arch.errors.UserError, match="repeated run"):
+        arch.command_fns_extract(source, out_dir=tmp_path, output_type="pdf")
+
+    html = arch.command_fns_extract(source, out_dir=tmp_path)
+    assert html[0].suffix == ".html"
+
+
+def test_fns_extract_pdf_dry_run_does_not_render(tmp_path, monkeypatch):
+    from davo.services.photo import pdf
+
+    source = _write_json(tmp_path, [_json_entry(1, 11)])
+    monkeypatch.setattr(
+        pdf,
+        "_render_html_to_pdf",
+        lambda *_args: pytest.fail("renderer must not run during dry run"),
+    )
+
+    generated = arch.command_fns_extract(
+        source, out_dir=tmp_path, output_type="pdf", dry_run=True
+    )
+
+    assert [path.name for path in generated] == [
+        "20260730 REC ozon.ru autogen.pdf"
+    ]
+    assert not generated[0].exists()
 
 
 def test_fns_config_init_map_verbose_reports_added_and_existing(

@@ -312,6 +312,24 @@ def test_parser_accepts_dry_run_short_option(arguments):
     assert namespace.dry_run is True
 
 
+def test_fns_extract_parser_output_options():
+    namespace = cli.init_parser().parse_args(
+        ["arch", "fns-extract", "-A", "-t", "pdf", "export.json"]
+    )
+
+    assert namespace.no_autogen is True
+    assert namespace.type == "pdf"
+
+
+def test_fns_extract_parser_defaults_to_html():
+    namespace = cli.init_parser().parse_args(
+        ["arch", "fns-extract", "export.json"]
+    )
+
+    assert namespace.no_autogen is False
+    assert namespace.type == "html"
+
+
 @pytest.mark.parametrize(
     "arguments",
     [

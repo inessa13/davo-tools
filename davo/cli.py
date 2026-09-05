@@ -46,11 +46,24 @@ def init_parser():
     )
 
     fns_extract = arch_subparsers.add_parser(
-        "fns-extract", help="render FNS JSON receipts as HTML"
+        "fns-extract", help="render FNS JSON receipts as HTML or PDF"
     )
     fns_extract.add_argument("json_path")
     fns_extract.add_argument("-o", "--out-dir")
     fns_extract.add_argument("--config", help="path to project .dtconf")
+    fns_extract.add_argument(
+        "-A",
+        "--no-autogen",
+        action="store_true",
+        help="omit autogen from generated filenames",
+    )
+    fns_extract.add_argument(
+        "-t",
+        "--type",
+        choices=("html", "pdf"),
+        default="html",
+        help="output type (default: html)",
+    )
     fns_extract.add_argument("-0", "--dry-run", action="store_true")
     fns_extract.set_defaults(func=_run_fns_extract)
 
@@ -170,6 +183,8 @@ def _run_fns_extract(namespace):
             out_dir=namespace.out_dir,
             config=namespace.config,
             dry_run=namespace.dry_run,
+            output_type=namespace.type,
+            no_autogen=namespace.no_autogen,
         )
     except errors.UserError as exc:
         logger.error(exc)
