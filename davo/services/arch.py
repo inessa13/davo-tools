@@ -52,10 +52,66 @@ _FNS_META_FIELDS = (
     "retailPlaceAddress",
     "sellerAddress",
 )
+_ARCHIVE_CODES = frozenset(
+    {
+        "REC",
+        "INV",
+        "TRN",
+        "TCK",
+        "BPD",
+        "FIN",
+        "ACT",
+        "CLM",
+        "CMP",
+        "WRN",
+        "TAX",
+        "STM",
+    }
+)
+_ARCHIVE_TYPE_CODES = {
+    "check": "REC",
+    "чек": "REC",
+    "receipt": "REC",
+    "r": "REC",
+    "ч": "REC",
+    "purchase": "REC",
+    "recept": "REC",
+    "receip": "REC",
+    "invoice": "INV",
+    "счет": "INV",
+    "i": "INV",
+    "transfer": "TRN",
+    "ticket": "TCK",
+    "pass": "TCK",
+    "voucher": "TCK",
+    "bp": "BPD",
+    "посадочные": "BPD",
+    "fine": "FIN",
+    "notice": "FIN",
+    "act": "ACT",
+    "акт": "ACT",
+    "claim": "CLM",
+    "compensation": "CMP",
+    "warranty": "WRN",
+    "guaranty": "WRN",
+    "tax": "TAX",
+    "выписка": "STM",
+}
+_ARCHIVE_NAME_RE = re.compile(
+    r"^(?P<date>\d{8})[ _]+(?P<type>[^ _]+)(?P<detail>(?:[ _]+.*)?)$"
+)
 
 
 @dataclass(frozen=True)
 class FnsRename:
+    source: Path
+    target: Path
+
+
+@dataclass(frozen=True)
+class ArchiveRename:
+    """One archive document rename, excluding an optional sidecar."""
+
     source: Path
     target: Path
 
@@ -282,6 +338,190 @@ def command_fns_rename(root, rename=False, dry_run=False):
                 "fns-rename: target already exists: %s",
                 _display_path(item.target, root),
             )
+
+
+def _normalised_archive_name(path, underscores=False):
+    """Return a normalized filename for *path*, or ``None`` if unchanged."""
+    match = _ARCHIVE_NAME_RE.match(path.stem)
+    if match is None:
+        return None
+
+    document_type = match.group("type")
+    if document_type in _ARCHIVE_CODES:
+        code = document_type
+    else:
+        code = _ARCHIVE_TYPE_CODES.get(document_type.casefold())
+        if code is None:
+            return None
+
+    parts = [match.group("date"), code]
+    detail = match.group("detail").strip(" _")
+    detail_parts = [part for part in re.split(r"[ _]+", detail) if part]
+    if document_type in {"claim", "compensation"}:
+        if detail_parts[:1] == ["insurance"]:
+            detail_parts.pop(0)
+        detail_parts = [
+            "+REC" if part == "+invoice" else part
+            for part in detail_parts
+        ]
+    parts.extend(detail_parts)
+    separator = "_" if underscores else " "
+    target_name = separator.join(parts) + path.suffix
+    return target_name if target_name != path.name else None
+
+
+def _check_norm_files(paths, recursive=False):
+    """Collect regular input files for archive name normalization."""
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    files = []
+    seen = set()
+    for raw_path in paths:
+        path = Path(raw_path)
+        if path.is_file():
+            candidates = [path]
+        elif path.is_dir():
+            candidates = (
+                sorted(path.rglob("*"))
+                if recursive
+                else sorted(path.iterdir())
+            )
+        else:
+            logger.warning("check-norm: path not found: %s", path)
+            continue
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            files.append(candidate)
+    return files
+
+
+def plan_check_norm(paths, recursive=False, underscores=False):
+    """Build a normalization plan for archive files in *paths*."""
+    plan = []
+    for source in _check_norm_files(paths, recursive=recursive):
+        target_name = _normalised_archive_name(source, underscores=underscores)
+        if target_name is not None:
+            plan.append(ArchiveRename(source, source.with_name(target_name)))
+    return plan
+
+
+def _check_norm_collisions(operations):
+    """Return collision reasons for every invalid planned operation."""
+    sources_by_target = defaultdict(list)
+    for operation in operations:
+        sources_by_target[operation.target].append(operation.source)
+
+    collisions = {}
+    for target, sources in sources_by_target.items():
+        if len(sources) > 1:
+            for source in sources:
+                collisions[(source, target)] = (
+                    "multiple sources have the same target"
+                )
+        if target.exists():
+            for source in sources:
+                collisions[(source, target)] = "target already exists"
+    return collisions
+
+
+def _check_norm_display_path(path):
+    """Return *path* relative to the current working directory."""
+    try:
+        return os.path.relpath(path, os.getcwd())
+    except ValueError:
+        # Different Windows drives have no relative representation.
+        return str(path)
+
+
+def _format_check_norm_table(rows):
+    """Return archive normalization rows as an ASCII table."""
+    headers = ("Action", "Source", "Target", "Details")
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, value in enumerate(row):
+            widths[index] = max(widths[index], len(value))
+
+    border = "+{}+".format("+".join("-" * (width + 2) for width in widths))
+
+    def format_row(row):
+        return "| {} |".format(
+            " | ".join(
+                value.ljust(widths[index])
+                for index, value in enumerate(row)
+            )
+        )
+
+    return "\n".join(
+        (
+            border,
+            format_row(headers),
+            border,
+            *(format_row(row) for row in rows),
+            border,
+        )
+    )
+
+
+def _log_check_norm_operations(operations, collisions, dry_run, table):
+    """Log the complete rename plan in a compact or tabular form."""
+    rows = []
+    for operation in operations:
+        collision = collisions.get((operation.source, operation.target))
+        if collision:
+            action = "collision"
+        elif dry_run:
+            action = "would rename"
+        else:
+            action = "rename"
+        rows.append(
+            (
+                action,
+                _check_norm_display_path(operation.source),
+                _check_norm_display_path(operation.target),
+                collision or "",
+            )
+        )
+
+    if table:
+        if rows:
+            log = logger.error if collisions else logger.info
+            log("check-norm:\n%s", _format_check_norm_table(rows))
+        return
+
+    action_width = max((len(row[0]) for row in rows), default=0)
+    source_width = max((len(row[1]) for row in rows), default=0)
+    for action, source, target, details in rows:
+        log = logger.error if details else logger.info
+        message = "check-norm: {}  {} -> {}".format(
+            action.ljust(action_width), source.ljust(source_width), target
+        )
+        if details:
+            message += ": " + details
+        log(message)
+
+
+def command_check_norm(
+    paths, recursive=False, dry_run=False, underscores=False, table=False
+):
+    """Normalize legacy archive file names."""
+    plan = plan_check_norm(
+        paths, recursive=recursive, underscores=underscores
+    )
+    collisions = _check_norm_collisions(plan)
+
+    _log_check_norm_operations(plan, collisions, dry_run, table)
+
+    if dry_run or collisions:
+        return plan
+
+    for operation in plan:
+        operation.source.rename(operation.target)
+    return plan
 
 
 @dataclass(frozen=True)

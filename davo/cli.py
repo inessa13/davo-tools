@@ -50,6 +50,44 @@ def init_parser():
         )
     )
 
+    check_norm = arch_subparsers.add_parser(
+        "check-norm", help="normalize legacy archive document names"
+    )
+    check_norm.add_argument("paths", nargs="*", metavar="PATH")
+    check_norm.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="show the rename plan without changing files",
+    )
+    check_norm.add_argument(
+        "-r",
+        "--recursive",
+        action="store_true",
+        help="scan subdirectories recursively",
+    )
+    check_norm.add_argument(
+        "-u",
+        "--underscores",
+        action="store_true",
+        help="use underscores instead of spaces in normalized names",
+    )
+    check_norm.add_argument(
+        "-t",
+        "--table",
+        action="store_true",
+        help="print the rename plan as an ASCII table",
+    )
+    check_norm.set_defaults(
+        func=lambda namespace: services.arch.command_check_norm(
+            paths=namespace.paths or [os.getcwd()],
+            recursive=namespace.recursive,
+            dry_run=namespace.dry_run,
+            underscores=namespace.underscores,
+            table=namespace.table,
+        )
+    )
+
     fns_extract = arch_subparsers.add_parser(
         "fns-extract", help="render FNS JSON receipts as HTML or PDF"
     )

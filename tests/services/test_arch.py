@@ -234,6 +234,416 @@ def test_cli_rename_options(option):
     assert namespace.rename is True
 
 
+@pytest.mark.parametrize(
+    ("old_type", "code"),
+    [
+        ("check", "REC"),
+        ("чек", "REC"),
+        ("receipt", "REC"),
+        ("R", "REC"),
+        ("Ч", "REC"),
+        ("purchase", "REC"),
+        ("recept", "REC"),
+        ("receip", "REC"),
+        ("invoice", "INV"),
+        ("счет", "INV"),
+        ("I", "INV"),
+        ("transfer", "TRN"),
+        ("ticket", "TCK"),
+        ("pass", "TCK"),
+        ("voucher", "TCK"),
+        ("bp", "BPD"),
+        ("посадочные", "BPD"),
+        ("fine", "FIN"),
+        ("notice", "FIN"),
+        ("act", "ACT"),
+        ("акт", "ACT"),
+        ("claim", "CLM"),
+        ("compensation", "CMP"),
+        ("warranty", "WRN"),
+        ("guaranty", "WRN"),
+        ("tax", "TAX"),
+        ("выписка", "STM"),
+    ],
+)
+def test_check_norm_converts_legacy_type_and_keeps_detail_and_extension(
+    tmp_path, old_type, code
+):
+    source = tmp_path / "20260129 {} vendor detail.pdf".format(old_type)
+    source.write_text("document", encoding="utf-8")
+
+    plan = arch.command_check_norm([tmp_path])
+
+    target = tmp_path / "20260129 {} vendor detail.pdf".format(code)
+    assert plan == [arch.ArchiveRename(source, target)]
+    assert not source.exists()
+    assert target.read_text(encoding="utf-8") == "document"
+
+
+@pytest.mark.parametrize(
+    ("old_name", "new_name", "underscores"),
+    [
+        (
+            "20260727 claim insurance +invoice Golub Chiro.pdf",
+            "20260727 CLM +REC Golub Chiro.pdf",
+            False,
+        ),
+        (
+            "20260727 compensation insurance 20260804 Golub.pdf",
+            "20260727 CMP 20260804 Golub.pdf",
+            False,
+        ),
+        (
+            "20260727 claim insurance +invoice Golub Chiro.pdf",
+            "20260727_CLM_+REC_Golub_Chiro.pdf",
+            True,
+        ),
+        (
+            "20260727 compensation insurance 20260804 Golub.pdf",
+            "20260727_CMP_20260804_Golub.pdf",
+            True,
+        ),
+    ],
+)
+def test_check_norm_normalizes_insurance_claim_detail(
+    tmp_path, old_name, new_name, underscores
+):
+    source = tmp_path / old_name
+    source.write_text("document", encoding="utf-8")
+
+    arch.command_check_norm([source], underscores=underscores)
+
+    assert not source.exists()
+    assert (tmp_path / new_name).exists()
+
+
+def test_check_norm_keeps_nonleading_insurance_and_nonmarker_invoice(tmp_path):
+    source = tmp_path / "20260727 claim Golub insurance +invoice-copy.pdf"
+    source.write_text("document", encoding="utf-8")
+
+    arch.command_check_norm([source])
+
+    assert (
+        tmp_path / "20260727 CLM Golub insurance +invoice-copy.pdf"
+    ).exists()
+
+
+def test_check_norm_scans_direct_children_unless_recursive(tmp_path):
+    direct = tmp_path / "20260129 check direct.pdf"
+    direct.write_text("direct", encoding="utf-8")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    child = nested / "20260129 invoice child.pdf"
+    child.write_text("child", encoding="utf-8")
+
+    arch.command_check_norm([tmp_path])
+
+    assert (tmp_path / "20260129 REC direct.pdf").exists()
+    assert child.exists()
+    arch.command_check_norm([nested], recursive=True)
+    assert (nested / "20260129 INV child.pdf").exists()
+
+
+def test_check_norm_skips_unknown_and_normalized_names(tmp_path):
+    normalized = tmp_path / "20260129 REC vendor.pdf"
+    normalized_sidecar = tmp_path / "20260129 REC vendor.drj.json"
+    unknown = tmp_path / "20260129 unknown vendor.pdf"
+    for path in (normalized, normalized_sidecar, unknown):
+        path.write_text("document", encoding="utf-8")
+
+    assert arch.command_check_norm([tmp_path]) == []
+    assert all(
+        path.exists() for path in (normalized, normalized_sidecar, unknown)
+    )
+
+
+@pytest.mark.parametrize(
+    ("old_name", "new_name", "underscores"),
+    [
+        (
+            "20260727 CLM +REC Golub.pdf",
+            "20260727_CLM_+REC_Golub.pdf",
+            True,
+        ),
+        (
+            "20260727_CMP_Golub.pdf",
+            "20260727 CMP Golub.pdf",
+            False,
+        ),
+        (
+            "20260727_CLM_+REC_Golub.drj.json",
+            "20260727 CLM +REC Golub.drj.json",
+            False,
+        ),
+    ],
+)
+def test_check_norm_changes_separators_for_normalized_names(
+    tmp_path, old_name, new_name, underscores
+):
+    source = tmp_path / old_name
+    source.write_text("document", encoding="utf-8")
+
+    arch.command_check_norm([source], underscores=underscores)
+
+    assert not source.exists()
+    assert (tmp_path / new_name).read_text(encoding="utf-8") == "document"
+
+
+def test_check_norm_skips_normalized_name_in_requested_format(tmp_path):
+    source = tmp_path / "20260727_CLM_+REC_Golub.pdf"
+    source.write_text("document", encoding="utf-8")
+
+    assert arch.command_check_norm([source], underscores=True) == []
+    assert source.exists()
+
+
+@pytest.mark.parametrize(
+    ("old_name", "new_name", "underscores"),
+    [
+        (
+            "20260727 claim insurance +invoice Golub.drj.json",
+            "20260727 CLM +REC Golub.drj.json",
+            False,
+        ),
+        (
+            "20260727 compensation insurance Golub.drj.json",
+            "20260727_CMP_Golub.drj.json",
+            True,
+        ),
+    ],
+)
+def test_check_norm_renames_standalone_sidecar(
+    tmp_path, old_name, new_name, underscores
+):
+    source = tmp_path / old_name
+    source.write_text("metadata", encoding="utf-8")
+
+    arch.command_check_norm([source], underscores=underscores)
+
+    assert not source.exists()
+    assert (tmp_path / new_name).read_text(encoding="utf-8") == "metadata"
+
+
+def test_check_norm_renames_existing_sidecar_with_document(tmp_path):
+    source = tmp_path / "20260129 check vendor.pdf"
+    sidecar = tmp_path / "20260129 check vendor.drj.json"
+    source.write_text("document", encoding="utf-8")
+    sidecar.write_text("metadata", encoding="utf-8")
+
+    plan = arch.command_check_norm([tmp_path])
+
+    assert not source.exists()
+    assert not sidecar.exists()
+    assert set(plan) == {
+        arch.ArchiveRename(
+            source, tmp_path / "20260129 REC vendor.pdf"
+        ),
+        arch.ArchiveRename(
+            sidecar, tmp_path / "20260129 REC vendor.drj.json"
+        ),
+    }
+    assert (tmp_path / "20260129 REC vendor.pdf").read_text(
+        encoding="utf-8"
+    ) == "document"
+    assert (tmp_path / "20260129 REC vendor.drj.json").read_text(
+        encoding="utf-8"
+    ) == "metadata"
+
+
+def test_check_norm_sidecar_collision_aborts_all_renames(
+    tmp_path, caplog, monkeypatch
+):
+    caplog.set_level(logging.ERROR, logger="davo.services.arch")
+    monkeypatch.chdir(tmp_path)
+    sidecar = tmp_path / "20260129 check vendor.drj.json"
+    target = tmp_path / "20260129 REC vendor.drj.json"
+    unaffected = tmp_path / "20260130 invoice utility.pdf"
+    sidecar.write_text("metadata", encoding="utf-8")
+    target.write_text("existing", encoding="utf-8")
+    unaffected.write_text("document", encoding="utf-8")
+
+    arch.command_check_norm([tmp_path])
+
+    assert sidecar.exists()
+    assert target.exists()
+    assert unaffected.exists()
+    assert "20260129 check vendor.drj.json" in caplog.text
+    assert "20260129 REC vendor.drj.json" in caplog.text
+    assert "target already exists" in caplog.text
+
+
+def test_check_norm_dry_run_reports_operations_without_changing_files(
+    tmp_path, caplog, monkeypatch
+):
+    caplog.set_level(logging.INFO, logger="davo.services.arch")
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "20260129 check vendor.pdf"
+    source.write_text("document", encoding="utf-8")
+
+    arch.command_check_norm([source], dry_run=True)
+
+    target = tmp_path / "20260129 REC vendor.pdf"
+    assert source.exists()
+    assert not target.exists()
+    assert (
+        "check-norm: would rename  20260129 check vendor.pdf "
+        "-> 20260129 REC vendor.pdf"
+    ) in caplog.text
+
+
+def test_check_norm_collision_aborts_entire_plan_and_reports_paths(
+    tmp_path, caplog, monkeypatch
+):
+    caplog.set_level(logging.ERROR, logger="davo.services.arch")
+    monkeypatch.chdir(tmp_path)
+    first = tmp_path / "20260129 check vendor.pdf"
+    second = tmp_path / "20260129 receipt vendor.pdf"
+    first.write_text("first", encoding="utf-8")
+    second.write_text("second", encoding="utf-8")
+
+    arch.command_check_norm([tmp_path], dry_run=True)
+
+    target = tmp_path / "20260129 REC vendor.pdf"
+    assert first.exists()
+    assert second.exists()
+    assert not target.exists()
+    assert "20260129 check vendor.pdf" in caplog.text
+    assert "20260129 receipt vendor.pdf" in caplog.text
+    assert "20260129 REC vendor.pdf" in caplog.text
+    assert str(tmp_path) not in caplog.text
+    assert "multiple sources have the same target" in caplog.text
+
+    caplog.clear()
+    arch.command_check_norm([tmp_path])
+    assert first.exists()
+    assert second.exists()
+    assert not target.exists()
+    assert "multiple sources have the same target" in caplog.text
+
+
+def test_check_norm_existing_target_aborts_all_renames(
+    tmp_path, caplog, monkeypatch
+):
+    caplog.set_level(logging.ERROR, logger="davo.services.arch")
+    monkeypatch.chdir(tmp_path)
+    colliding = tmp_path / "20260129 check vendor.pdf"
+    unaffected = tmp_path / "20260130 invoice utility.pdf"
+    target = tmp_path / "20260129 REC vendor.pdf"
+    colliding.write_text("source", encoding="utf-8")
+    unaffected.write_text("source", encoding="utf-8")
+    target.write_text("existing", encoding="utf-8")
+
+    arch.command_check_norm([tmp_path])
+
+    assert colliding.exists()
+    assert unaffected.exists()
+    assert not (tmp_path / "20260130 INV utility.pdf").exists()
+    assert "20260129 check vendor.pdf" in caplog.text
+    assert "20260129 REC vendor.pdf" in caplog.text
+    assert "target already exists" in caplog.text
+
+
+@pytest.mark.parametrize("option", ["-r", "--recursive"])
+def test_cli_check_norm_recursive_option(option):
+    from davo import cli
+
+    namespace = cli.init_parser().parse_args(
+        ["arch", "check-norm", option, "archive"]
+    )
+
+    assert namespace.recursive is True
+
+
+@pytest.mark.parametrize(
+    ("option", "attribute"),
+    [
+        ("-0", "dry_run"),
+        ("--dry-run", "dry_run"),
+        ("-u", "underscores"),
+        ("--underscores", "underscores"),
+    ],
+)
+def test_cli_check_norm_options(option, attribute):
+    from davo import cli
+
+    namespace = cli.init_parser().parse_args(["arch", "check-norm", option])
+
+    assert getattr(namespace, attribute)
+
+
+@pytest.mark.parametrize("option", ["-t", "--table"])
+def test_cli_check_norm_table_option(option):
+    from davo import cli
+
+    namespace = cli.init_parser().parse_args(["arch", "check-norm", option])
+
+    assert namespace.table is True
+
+
+def test_cli_check_norm_forwards_table_option(mocker):
+    handler = mocker.patch.object(arch, "command_check_norm")
+    from davo import cli
+
+    namespace = cli.init_parser().parse_args(
+        ["arch", "check-norm", "-0", "-t", "archive"]
+    )
+    namespace.func(namespace)
+
+    handler.assert_called_once_with(
+        paths=["archive"],
+        recursive=False,
+        dry_run=True,
+        underscores=False,
+        table=True,
+    )
+
+
+def test_check_norm_aligns_targets_and_prints_relative_paths(
+    tmp_path, caplog, monkeypatch
+):
+    caplog.set_level(logging.INFO, logger="davo.services.arch")
+    monkeypatch.chdir(tmp_path)
+    first = tmp_path / "20260129 check short.pdf"
+    second = tmp_path / "20260129 invoice longer-vendor-name.pdf"
+    first.write_text("first", encoding="utf-8")
+    second.write_text("second", encoding="utf-8")
+
+    arch.command_check_norm([tmp_path], dry_run=True)
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "davo.services.arch"
+    ]
+    assert len(messages) == 2
+    assert all(str(tmp_path) not in message for message in messages)
+    assert len({message.index(" -> ") for message in messages}) == 1
+
+
+def test_check_norm_table_includes_relative_paths_and_collisions(
+    tmp_path, caplog, monkeypatch
+):
+    caplog.set_level(logging.ERROR, logger="davo.services.arch")
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "20260129 check vendor.pdf"
+    target = tmp_path / "20260129 REC vendor.pdf"
+    source.write_text("source", encoding="utf-8")
+    target.write_text("existing", encoding="utf-8")
+
+    arch.command_check_norm([tmp_path], dry_run=True, table=True)
+
+    lines = caplog.records[0].getMessage().splitlines()
+    assert lines[0] == "check-norm:"
+    assert lines[1].startswith("+") and lines[1].endswith("+")
+    assert "| Action" in lines[2]
+    assert "| Source" in lines[2]
+    assert "| Target" in lines[2]
+    assert "| Details" in lines[2]
+    assert "collision" in caplog.text
+    assert "target already exists" in caplog.text
+    assert str(tmp_path) not in caplog.text
+
+
 def _json_entry(number, sign, date="2026-07-30T11:58:00", user="ozon.ru"):
     return {
         "ticket": {
