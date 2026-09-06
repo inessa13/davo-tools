@@ -238,8 +238,8 @@ def _display_path(path, root):
     return path.relative_to(root)
 
 
-def command_fns_rename(root, rename=False, config=None):
-    """Copy receipts immediately, or rename them when explicitly requested."""
+def command_fns_rename(root, rename=False, config=None, dry_run=False):
+    """Copy or rename FNS receipts, optionally only reporting the plan."""
     root = Path(root)
     if not root.is_dir():
         logger.warning("fns-rename: directory not found: %s", root)
@@ -254,15 +254,18 @@ def command_fns_rename(root, rename=False, config=None):
         )
 
     action = "rename" if rename else "copy"
+    log_action = "would {}".format(action) if dry_run else action
     for item in plan:
         if item.target in collisions:
             continue
         logger.info(
             "fns-rename: %s %s -> %s",
-            action,
+            log_action,
             _display_path(item.source, root),
             _display_path(item.target, root),
         )
+        if dry_run:
+            continue
         try:
             if rename:
                 # link() atomically refuses an existing target.  Both files

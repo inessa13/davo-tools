@@ -69,12 +69,55 @@ def test_dry_run_only_plans_copy(tmp_path, caplog):
     source = _write_receipt(tmp_path, "receipt.html")
     target = tmp_path / "20260808 REC ozon.ru.html"
 
-    arch.command_fns_rename(tmp_path)
+    arch.command_fns_rename(tmp_path, dry_run=True)
 
     assert source.exists()
     assert not target.exists()
-    assert "copy receipt.html -> 20260808 REC ozon.ru.html" in caplog.text
+    assert "would copy receipt.html -> 20260808 REC ozon.ru.html" in (
+        caplog.text
+    )
     assert str(tmp_path) not in caplog.text
+
+
+def test_dry_run_only_plans_rename(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="davo.services.arch")
+    source = _write_receipt(tmp_path, "receipt.html")
+    target = tmp_path / "20260808 REC ozon.ru.html"
+
+    arch.command_fns_rename(tmp_path, rename=True, dry_run=True)
+
+    assert source.exists()
+    assert not target.exists()
+    assert "would rename receipt.html -> 20260808 REC ozon.ru.html" in (
+        caplog.text
+    )
+
+
+def test_fns_rename_copies_by_default(tmp_path):
+    source = _write_receipt(tmp_path, "receipt.html")
+    target = tmp_path / "20260808 REC ozon.ru.html"
+
+    arch.command_fns_rename(tmp_path)
+
+    assert source.exists()
+    assert target.read_text(encoding="utf-8") == source.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_fns_rename_dry_run_reports_collision_without_changing_files(
+    tmp_path, caplog
+):
+    caplog.set_level(logging.INFO, logger="davo.services.arch")
+    source = _write_receipt(tmp_path, "receipt.html")
+    target = tmp_path / "20260808 REC ozon.ru.html"
+    target.write_text("existing", encoding="utf-8")
+
+    arch.command_fns_rename(tmp_path, dry_run=True)
+
+    assert source.exists()
+    assert target.read_text(encoding="utf-8") == "existing"
+    assert "target already exists: 20260808 REC ozon.ru.html" in caplog.text
 
 
 def test_commit_copies_unless_rename_requested(tmp_path):

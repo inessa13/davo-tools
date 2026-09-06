@@ -37,11 +37,18 @@ def init_parser():
         action="store_true",
         help="rename source files instead of copying them",
     )
+    fns_rename.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="show the rename plan without changing files",
+    )
     fns_rename.set_defaults(
         func=lambda namespace: services.arch.command_fns_rename(
             root=namespace.path,
             rename=namespace.rename,
             config=namespace.config,
+            dry_run=namespace.dry_run,
         )
     )
 

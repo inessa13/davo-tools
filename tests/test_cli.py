@@ -303,6 +303,8 @@ def test_file_keeps_compare():
     [
         ["arch", "fns-extract", "-0", "export.json"],
         ["arch", "fns-extract", "--dry-run", "export.json"],
+        ["arch", "fns-rename", "-0"],
+        ["arch", "fns-rename", "--dry-run"],
         ["vid", "compress", "-0", "movie.mov"],
     ],
 )
