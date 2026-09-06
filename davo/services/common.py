@@ -53,19 +53,18 @@ def command_compare_dirs(
             "sync_in and sync_out are mutually exclusive"
         )
 
-    root = davo.utils.path.find_config_root(
-        os.getcwd(), constants.LOCAL_CONF_PATH
-    )
-    if root:
-        root = os.path.join(root, "")
-        config = davo.utils.conf.load_yaml_config(
-            os.path.join(root, constants.LOCAL_CONF_PATH)
-        )
+    config, _user_path, project_path = davo.utils.conf.load_davo_config()
+    config = config.get("compare", {})
+    if not isinstance(config, dict):
+        raise davo.errors.UserError("Invalid compare: expected a mapping")
+    if project_path:
+        root = os.path.join(str(project_path.parent), "")
         if verbose:
             print("config root: {}".format(root))
-    elif dest_path:
+    elif config.get("dest_path") or dest_path:
         root = os.getcwd()
-        config = {"dest_path": dest_path}
+        if dest_path:
+            config["dest_path"] = dest_path
     else:
         raise davo.errors.UserError("No config root found")
 

@@ -14,7 +14,8 @@ from pathlib import Path
 import qrcode
 import yaml
 
-from davo import errors
+from davo import errors, settings
+from davo.utils import conf as config_utils
 
 logger = logging.getLogger(__name__)
 
@@ -110,40 +111,18 @@ def _normalise_user(value):
     return _safe_user_name(value)
 
 
-def find_fns_config(start=None, config=None):
-    """Find a supplied config or the nearest project .dtconf file."""
-    if config:
-        return Path(config).expanduser().resolve()
-    current = Path(start or os.getcwd()).expanduser().resolve()
-    if current.is_file():
-        current = current.parent
-    for directory in (current, *current.parents):
-        candidate = directory / ".dtconf"
-        if candidate.is_file():
-            return candidate
-    return None
+def find_fns_config(start=None):
+    """Return the nearest project configuration used by FNS writes."""
+    return config_utils.find_project_config(start)
 
 
-def load_fns_user_names(start=None, config=None):
+def load_fns_user_names(start=None):
     """Read FNS seller aliases without requiring a project configuration."""
-    config_path = find_fns_config(start=start, config=config)
-    if config_path is None:
-        return {}, None
-    try:
-        contents = (
-            yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-            if config_path.exists()
-            else {}
-        )
-    except (OSError, yaml.YAMLError) as exc:
-        raise errors.UserError(
-            "Invalid config {}: {}".format(config_path, exc)
-        )
-    if not isinstance(contents, dict):
-        raise errors.UserError(
-            "Invalid config {}: expected a mapping".format(config_path)
-        )
-    user_names = contents.get("fns", {}).get("user_names", {})
+    contents, _user_path, config_path = config_utils.load_davo_config(start)
+    fns = contents.get("fns", {})
+    if not isinstance(fns, dict):
+        raise errors.UserError("Invalid fns: expected a mapping")
+    user_names = fns.get("user_names", {})
     if not isinstance(user_names, dict):
         raise errors.UserError("Invalid fns.user_names: expected a mapping")
     return {
@@ -206,10 +185,10 @@ def _number_names(files):
     return names
 
 
-def plan_fns_rename(root, config=None):
+def plan_fns_rename(root):
     """Build an FNS receipt rename plan for direct HTML children of *root*."""
     root = Path(root)
-    user_names, _config_path = load_fns_user_names(root, config=config)
+    user_names, _config_path = load_fns_user_names(root)
     candidates = []
     for path in sorted(root.iterdir(), key=lambda item: item.name):
         if not path.is_file() or path.suffix.lower() not in {".htm", ".html"}:
@@ -238,14 +217,14 @@ def _display_path(path, root):
     return path.relative_to(root)
 
 
-def command_fns_rename(root, rename=False, config=None, dry_run=False):
+def command_fns_rename(root, rename=False, dry_run=False):
     """Copy or rename FNS receipts, optionally only reporting the plan."""
     root = Path(root)
     if not root.is_dir():
         logger.warning("fns-rename: directory not found: %s", root)
         return
 
-    plan = plan_fns_rename(root, config=config)
+    plan = plan_fns_rename(root)
     collisions = {item.target for item in plan if item.target.exists()}
     for target in sorted(collisions):
         logger.warning(
@@ -548,7 +527,6 @@ def _write_fns_pdf(target, receipt_html, receipt):
 def command_fns_extract(
     json_path,
     out_dir=None,
-    config=None,
     dry_run=False,
     *,
     output_type="html",
@@ -571,7 +549,7 @@ def command_fns_extract(
         raise errors.UserError(
             "fns-extract: output directory not found: {}".format(root)
         )
-    user_names, _config_path = load_fns_user_names(os.getcwd(), config=config)
+    user_names, _config_path = load_fns_user_names(os.getcwd())
     receipts, failed = [], []
     for index, entry in enumerate(entries, start=1):
         try:
@@ -737,7 +715,7 @@ def _dump_fns_config(contents, metadata, preserved_comments):
 
 def command_fns_config_init_map(
     json_path,
-    config=None,
+    local=False,
     verbose=False,
     normalise=False,
     dry_run=False,
@@ -751,11 +729,12 @@ def command_fns_config_init_map(
         raise errors.UserError("fns-config: invalid JSON: {}".format(exc))
     if not isinstance(entries, list):
         raise errors.UserError("fns-config: expected a JSON array")
-    config_path = find_fns_config(os.getcwd(), config=config)
-    if config_path is None:
-        raise errors.UserError(
-            "fns-config: no .dtconf found; use --config PATH"
-        )
+    if local:
+        config_path = find_fns_config(os.getcwd())
+        if config_path is None:
+            config_path = Path.cwd() / settings.PROJECT_CONFIG_NAME
+    else:
+        config_path = Path(settings.CONFIG_PATH_DAVO_TOOLS).expanduser()
     try:
         config_text = (
             config_path.read_text(encoding="utf-8")
@@ -826,8 +805,8 @@ def command_fns_config_init_map(
                     logger.info("fns-config: would add %s", comment)
 
 
-def command_fns_config_show_map(config=None):
-    user_names, config_path = load_fns_user_names(os.getcwd(), config=config)
-    logger.info("fns-config: %s", config_path or "no .dtconf")
+def command_fns_config_show_map():
+    user_names, config_path = load_fns_user_names(os.getcwd())
+    logger.info("fns-config: %s", config_path or "no project config")
     for source, target in sorted(user_names.items()):
         logger.info("%s: %s", source, target)

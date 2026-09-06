@@ -1,0 +1,24 @@
+# Copy selected blocks to ~/Dropbox/etc/davo-tools.yaml or .davo-tools.yaml.
+# Project values override and recursively merge with user values.
+fns:
+  user_names:
+    "ООО «Интернет Решения»": Озон
+
+s3:
+  BUCKET: my-bucket
+  IGNORE:
+    - .git
+
+compare:
+  # A project configuration anchors this relative destination.
+  dest_path: ./backup
+  ignore:
+    - .git
+
+vpn:
+  keepass_db_path: ./pwd.kdbx
+  default_account: work
+  accounts:
+    work:
+      handler: openvpn
+      config_path: ./work.ovpn

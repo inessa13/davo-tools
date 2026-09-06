@@ -111,21 +111,17 @@ def _diff_display_lines(files, all_files, root_key="", verbose=False):
 
 def on_config(namespace):
     if namespace.local:
-        local_root = utils.find_project_root()
-        if not local_root:
+        config_path = davo.utils.conf.find_project_config()
+        if not config_path:
             raise errors.UserError("Local config not found")
-        config_path = os.path.join(
-            local_root, settings.CONFIG_PATH_S3SYNC_LOCAL
-        )
         print("{}:".format(config_path))
-        config = conf.load_config(config_path, load_secrets=None, mask=True)
+        contents = davo.utils.conf._load_yaml_mapping(config_path)  # pylint: disable=protected-access
+        config = contents.get("s3", {})
+        if not isinstance(config, dict):
+            raise errors.UserError("Invalid s3: expected a mapping")
+        config = davo.utils.conf.mask_config_secrets(config)
     else:
-        local_root = utils.find_project_root()
-        config = conf.load_config_tree(
-            local_root,
-            settings.CONFIG_PATH_S3SYNC,
-            mask=True,
-        )
+        config = conf.load_config(mask=True)
 
     if config:
         pprint.pprint(config)
@@ -148,10 +144,31 @@ def on_info(namespace):
 
 
 def on_init(namespace):
-    config_path = os.path.join(os.getcwd(), settings.CONFIG_PATH_S3SYNC_LOCAL)
-    with open(config_path, "w") as config_file:
-        config = {"BUCKET": namespace.bucket}
-        yaml.dump(config, config_file, default_flow_style=False)
+    config_path = os.path.join(os.getcwd(), settings.PROJECT_CONFIG_NAME)
+    contents = {}
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, encoding="utf-8") as config_file:
+                contents = yaml.safe_load(config_file) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            raise errors.UserError(
+                "Invalid config {}: {}".format(config_path, exc)
+            ) from exc
+        if not isinstance(contents, dict):
+            raise errors.UserError(
+                "Invalid config {}: expected a mapping".format(config_path)
+            )
+    s3 = contents.setdefault("s3", {})
+    if not isinstance(s3, dict):
+        raise errors.UserError("Invalid s3: expected a mapping")
+    s3["BUCKET"] = namespace.bucket
+    with open(config_path, "w", encoding="utf-8") as config_file:
+        yaml.safe_dump(
+            contents,
+            config_file,
+            default_flow_style=False,
+            allow_unicode=True,
+        )
 
 
 def on_list_buckets(_namespace):

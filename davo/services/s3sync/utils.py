@@ -10,7 +10,7 @@ import boto.s3.connection
 import boto.s3.key
 
 import davo.errors
-from davo import settings, utils
+from davo import utils
 
 from . import cache, conf
 
@@ -233,9 +233,8 @@ def memoize(func):
 
 @memoize
 def find_project_root():
-    return davo.utils.path.find_config_root(
-        get_cwd(), settings.CONFIG_PATH_S3SYNC_LOCAL
-    )
+    config = davo.utils.conf.find_project_config(get_cwd())
+    return str(config.parent) if config else None
 
 
 @memoize

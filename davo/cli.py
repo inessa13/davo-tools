@@ -30,7 +30,6 @@ def init_parser():
         "fns-rename", help="name FNS receipt HTML files"
     )
     fns_rename.add_argument("path", nargs="?", default=os.getcwd())
-    fns_rename.add_argument("--config", help="path to project .dtconf")
     fns_rename.add_argument(
         "-R",
         "--rename",
@@ -47,7 +46,6 @@ def init_parser():
         func=lambda namespace: services.arch.command_fns_rename(
             root=namespace.path,
             rename=namespace.rename,
-            config=namespace.config,
             dry_run=namespace.dry_run,
         )
     )
@@ -57,7 +55,6 @@ def init_parser():
     )
     fns_extract.add_argument("json_path")
     fns_extract.add_argument("-o", "--out-dir")
-    fns_extract.add_argument("--config", help="path to project .dtconf")
     fns_extract.add_argument(
         "-A",
         "--no-autogen",
@@ -79,10 +76,14 @@ def init_parser():
     )
     fns_config_subparsers = fns_config.add_subparsers(title="list of commands")
     fns_init_map = fns_config_subparsers.add_parser(
-        "init-map", help="add sellers from FNS JSON to .dtconf"
+        "init-map", help="add sellers from FNS JSON to davo-tools config"
     )
     fns_init_map.add_argument("json_path")
-    fns_init_map.add_argument("--config", help="path to project .dtconf")
+    fns_init_map.add_argument(
+        "--local",
+        action="store_true",
+        help="write the nearest project .davo-tools.yaml",
+    )
     fns_init_map.add_argument("-v", "--verbose", action="store_true")
     fns_init_map.add_argument(
         "-n",
@@ -105,7 +106,7 @@ def init_parser():
     fns_init_map.set_defaults(
         func=lambda namespace: services.arch.command_fns_config_init_map(
             namespace.json_path,
-            config=namespace.config,
+            local=namespace.local,
             verbose=namespace.verbose,
             normalise=namespace.normalise,
             dry_run=namespace.dry_run,
@@ -115,11 +116,8 @@ def init_parser():
     fns_show_map = fns_config_subparsers.add_parser(
         "show-map", help="show effective FNS seller aliases"
     )
-    fns_show_map.add_argument("--config", help="path to project .dtconf")
     fns_show_map.set_defaults(
-        func=lambda namespace: services.arch.command_fns_config_show_map(
-            config=namespace.config
-        )
+        func=lambda namespace: services.arch.command_fns_config_show_map()
     )
 
     cmd = subparsers.add_parser("file", help="file tools")
@@ -154,7 +152,6 @@ def init_parser():
     cmd.add_argument("account", nargs="?", action="store")
     cmd.set_defaults(
         func=lambda namespace: services.vpn.helpers.connect(
-            config_root=settings.CONFIG_PATH,
             account_name=namespace.account,
         )
     )
@@ -169,6 +166,7 @@ def init_parser():
         cmd,
         commands=(
             "config",
+            "init",
             "info",
             "buckets",
             "list",
@@ -188,7 +186,6 @@ def _run_fns_extract(namespace):
         return services.arch.command_fns_extract(
             namespace.json_path,
             out_dir=namespace.out_dir,
-            config=namespace.config,
             dry_run=namespace.dry_run,
             output_type=namespace.type,
             no_autogen=namespace.no_autogen,

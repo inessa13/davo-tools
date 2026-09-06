@@ -36,12 +36,46 @@ make lint         # ruff, isort (check-only), pylint
 
 With an activated venv: `source .venv/bin/activate`, then `make test` or `python -m pytest`.
 
+## Configuration
+
+`davo` reads two optional YAML mappings: `~/Dropbox/etc/davo-tools.yaml` for
+settings shared between devices and the nearest `.davo-tools.yaml` for project
+settings. The project mapping is merged over the user mapping recursively:
+individual mapping values are overridden, while lists and scalar values are
+replaced. Paths beginning with `./` are resolved relative to the file that
+defines them.
+
+```yaml
+fns:
+  user_names:
+    "ООО «Интернет Решения»": Озон
+s3:
+  BUCKET: my-bucket
+  IGNORE: [".git"]
+compare:
+  dest_path: ./backup
+  ignore: [".git"]
+vpn:
+  keepass_db_path: ./pwd.kdbx
+  default_account: work
+  accounts:
+    work:
+      handler: openvpn
+      config_path: ./work.ovpn
+```
+
+Move the contents of legacy `s3sync.yaml`, `.s3sync`, `vpn.yaml`, and
+`.dtconf` manually into the corresponding `s3`, `vpn`, `fns`, and `compare`
+blocks. Root-level `dest_path` and `ignore` also move into `compare`. Legacy
+files are not read. `davo s3 init BUCKET` creates or updates the current
+project's `.davo-tools.yaml` with `s3.BUCKET`.
+
 ## FNS receipts
 
 `davo arch fns-extract` converts the JSON export from the FNS service into
 standalone receipt HTML files by default, or PDF files with `-t/--type pdf`.
-PDF generation uses a locally installed Chrome or Chromium. It looks for the
-nearest ancestor `.dtconf` (or use `--config PATH`) and writes to the current
+PDF generation uses a locally installed Chrome or Chromium. FNS aliases come
+from the effective davo-tools configuration; output is written to the current
 directory unless `-o/--out-dir` is supplied.
 
 ```bash
@@ -50,6 +84,7 @@ davo arch fns-extract extract.json -t pdf
 davo arch fns-extract extract.json -A
 davo arch fns-extract extract.json -o receipts -0
 davo arch fns-config init-map extract.json
+davo arch fns-config init-map --local extract.json
 davo arch fns-config init-map -v extract.json
 davo arch fns-config init-map -n extract.json
 davo arch fns-config init-map -0 extract.json
@@ -57,8 +92,10 @@ davo arch fns-config init-map -e extract.json
 davo arch fns-config show-map
 ```
 
-Seller aliases live alongside other project settings and are optional. Keys are
-the exact FNS `user` values:
+Seller aliases live in the `fns` block and are optional. Keys are the exact FNS
+`user` values. `init-map` updates the user configuration by default; use
+`--local` to update the nearest project configuration (or create one in the
+current directory):
 
 ```yaml
 fns:
