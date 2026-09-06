@@ -71,6 +71,53 @@ def init_parser():
     fns_extract.add_argument("-0", "--dry-run", action="store_true")
     fns_extract.set_defaults(func=_run_fns_extract)
 
+    fns_dedup = arch_subparsers.add_parser(
+        "fns-dedup", help="find FNS receipts already present in an archive"
+    )
+    fns_dedup.add_argument(
+        "-d",
+        "--directories",
+        nargs="+",
+        required=True,
+        metavar="DIR",
+        help="candidate directories to scan recursively",
+    )
+    fns_dedup.add_argument(
+        "-r",
+        "--reference",
+        nargs="+",
+        required=True,
+        metavar="DIR",
+        help="reference archive directories to scan recursively",
+    )
+    fns_dedup.add_argument(
+        "-D",
+        "--delete",
+        action="store_true",
+        help="delete duplicate files from candidate directories",
+    )
+    fns_dedup.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="show deletions without changing files",
+    )
+    fns_dedup.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="show files without an FNS fiscal identity",
+    )
+    fns_dedup.set_defaults(
+        func=lambda namespace: services.arch.command_fns_dedup(
+            directories=namespace.directories,
+            reference=namespace.reference,
+            delete=namespace.delete,
+            dry_run=namespace.dry_run,
+            verbose=namespace.verbose,
+        )
+    )
+
     fns_config = arch_subparsers.add_parser(
         "fns-config", help="manage FNS receipt settings"
     )

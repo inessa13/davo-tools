@@ -5,7 +5,15 @@ from pathlib import Path
 import pytest
 import yaml
 
+from davo import settings
 from davo.services import arch
+
+
+@pytest.fixture(autouse=True)
+def _isolated_davo_user_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        settings, "CONFIG_PATH_DAVO_TOOLS", str(tmp_path / "user-config.yaml")
+    )
 
 
 def _receipt(date="08.08.26 12.10", user="ozon.ru"):
@@ -124,7 +132,7 @@ def test_commit_copies_unless_rename_requested(tmp_path):
     source = _write_receipt(tmp_path, "receipt.html")
     target = tmp_path / "20260808 REC ozon.ru.html"
 
-    arch.command_fns_rename(tmp_path, commit=True)
+    arch.command_fns_rename(tmp_path)
 
     assert source.exists()
     assert target.read_text(encoding="utf-8") == source.read_text(
@@ -136,7 +144,7 @@ def test_commit_rename_removes_source(tmp_path):
     source = _write_receipt(tmp_path, "receipt.html")
     target = tmp_path / "20260808 REC ozon.ru.html"
 
-    arch.command_fns_rename(tmp_path, commit=True, rename=True)
+    arch.command_fns_rename(tmp_path, rename=True)
 
     assert not source.exists()
     assert target.exists()
@@ -147,7 +155,7 @@ def test_collision_is_not_overwritten(tmp_path, caplog):
     target = tmp_path / "20260808 REC ozon.ru.html"
     target.write_text("existing", encoding="utf-8")
 
-    arch.command_fns_rename(tmp_path, commit=True, rename=True)
+    arch.command_fns_rename(tmp_path, rename=True)
 
     assert source.exists()
     assert target.read_text(encoding="utf-8") == "existing"
@@ -169,7 +177,7 @@ def test_invalid_and_nested_html_are_skipped(tmp_path, caplog):
 
 
 def test_rename_uses_exact_user_alias_and_does_not_require_place(tmp_path):
-    config = tmp_path / ".dtconf"
+    config = tmp_path / ".davo-tools.yaml"
     config.write_text("fns:\n  user_names:\n    exact user: Продавец\n")
     receipt = tmp_path / "receipt.html"
     receipt.write_text(
@@ -183,7 +191,7 @@ def test_rename_uses_exact_user_alias_and_does_not_require_place(tmp_path):
 
 
 def test_rename_empty_alias_omits_seller_and_numbers(tmp_path):
-    config = tmp_path / ".dtconf"
+    config = tmp_path / ".davo-tools.yaml"
     config.write_text("fns:\n  user_names:\n    seller: ''\n")
     _write_receipt(tmp_path, "a.html", user="seller")
     _write_receipt(tmp_path, "b.html", user="seller")
@@ -208,15 +216,6 @@ def test_normalise_user_removes_legal_forms_quotes_and_recognises_fio(
     user, expected
 ):
     assert arch._normalise_user(user) == expected
-
-
-@pytest.mark.parametrize("option", ["-C", "--commit"])
-def test_cli_commit_options(option):
-    from davo import cli
-
-    namespace = cli.init_parser().parse_args(["arch", "fns-rename", option])
-
-    assert namespace.commit is True
 
 
 def test_cli_fns_rename_rejects_old_commit_short_option():
@@ -268,7 +267,11 @@ def _write_json(root, entries):
     return path
 
 
-def test_fns_extract_renders_qr_and_numbers_same_store(tmp_path):
+def test_fns_extract_renders_qr_and_numbers_same_store(tmp_path, monkeypatch):
+    (tmp_path / ".davo-tools.yaml").write_text(
+        "fns:\n  user_names:\n    ozon.ru: ozon.ru\n"
+    )
+    monkeypatch.chdir(tmp_path)
     source = _write_json(tmp_path, [_json_entry(1, 11), _json_entry(2, 22)])
 
     generated = arch.command_fns_extract(source, out_dir=tmp_path)
@@ -286,34 +289,40 @@ def test_fns_extract_renders_qr_and_numbers_same_store(tmp_path):
     ) == ("t=20260730T1158&s=100.00&fn=123&fd=1&fp=11&n=1")
 
 
-def test_fns_extract_uses_user_alias_without_retail_place(tmp_path):
+def test_fns_extract_uses_user_alias_without_retail_place(
+    tmp_path, monkeypatch
+):
     entry = _json_entry(1, 11, user="exact user")
     source = _write_json(tmp_path, [entry])
-    config = tmp_path / ".dtconf"
+    config = tmp_path / ".davo-tools.yaml"
     config.write_text("fns:\n  user_names:\n    exact user: Продавец\n")
 
-    generated = arch.command_fns_extract(
-        source, out_dir=tmp_path, config=config
-    )
+    monkeypatch.chdir(tmp_path)
+    generated = arch.command_fns_extract(source, out_dir=tmp_path)
 
     assert [path.name for path in generated] == [
         "20260730 REC Продавец autogen.html"
     ]
 
 
-def test_fns_extract_empty_alias_omits_seller(tmp_path):
+def test_fns_extract_empty_alias_omits_seller(tmp_path, monkeypatch):
     source = _write_json(tmp_path, [_json_entry(1, 11, user="seller")])
-    config = tmp_path / ".dtconf"
+    config = tmp_path / ".davo-tools.yaml"
     config.write_text("fns:\n  user_names:\n    seller: ''\n")
 
-    generated = arch.command_fns_extract(
-        source, out_dir=tmp_path, config=config
-    )
+    monkeypatch.chdir(tmp_path)
+    generated = arch.command_fns_extract(source, out_dir=tmp_path)
 
     assert [path.name for path in generated] == ["20260730 REC autogen.html"]
 
 
-def test_fns_extract_resumes_and_refuses_complete_repeat(tmp_path):
+def test_fns_extract_resumes_and_refuses_complete_repeat(
+    tmp_path, monkeypatch
+):
+    (tmp_path / ".davo-tools.yaml").write_text(
+        "fns:\n  user_names:\n    ozon.ru: ozon.ru\n"
+    )
+    monkeypatch.chdir(tmp_path)
     entries = [_json_entry(1, 11), _json_entry(2, 22)]
     source = _write_json(tmp_path, entries)
     first = arch.command_fns_extract(source, out_dir=tmp_path)
@@ -332,7 +341,7 @@ def test_fns_extract_dry_run_and_config_map(tmp_path, caplog, monkeypatch):
     caplog.set_level(logging.INFO, logger="davo.services.arch")
     nested = tmp_path / "project" / "nested"
     nested.mkdir(parents=True)
-    config = nested.parent / ".dtconf"
+    config = nested.parent / ".davo-tools.yaml"
     config.write_text(
         "other: retained\nfns:\n  user_names:\n    ozon.ru: Озон\n"
     )
@@ -343,11 +352,17 @@ def test_fns_extract_dry_run_and_config_map(tmp_path, caplog, monkeypatch):
 
     assert not list(nested.glob("*.html"))
     assert "would create 20260730 REC Озон autogen.html" in caplog.text
-    arch.command_fns_config_init_map(source)
+    arch.command_fns_config_init_map(source, local=True)
     assert "other: retained" in config.read_text(encoding="utf-8")
 
 
-def test_fns_extract_writes_valid_receipts_but_reports_invalid_ones(tmp_path):
+def test_fns_extract_writes_valid_receipts_but_reports_invalid_ones(
+    tmp_path, monkeypatch
+):
+    (tmp_path / ".davo-tools.yaml").write_text(
+        "fns:\n  user_names:\n    ozon.ru: ozon.ru\n"
+    )
+    monkeypatch.chdir(tmp_path)
     source = _write_json(tmp_path, [_json_entry(1, 11), {}])
 
     with pytest.raises(arch.errors.UserError, match="1 invalid receipt"):
@@ -356,7 +371,11 @@ def test_fns_extract_writes_valid_receipts_but_reports_invalid_ones(tmp_path):
     assert (tmp_path / "20260730 REC ozon.ru autogen.html").exists()
 
 
-def test_fns_extract_no_autogen_changes_only_filename(tmp_path):
+def test_fns_extract_no_autogen_changes_only_filename(tmp_path, monkeypatch):
+    (tmp_path / ".davo-tools.yaml").write_text(
+        "fns:\n  user_names:\n    ozon.ru: ozon.ru\n"
+    )
+    monkeypatch.chdir(tmp_path)
     source = _write_json(tmp_path, [_json_entry(1, 11)])
 
     generated = arch.command_fns_extract(
@@ -374,6 +393,10 @@ def test_fns_extract_pdf_stores_identity_and_resumes_by_type(
 ):
     from davo.services.photo import pdf
 
+    (tmp_path / ".davo-tools.yaml").write_text(
+        "fns:\n  user_names:\n    ozon.ru: ozon.ru\n"
+    )
+    monkeypatch.chdir(tmp_path)
     source = _write_json(tmp_path, [_json_entry(1, 11)])
     rendered_html = []
 
@@ -396,8 +419,9 @@ def test_fns_extract_pdf_stores_identity_and_resumes_by_type(
     assert not list(tmp_path.glob("20260730 REC ozon.ru.html"))
     fitz = pdf._import_fitz("test")
     with fitz.open(generated[0]) as document:
-        assert "davo-fns-autogen fiscal-identity: fn=123 fd=1 fp=11" in (
-            document.metadata["keywords"]
+        assert (
+            "davo-fns-autogen fiscal-identity: fn=123 fd=1 fp=11"
+            in (document.metadata["keywords"])
         )
     with pytest.raises(arch.errors.UserError, match="repeated run"):
         arch.command_fns_extract(source, out_dir=tmp_path, output_type="pdf")
@@ -409,6 +433,8 @@ def test_fns_extract_pdf_stores_identity_and_resumes_by_type(
 def test_fns_extract_pdf_dry_run_does_not_render(tmp_path, monkeypatch):
     from davo.services.photo import pdf
 
+    (tmp_path / ".davo-tools.yaml").write_text("fns: {}\n")
+    monkeypatch.chdir(tmp_path)
     source = _write_json(tmp_path, [_json_entry(1, 11)])
     monkeypatch.setattr(
         pdf,
@@ -427,10 +453,10 @@ def test_fns_extract_pdf_dry_run_does_not_render(tmp_path, monkeypatch):
 
 
 def test_fns_config_init_map_verbose_reports_added_and_existing(
-    tmp_path, caplog
+    tmp_path, caplog, monkeypatch
 ):
     caplog.set_level(logging.INFO, logger="davo.services.arch")
-    config = tmp_path / ".dtconf"
+    config = tmp_path / ".davo-tools.yaml"
     config.write_text("fns:\n  user_names:\n    ozon.ru: Озон\n")
     source = _write_json(
         tmp_path,
@@ -441,7 +467,8 @@ def test_fns_config_init_map_verbose_reports_added_and_existing(
         ],
     )
 
-    arch.command_fns_config_init_map(source, config=config, verbose=True)
+    monkeypatch.chdir(tmp_path)
+    arch.command_fns_config_init_map(source, local=True, verbose=True)
 
     contents = config.read_text(encoding="utf-8")
     assert "Новый / магазин: ''" in contents
@@ -482,29 +509,34 @@ def test_cli_fns_config_init_map_new_options(option, attribute):
     assert getattr(namespace, attribute) is True
 
 
-def test_fns_config_init_map_normalise_and_dry_run(tmp_path, caplog):
+def test_fns_config_init_map_normalise_and_dry_run(
+    tmp_path, caplog, monkeypatch
+):
     caplog.set_level(logging.INFO, logger="davo.services.arch")
-    config = tmp_path / "new-project" / ".dtconf"
+    config = tmp_path / ".davo-tools.yaml"
     source = _write_json(
         tmp_path, [_json_entry(1, 11, user="ИП Иванов Иван Иванович")]
     )
 
+    monkeypatch.chdir(config.parent)
     arch.command_fns_config_init_map(
-        source, config=config, normalise=True, dry_run=True
+        source, local=True, normalise=True, dry_run=True
     )
 
-    assert not config.parent.exists()
+    assert not config.exists()
     assert "would add ИП Иванов Иван Иванович -> ИП Иванов" in caplog.text
 
-    arch.command_fns_config_init_map(source, config=config, normalise=True)
+    arch.command_fns_config_init_map(source, local=True, normalise=True)
 
     assert yaml.safe_load(config.read_text(encoding="utf-8"))["fns"][
         "user_names"
     ] == {"ИП Иванов Иван Иванович": "ИП Иванов"}
 
 
-def test_fns_config_init_map_extra_meta_for_new_users_only(tmp_path):
-    config = tmp_path / ".dtconf"
+def test_fns_config_init_map_extra_meta_for_new_users_only(
+    tmp_path, monkeypatch
+):
+    config = tmp_path / ".davo-tools.yaml"
     config.write_text("fns:\n  user_names:\n    Existing: Alias\n")
     first = _json_entry(1, 11, user="New seller")
     first["ticket"]["document"]["receipt"].update(
@@ -527,7 +559,8 @@ def test_fns_config_init_map_extra_meta_for_new_users_only(tmp_path):
     existing["ticket"]["document"]["receipt"]["retailPlace"] = "ignored"
     source = _write_json(tmp_path, [first, second, existing])
 
-    arch.command_fns_config_init_map(source, config=config, extra_meta=True)
+    monkeypatch.chdir(tmp_path)
+    arch.command_fns_config_init_map(source, local=True, extra_meta=True)
 
     contents = config.read_text(encoding="utf-8")
     assert "# retailPlace: shop.example; other.example" in contents
@@ -541,24 +574,27 @@ def test_fns_config_init_map_extra_meta_for_new_users_only(tmp_path):
 
 
 def test_fns_config_init_map_extra_meta_dry_run_logs_without_writing(
-    tmp_path, caplog
+    tmp_path, caplog, monkeypatch
 ):
     caplog.set_level(logging.INFO, logger="davo.services.arch")
-    config = tmp_path / "new-project" / ".dtconf"
+    config = tmp_path / ".davo-tools.yaml"
     entry = _json_entry(1, 11, user="New seller")
     entry["ticket"]["document"]["receipt"]["retailPlace"] = "shop.example"
     source = _write_json(tmp_path, [entry])
 
+    monkeypatch.chdir(config.parent)
     arch.command_fns_config_init_map(
-        source, config=config, dry_run=True, extra_meta=True
+        source, local=True, dry_run=True, extra_meta=True
     )
 
-    assert not config.parent.exists()
+    assert not config.exists()
     assert "would add # retailPlace: shop.example" in caplog.text
 
 
-def test_fns_config_init_map_preserves_existing_user_comments(tmp_path):
-    config = tmp_path / ".dtconf"
+def test_fns_config_init_map_preserves_existing_user_comments(
+    tmp_path, monkeypatch
+):
+    config = tmp_path / ".davo-tools.yaml"
     config.write_text(
         "fns:\n"
         "  user_names:\n"
@@ -574,7 +610,8 @@ def test_fns_config_init_map_preserves_existing_user_comments(tmp_path):
     )
     source = _write_json(tmp_path, [first, second])
 
-    arch.command_fns_config_init_map(source, config=config, extra_meta=True)
+    monkeypatch.chdir(tmp_path)
+    arch.command_fns_config_init_map(source, local=True, extra_meta=True)
 
     contents = config.read_text(encoding="utf-8")
     assert "# retailPlace: first.example" in contents
@@ -582,8 +619,126 @@ def test_fns_config_init_map_preserves_existing_user_comments(tmp_path):
     assert "# retailPlace: second.example" in contents
     assert "# userInn: 222" in contents
 
-    arch.command_fns_config_init_map(source, config=config, extra_meta=True)
+    arch.command_fns_config_init_map(source, local=True, extra_meta=True)
 
     contents = config.read_text(encoding="utf-8")
     assert contents.count("# retailPlace: first.example") == 1
     assert contents.count("# retailPlace: second.example") == 1
+
+
+def test_fns_dedup_finds_html_candidate_in_json_reference(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="davo.services.arch")
+    incoming = tmp_path / "incoming" / "nested"
+    archive = tmp_path / "archive" / "nested"
+    incoming.mkdir(parents=True)
+    archive.mkdir(parents=True)
+    candidate = incoming / "receipt.html"
+    candidate.write_text(
+        "<p>ФН: №123<br>ФД: №1<br>ФПД:#11</p>", encoding="utf-8"
+    )
+    reference = _write_json(archive, [_json_entry(1, 11)])
+
+    matches = arch.command_fns_dedup([incoming.parent], [archive.parent])
+
+    assert [(item.candidate, item.reference) for item in matches] == [
+        (candidate, reference)
+    ]
+    assert candidate.exists()
+    assert "fn=123 fd=1 fp=11" in caplog.text
+
+
+def test_fns_dedup_scans_autogen_html_and_pdf(tmp_path, monkeypatch):
+    incoming = tmp_path / "incoming"
+    archive = tmp_path / "archive"
+    incoming.mkdir()
+    archive.mkdir()
+    html = incoming / "receipt.html"
+    html.write_text(
+        "<!-- davo-fns-autogen fiscal-identity: fn=123 fd=1 fp=11 -->",
+        encoding="utf-8",
+    )
+    pdf = archive / "receipt.pdf"
+    pdf.write_bytes(b"not inspected by this test")
+    monkeypatch.setattr(
+        arch,
+        "_pdf_fiscal_identities",
+        lambda path: {("123", "1", "11")} if path == pdf else set(),
+    )
+
+    matches = arch.command_fns_dedup([incoming], [archive])
+
+    assert len(matches) == 1
+    assert matches[0].reference == pdf
+
+
+def test_fns_dedup_delete_and_dry_run_never_change_references(
+    tmp_path, caplog
+):
+    caplog.set_level(logging.INFO, logger="davo.services.arch")
+    incoming = tmp_path / "incoming"
+    archive = tmp_path / "archive"
+    incoming.mkdir()
+    archive.mkdir()
+    duplicate = _write_json(incoming, [_json_entry(1, 11)])
+    reference = _write_json(archive, [_json_entry(1, 11)])
+
+    arch.command_fns_dedup([incoming], [archive], delete=True, dry_run=True)
+
+    assert duplicate.exists()
+    assert reference.exists()
+    assert "would delete" in caplog.text
+    assert "duplicate" not in caplog.text
+
+    arch.command_fns_dedup([incoming], [archive], delete=True)
+
+    assert not duplicate.exists()
+    assert reference.exists()
+
+
+def test_fns_dedup_keeps_candidate_json_with_unique_receipts(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="davo.services.arch")
+    incoming = tmp_path / "incoming"
+    archive = tmp_path / "archive"
+    incoming.mkdir()
+    archive.mkdir()
+    candidate = _write_json(incoming, [_json_entry(1, 11), _json_entry(2, 22)])
+    _write_json(archive, [_json_entry(1, 11)])
+
+    arch.command_fns_dedup([incoming], [archive], delete=True)
+
+    assert candidate.exists()
+    assert "also contains unique receipts" in caplog.text
+
+
+def test_fns_dedup_reports_missing_identity_only_when_verbose(
+    tmp_path, caplog
+):
+    caplog.set_level(logging.WARNING, logger="davo.services.arch")
+    incoming = tmp_path / "incoming"
+    archive = tmp_path / "archive"
+    incoming.mkdir()
+    archive.mkdir()
+    (incoming / "not-a-receipt.html").write_text("<p>other file</p>")
+
+    arch.command_fns_dedup([incoming], [archive])
+
+    assert "no fiscal identity found" not in caplog.text
+    arch.command_fns_dedup([incoming], [archive], verbose=True)
+    assert "no fiscal identity found" in caplog.text
+
+
+def test_cli_fns_dedup_options():
+    from davo import cli
+
+    namespace = cli.init_parser().parse_args(
+        [
+            "arch", "fns-dedup", "-d", "one", "two", "-r", "three",
+            "-D", "-0", "-v",
+        ]
+    )
+
+    assert namespace.directories == ["one", "two"]
+    assert namespace.reference == ["three"]
+    assert namespace.delete is True
+    assert namespace.dry_run is True
+    assert namespace.verbose is True

@@ -38,6 +38,12 @@ _PDF_AUTOGEN_ID_RE = re.compile(
     r"fn=(?P<fn>[^\s]+)\s+fd=(?P<fd>[^\s]+)\s+fp=(?P<fp>[^\s;]+)",
     re.IGNORECASE,
 )
+_FNS_HTML_ID_RE = re.compile(
+    r"(?:^|\s)ФН(?:Д)?\s*(?:[:№#N]\s*)+(?P<fn>\d+)"
+    r".*?(?:^|\s)ФД\s*(?:[:№#N]\s*)+(?P<fd>\d+)"
+    r".*?(?:^|\s)ФП(?:Д)?\s*(?:[:№#N]\s*)+(?P<fp>\d+)",
+    re.IGNORECASE | re.DOTALL,
+)
 _FNS_EXTRACT_TYPES = {"html", "pdf"}
 _UNSAFE_FILENAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _FNS_META_FIELDS = (
@@ -52,6 +58,23 @@ _FNS_META_FIELDS = (
 class FnsRename:
     source: Path
     target: Path
+
+
+@dataclass(frozen=True)
+class FnsDedupFile:
+    """Fiscal identities found in one input file."""
+
+    path: Path
+    identities: frozenset[tuple[str, str, str]]
+
+
+@dataclass(frozen=True)
+class FnsDedupMatch:
+    """A receipt identity found in a candidate file and a reference file."""
+
+    candidate: Path
+    identity: tuple[str, str, str]
+    reference: Path
 
 
 def _normalise_value(value):
@@ -616,6 +639,190 @@ def command_fns_extract(
             "fns-extract: {} invalid receipt(s)".format(len(failed))
         )
     return [target for _item, target in plan]
+
+
+def _receipt_identity(receipt):
+    """Return an FNS identity if *receipt* has all three fiscal fields."""
+    if not isinstance(receipt, dict):
+        return None
+    values = []
+    for name in (
+        "fiscalDriveNumber",
+        "fiscalDocumentNumber",
+        "fiscalSign",
+    ):
+        value = receipt.get(name)
+        if value is None or not str(value).strip():
+            return None
+        values.append(str(value).strip())
+    return tuple(values)
+
+
+def _json_fiscal_identities(contents):
+    """Find receipt objects in an FNS JSON export, regardless of nesting."""
+    identities = set()
+
+    def visit(value):
+        if isinstance(value, dict):
+            identity = _receipt_identity(value)
+            if identity:
+                identities.add(identity)
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(contents)
+    return identities
+
+
+def _html_fiscal_identities(contents):
+    match = _AUTOGEN_ID_RE.search(contents)
+    if match:
+        return {(match["fn"], match["fd"], match["fp"])}
+    match = _FNS_HTML_ID_RE.search(_normalise_value(contents))
+    if match:
+        return {(match["fn"], match["fd"], match["fp"])}
+    return set()
+
+
+def _pdf_fiscal_identities(path):
+    from davo.services.photo import pdf  # pylint: disable=C0415
+
+    fitz = pdf._import_fitz("FNS receipt inspection")  # pylint: disable=W0212
+    with pdf._open_pdf(  # pylint: disable=W0212
+        fitz, str(path), "FNS receipt inspection"
+    ) as document:
+        match = _PDF_AUTOGEN_ID_RE.search(
+            (document.metadata or {}).get("keywords") or ""  # pylint: disable=E1101
+        )
+    if not match:
+        return set()
+    return {(match["fn"], match["fd"], match["fp"])}
+
+
+def _fiscal_identities_from_file(path, verbose=False):
+    suffix = path.suffix.lower()
+    try:
+        if suffix == ".json":
+            identities = _json_fiscal_identities(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+        elif suffix in {".htm", ".html"}:
+            try:
+                contents = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                contents = path.read_text(encoding="utf-8-sig")
+            identities = _html_fiscal_identities(contents)
+        elif suffix == ".pdf":
+            identities = _pdf_fiscal_identities(path)
+        else:
+            return None
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValueError,
+    ) as exc:
+        logger.warning("fns-dedup: skip %s: %s", path, exc)
+        return None
+    except Exception as exc:  # pylint: disable=W0718
+        # PDF parsing may fail for a corrupt PDF or when its optional backend
+        # is unavailable.  Neither condition should stop archive inspection.
+        logger.warning("fns-dedup: skip %s: %s", path, exc)
+        return None
+    if not identities:
+        if verbose:
+            logger.warning(
+                "fns-dedup: skip %s: no fiscal identity found", path
+            )
+        return None
+    return frozenset(identities)
+
+
+def _scan_fns_dedup_directories(directories, verbose=False):
+    files = []
+    roots = []
+    for directory in directories:
+        root = Path(directory)
+        if not root.is_dir():
+            logger.warning("fns-dedup: directory not found: %s", root)
+            continue
+        roots.append(root.resolve())
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            identities = _fiscal_identities_from_file(path, verbose=verbose)
+            if identities:
+                files.append(FnsDedupFile(path, identities))
+    return files, roots
+
+
+def _identity_text(identity):
+    return "fn={} fd={} fp={}".format(*identity)
+
+
+def command_fns_dedup(
+    directories, reference, delete=False, dry_run=False, verbose=False
+):
+    """Report receipts from *directories* already in *reference* archives.
+
+    Reference directories are strictly read-only, even if a directory was
+    accidentally supplied in both argument groups.
+    """
+    reference_files, reference_roots = _scan_fns_dedup_directories(
+        reference, verbose=verbose
+    )
+    candidate_files, _candidate_roots = _scan_fns_dedup_directories(
+        directories, verbose=verbose
+    )
+    references = {}
+    for file in reference_files:
+        for identity in file.identities:
+            references.setdefault(identity, file.path)
+
+    matches = []
+    for file in candidate_files:
+        for identity in sorted(file.identities):
+            source = references.get(identity)
+            if source:
+                matches.append(FnsDedupMatch(file.path, identity, source))
+                if not delete:
+                    logger.info(
+                        "fns-dedup: duplicate %s: %s; reference %s",
+                        file.path,
+                        _identity_text(identity),
+                        source,
+                    )
+
+    if not delete:
+        return matches
+
+    for file in candidate_files:
+        matched = file.identities.intersection(references)
+        if not matched:
+            continue
+        if matched != file.identities:
+            logger.warning(
+                "fns-dedup: keep %s: it also contains unique receipts",
+                file.path,
+            )
+            continue
+        resolved = file.path.resolve()
+        if any(resolved.is_relative_to(root) for root in reference_roots):
+            logger.warning("fns-dedup: keep reference file: %s", file.path)
+            continue
+        action = "would delete" if dry_run else "delete"
+        logger.info("fns-dedup: %s %s", action, file.path)
+        if not dry_run:
+            try:
+                file.path.unlink()
+            except OSError as exc:
+                logger.warning(
+                    "fns-dedup: cannot delete %s: %s", file.path, exc
+                )
+    return matches
 
 
 def _add_fns_metadata(metadata, user, receipt):
