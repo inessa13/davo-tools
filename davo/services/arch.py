@@ -342,7 +342,14 @@ def command_fns_rename(root, rename=False, dry_run=False):
 
 def _normalised_archive_name(path, underscores=False):
     """Return a normalized filename for *path*, or ``None`` if unchanged."""
-    match = _ARCHIVE_NAME_RE.match(path.stem)
+    if path.name.endswith(".drj.json"):
+        stem = path.name.removesuffix(".drj.json")
+        suffix = ".drj.json"
+    else:
+        stem = path.stem
+        suffix = path.suffix
+
+    match = _ARCHIVE_NAME_RE.match(stem)
     if match is None:
         return None
 
@@ -366,7 +373,7 @@ def _normalised_archive_name(path, underscores=False):
         ]
     parts.extend(detail_parts)
     separator = "_" if underscores else " "
-    target_name = separator.join(parts) + path.suffix
+    target_name = separator.join(parts) + suffix
     return target_name if target_name != path.name else None
 
 

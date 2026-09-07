@@ -4,6 +4,25 @@ fns:
   user_names:
     "ООО «Интернет Решения»": Озон
 
+pa:
+  sber2csv:
+    rules:
+      # Built-in classifications from earlier versions.
+      - pattern: '(?:_SBP\b|\bСБП\b)'
+        action: place
+        value: СБП
+      - pattern: '\bSBOL\b'
+        action: place
+        value: SBOL
+
+      # Place extraction formerly configured through place_patterns.
+      - pattern: '\s+(?P<place>MOSCOW RUS|MOSKVA RUS)$'
+        action: place
+        value: '\g<place>'
+      - pattern: '^(?P<place>MOSCOW)\s+'
+        action: place
+        value: '\g<place>'
+
 s3:
   BUCKET: my-bucket
   IGNORE:

@@ -47,6 +47,15 @@ def test_parser_sets_recursive_for_image_diff(option):
     assert namespace.recursive is True
 
 
+@pytest.mark.parametrize("option", ["-O", "--original-comment"])
+def test_parser_accepts_sber_original_comment_option(option):
+    namespace = cli.init_parser().parse_args(
+        ["pa", "sber2csv", option, "statement.pdf"]
+    )
+
+    assert namespace.original_comment is True
+
+
 @pytest.mark.parametrize("option", ["-t", "--table"])
 def test_parser_sets_table_for_image_diff(option):
     namespace = cli.init_parser().parse_args(

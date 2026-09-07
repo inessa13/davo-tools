@@ -205,6 +205,36 @@ def init_parser():
         func=lambda namespace: services.arch.command_fns_config_show_map()
     )
 
+    cmd = subparsers.add_parser("pa", help="personal accounting tools")
+    pa_subparsers = cmd.add_subparsers(title="list of commands")
+    sber2csv = pa_subparsers.add_parser(
+        "sber2csv", help="convert Sberbank PDF statements to expense CSV"
+    )
+    sber2csv.add_argument("paths", nargs="+", metavar="PATH")
+    sber2csv.add_argument("-o", "--out", dest="out_path")
+    sber2csv.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="validate without writing CSV",
+    )
+    sber2csv.add_argument(
+        "-v", "--verbose", action="store_true", help="show skipped PDF files"
+    )
+    sber2csv.add_argument(
+        "-W",
+        "--rewrite",
+        action="store_true",
+        help="replace automatic CSV targets",
+    )
+    sber2csv.add_argument(
+        "-O",
+        "--original-comment",
+        action="store_true",
+        help="keep the complete original bank description in Комент",
+    )
+    sber2csv.set_defaults(func=_run_sber2csv)
+
     cmd = subparsers.add_parser("file", help="file tools")
     cmd, _subparsers = services.photo.cli.init_parser(
         cmd,
@@ -274,6 +304,22 @@ def _run_fns_extract(namespace):
             dry_run=namespace.dry_run,
             output_type=namespace.type,
             no_autogen=namespace.no_autogen,
+        )
+    except errors.UserError as exc:
+        logger.error(exc)
+        raise SystemExit(1) from exc
+
+
+def _run_sber2csv(namespace):
+    """Make Sber statement parsing failures observable to the shell."""
+    try:
+        return services.pa.command_sber2csv(
+            namespace.paths,
+            out_path=namespace.out_path,
+            dry_run=namespace.dry_run,
+            verbose=namespace.verbose,
+            rewrite=namespace.rewrite,
+            original_comment=namespace.original_comment,
         )
     except errors.UserError as exc:
         logger.error(exc)

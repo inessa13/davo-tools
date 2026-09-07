@@ -401,6 +401,16 @@ def test_check_norm_skips_normalized_name_in_requested_format(tmp_path):
     ("old_name", "new_name", "underscores"),
     [
         (
+            "20260110 чек.drj.json",
+            "20260110 REC.drj.json",
+            False,
+        ),
+        (
+            "20260110 чек.drj.json",
+            "20260110_REC.drj.json",
+            True,
+        ),
+        (
             "20260727 claim insurance +invoice Golub.drj.json",
             "20260727 CLM +REC Golub.drj.json",
             False,
