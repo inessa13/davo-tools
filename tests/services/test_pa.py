@@ -22,7 +22,7 @@ _TAIL_RULE = _rules(
 def test_sber2csv_removes_footer_and_normalises_operation_spaces():
     assert pa._apply_rules(  # pylint: disable=protected-access
         "  SHOP   NAME. Операция по карте ****1234  ", _TAIL_RULE
-    ) == ("", "SHOP NAME")
+    ) == ("", "", "SHOP NAME")
 
 
 @pytest.mark.parametrize(
@@ -48,6 +48,7 @@ def test_sber2csv_moves_sbp_and_sbol_markers_to_place(
 
     assert pa._apply_rules(description, rules) == (  # pylint: disable=protected-access
         place,
+        "",
         operation,
     )
 
@@ -145,6 +146,30 @@ def test_sber2csv_place_rule_can_use_card_description_first_line():
     )
 
 
+def test_sber2csv_category_rule_writes_category_column():
+    rows = pa._parse_statement(  # pylint: disable=protected-access
+        _STATEMENTS / "sber golub dt visa 20260724.pdf",
+        _rules(
+            {
+                "pattern": r"\.\s*Операция по (?:карте|счету)\b.*$",
+                "action": "remove",
+            },
+            {
+                "pattern": r"^Перевод с карты\s*",
+                "action": "category",
+                "value": "Переводы",
+            },
+        ),
+    )
+
+    assert rows[0][3:6] == (
+        "Перевод для Г. Галина Алексеевна",
+        "Переводы",
+        "Перевод с карты Перевод для Г. Галина Алексеевна. "
+        "Операция по счету ****8546",
+    )
+
+
 def test_sber2csv_preserves_original_comment_after_rules():
     rows = pa._parse_statement(  # pylint: disable=protected-access
         _STATEMENTS / "sber golub dt visa 20260724.pdf",
@@ -194,6 +219,7 @@ def test_sber2csv_extracts_place_from_rules(description, place, operation):
 
     assert pa._apply_rules(description, rules) == (  # pylint: disable=protected-access
         place,
+        "",
         operation,
     )
 
@@ -208,8 +234,62 @@ def test_sber2csv_uses_first_place_rule_and_all_remove_rules():
 
     assert pa._apply_rules("first second shop", rules) == (  # pylint: disable=protected-access
         "first",
+        "",
         "second",
     )
+
+
+def test_sber2csv_extracts_category_from_rule():
+    rules = _rules(
+        {
+            "pattern": r"\s+\[(?P<category>Subscriptions)\]$",
+            "action": "category",
+            "value": r"\g<category>",
+        },
+    )
+
+    assert pa._apply_rules(  # pylint: disable=protected-access
+        "STREAMING SERVICE [Subscriptions]", rules
+    ) == ("", "Subscriptions", "STREAMING SERVICE")
+
+
+def test_sber2csv_extracts_place_and_category_independently():
+    rules = _rules(
+        {
+            "pattern": r"\s+(?P<place>MOSCOW RUS)$",
+            "action": "place",
+            "value": r"\g<place>",
+        },
+        {
+            "pattern": r"^\[(?P<category>Food)\]\s+",
+            "action": "category",
+            "value": r"\g<category>",
+        },
+    )
+
+    assert pa._apply_rules(  # pylint: disable=protected-access
+        "[Food] SHOP MOSCOW RUS", rules
+    ) == ("MOSCOW RUS", "Food", "SHOP")
+
+
+def test_sber2csv_uses_first_category_rule_and_all_remove_rules():
+    rules = _rules(
+        {
+            "pattern": r"^\[(?P<category>Food)\]\s+",
+            "action": "category",
+            "value": r"\g<category>",
+        },
+        {
+            "pattern": r"\[(?P<category>Ignored)\]\s+",
+            "action": "category",
+            "value": r"\g<category>",
+        },
+        {"pattern": r"\s+SHOP$", "action": "remove"},
+    )
+
+    assert pa._apply_rules(  # pylint: disable=protected-access
+        "[Food] [Ignored] SHOP", rules
+    ) == ("", "Food", "[Ignored]")
 
 
 @pytest.mark.parametrize(
@@ -221,6 +301,14 @@ def test_sber2csv_uses_first_place_rule_and_all_remove_rules():
         [{"pattern": "shop", "action": "unknown"}],
         [{"pattern": "shop", "action": "place"}],
         [{"pattern": "shop", "action": "place", "value": r"\g<missing>"}],
+        [{"pattern": "shop", "action": "category"}],
+        [
+            {
+                "pattern": "shop",
+                "action": "category",
+                "value": r"\g<missing>",
+            }
+        ],
     ],
 )
 def test_sber2csv_rejects_invalid_rules_before_writing(

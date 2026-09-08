@@ -23,6 +23,11 @@ pa:
         action: place
         value: '\g<place>'
 
+      # Category extraction can use a named regex group.
+      # - pattern: '\s+\[(?P<category>Subscriptions)\]$'
+      #   action: category
+      #   value: '\g<category>'
+
 s3:
   BUCKET: my-bucket
   IGNORE:

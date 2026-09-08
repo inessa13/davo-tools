@@ -227,9 +227,9 @@ def _load_sber2csv_config(start):
             raise errors.UserError("Invalid pa.sber2csv rule")
         if not all(
             isinstance(rule.get(key), str) for key in ("pattern", "action")
-        ) or rule["action"] not in {"remove", "place"}:
+        ) or rule["action"] not in {"remove", "place", "category"}:
             raise errors.UserError("Invalid pa.sber2csv rule")
-        if rule["action"] == "place" and not isinstance(
+        if rule["action"] in {"place", "category"} and not isinstance(
             rule.get("value"), str
         ):
             raise errors.UserError("Invalid pa.sber2csv rule")
@@ -240,7 +240,7 @@ def _load_sber2csv_config(start):
                 "Invalid pa.sber2csv rule pattern: {}".format(exc)
             ) from exc
         value = rule.get("value", "")
-        if rule["action"] == "place":
+        if rule["action"] in {"place", "category"}:
             try:
                 # re.sub validates all numeric and named group references.
                 pattern.sub(value, "")
@@ -253,17 +253,25 @@ def _load_sber2csv_config(start):
 
 
 def _apply_rules(operation, rules):
-    """Normalise an operation and extract its place from configured rules."""
+    """Normalise an operation and extract its place and category."""
     place = ""
+    category = ""
+    category_found = False
     for pattern, action, value in rules:
         if action == "remove":
             operation = pattern.sub("", operation)
-        elif not place:
+        elif action == "place" and not place:
             match = pattern.search(operation)
             if match:
                 place = match.expand(value)
                 operation = pattern.sub("", operation, count=1)
-    return place, " ".join(operation.split())
+        elif action == "category" and not category_found:
+            match = pattern.search(operation)
+            if match:
+                category = match.expand(value)
+                category_found = True
+                operation = pattern.sub("", operation, count=1)
+    return place, category, " ".join(operation.split())
 
 
 def _parse_statement(path, rules, original_comment=True):
@@ -324,14 +332,14 @@ def _parse_statement(path, rules, original_comment=True):
         )
     result = []
     for date, time, code, raw, amount in parsed:
-        place, operation = _apply_rules(raw, rules)
+        place, category, operation = _apply_rules(raw, rules)
         result.append(
             (
                 "{} {}:00".format(date, time),
                 code,
                 place,
                 operation,
-                "",
+                category,
                 raw if original_comment else "",
                 _format_amount(amount),
             )
