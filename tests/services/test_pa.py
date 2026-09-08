@@ -1,3 +1,4 @@
+import csv
 from pathlib import Path
 
 import pytest
@@ -19,10 +20,203 @@ _TAIL_RULE = _rules(
 )
 
 
+class _OzonPage:  # pylint: disable=too-few-public-methods
+    def __init__(self, text, words):
+        self.text = text
+        self.words = words
+
+    def get_text(self, kind=None, sort=False):
+        del sort
+        return self.words if kind == "words" else self.text
+
+
+def _ozon_word(x, y, value):
+    return (x, y, 0, 0, value, 0, 0, 0)
+
+
+def test_ozon2csv_collects_multiline_purposes_and_first_amount_column():
+    page = _OzonPage(
+        "",
+        [
+            _ozon_word(55, 100, "01.02.2026"),
+            _ozon_word(102, 100, "10:20:30"),
+            _ozon_word(160, 100, "123"),
+            _ozon_word(225, 100, "Payment"),
+            _ozon_word(225, 115, "purpose"),
+            _ozon_word(380, 100, "- RUR 10.50"),
+            _ozon_word(484, 100, "- RUR 10.50"),
+            _ozon_word(55, 140, "02.02.2026"),
+            _ozon_word(102, 140, "11:20:30"),
+            _ozon_word(160, 140, "456"),
+            _ozon_word(225, 140, "Refund"),
+            _ozon_word(380, 140, "+ RUR 1.25"),
+        ],
+    )
+
+    assert pa._ozon_page_rows(page) == [  # pylint: disable=protected-access
+        (
+            "01.02.2026 10:20:30",
+            "123",
+            "Payment purpose",
+            pa.Decimal("-10.50"),
+        ),
+        ("02.02.2026 11:20:30", "456", "Refund", pa.Decimal("1.25")),
+    ]
+
+
+def test_ozon2csv_extracts_statement_totals():
+    page = _OzonPage(
+        "Total deposits for the period: RUR 1 000.25\n"
+        "Total withdrawals for the period: RUR 999.00",
+        [],
+    )
+
+    assert pa._ozon_totals(page) == (  # pylint: disable=protected-access
+        pa.Decimal("1000.25"), pa.Decimal("999.00")
+    )
+
+
+@pytest.mark.parametrize("original_comment", [False, True])
+def test_ozon2csv_writes_original_only_with_original_comment_flag(
+    mocker, tmp_path, original_comment
+):
+    source = tmp_path / "statement.pdf"
+    target = tmp_path / "result.csv"
+    source.touch()
+    raw = "Original bank description"
+    row = (
+        "01.02.2026 10:20:30",
+        "O123_456",
+        "",
+        "Payment",
+        "",
+        "",
+        "10.00",
+    ) + ((raw,) if original_comment else ())
+    mocker.patch.object(pa, "_load_ozon2csv_config", return_value=[])
+    mocker.patch.object(pa, "_parse_ozon_statement", return_value=[row])
+
+    pa.command_ozon2csv(
+        [source], out_path=target, original_comment=original_comment
+    )
+
+    with target.open(encoding="utf-8-sig", newline="") as file:
+        written = list(csv.reader(file))
+    expected_header = pa._CSV_HEADER + (  # pylint: disable=protected-access
+        ("Оригинал",) if original_comment else ()
+    )
+    assert written == [list(expected_header), list(row)]
+    assert written[1][5] == ""
+
+
 def test_sber2csv_removes_footer_and_normalises_operation_spaces():
     assert pa._apply_rules(  # pylint: disable=protected-access
         "  SHOP   NAME. Операция по карте ****1234  ", _TAIL_RULE
     ) == ("", "", "SHOP NAME")
+
+
+def test_rules_replace_all_matches_and_expand_named_groups():
+    rules = _rules(
+        {
+            "pattern": r"(?P<word>first|second)",
+            "action": "replace",
+            "value": r"[\g<word>]",
+        },
+    )
+
+    assert pa._apply_rules(  # pylint: disable=protected-access
+        "first second", rules
+    ) == ("", "", "[first] [second]")
+
+
+def test_ozon2csv_rules_normalise_marketplace_purchase_and_sbp_transfer():
+    rules = _rules(
+        {
+            "pattern": r"Payment for goods/services on Platform Ozon",
+            "action": "replace",
+            "value": "ozon.ru",
+        },
+        {
+            "pattern": (
+                r"^Refund of payment for goods/services purchased on Platform "
+                r"Ozon, order (?P<order>.+)\.$"
+            ),
+            "action": "replace",
+            "value": r"Refund ozon.ru, order \g<order>",
+        },
+        {
+            "pattern": (
+                r"^Loan repayment (?:according to contract|under agreement) "
+                r"No\. .*$"
+            ),
+            "action": "replace",
+            "value": "repayment",
+        },
+        {
+            "pattern": (
+                r"^Credit repayment (?:under|according to) "
+                r"(?:agreement|contract)(?: No\.?\s*)?.*$"
+            ),
+            "action": "replace",
+            "value": "Credit repayment",
+        },
+        {"pattern": "№", "action": "replace", "value": ""},
+        {
+            "pattern": (
+                r"^Transfer .*?through SBP\. Sender: "
+                r"(?P<sender>.+?)\. VAT not applicable\.$"
+            ),
+            "action": "replace",
+            "value": r"Transfer from \g<sender>.",
+        },
+        {"pattern": r"VAT not applicable\.", "action": "replace", "value": ""},
+        {
+            "pattern": r"(?=^Transfer from\b)",
+            "action": "place",
+            "value": "СБП",
+        },
+    )
+
+    assert pa._apply_rules(  # pylint: disable=protected-access
+        "Payment for goods/services on Platform Ozon, order №70987310-0055. "
+        "VAT not applicable.",
+        rules,
+    ) == ("", "", "ozon.ru, order 70987310-0055.")
+    assert pa._apply_rules(  # pylint: disable=protected-access
+        "Transfer to a bank account through SBP. Sender: David ZHoraevich D. "
+        "VAT not applicable.",
+        rules,
+    ) == ("СБП", "", "Transfer from David ZHoraevich D.")
+    assert pa._apply_rules(  # pylint: disable=protected-access
+        "Refund of payment for goods/services purchased on Platform Ozon, "
+        "order 70987310- 0061.",
+        rules,
+    ) == ("", "", "Refund ozon.ru, order 70987310- 0061")
+    assert pa._apply_rules(  # pylint: disable=protected-access
+        "Loan repayment according to contract No. 2026-08-12- "
+        "KK-036637684858053463 50, Dzhanyan David ZHoraevich",
+        rules,
+    ) == ("", "", "repayment")
+    assert pa._apply_rules(  # pylint: disable=protected-access
+        "Loan repayment under agreement No. 2026-08- 12- "
+        "KK-036637684858053463 50, Dzhanyan David ZHoraevich",
+        rules,
+    ) == ("", "", "repayment")
+    for description in (
+        "Credit repayment under agreement 2026-08-12- "
+        "KK-036637684858053463 50, Dzhanyan David ZHoraevich",
+        "Credit repayment under agreement No.2026-08- 12- "
+        "KK-036637684858053463 50, Dzhanyan David ZHoraevich",
+        "Credit repayment under agreement No. 2026-08- 12- "
+        "KK-036637684858053463 50, Dzhanyan David ZHoraevich",
+        "Credit repayment under contract No. 2026-08-12- "
+        "KK-036637684858053463 50, Dzhanyan David ZHoraevich",
+        "Credit repayment according to contract No. 2026-08-12- "
+        "KK-036637684858053463 50, Dzhanyan David ZHoraevich",
+    ):
+        assert pa._apply_rules(  # pylint: disable=protected-access
+            description, rules
+        ) == ("", "", "Credit repayment")
 
 
 @pytest.mark.parametrize(
@@ -299,6 +493,8 @@ def test_sber2csv_uses_first_category_rule_and_all_remove_rules():
         [{}],
         [{"pattern": "[", "action": "remove"}],
         [{"pattern": "shop", "action": "unknown"}],
+        [{"pattern": "shop", "action": "replace"}],
+        [{"pattern": "shop", "action": "replace", "value": r"\g<missing>"}],
         [{"pattern": "shop", "action": "place"}],
         [{"pattern": "shop", "action": "place", "value": r"\g<missing>"}],
         [{"pattern": "shop", "action": "category"}],

@@ -25,6 +25,14 @@ _CSV_HEADER = (
     "Комент",
     "Сумма",
 )
+_OZON_CSV_HEADER = _CSV_HEADER + ("Оригинал",)
+_OZON_DATE_TIME_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}:\d{2}$")
+_OZON_ACCOUNT_RE = re.compile(
+    r"Account number:\s*№\s*(.+?)(?:,|\s+dated\s|\n)"
+)
+_OZON_TOTAL_RE = re.compile(
+    r"Total (deposits|withdrawals) for the period:\s*RUR\s*([\d ]+\.\d{2})"
+)
 
 
 def _join_words(words):
@@ -207,16 +215,20 @@ def _account_rows(page):
     return rows
 
 
-def _load_sber2csv_config(start):
-    """Load and validate Sber conversion rules before processing PDFs."""
+def _load_rules_config(start, name):
+    """Load and validate bank conversion rules before processing PDFs."""
     contents, _user_path, _project_path = conf.load_davo_config(start)
     try:
-        settings = contents.get("pa", {}).get("sber2csv", {})
+        settings = contents.get("pa", {}).get(name, {})
         rules = settings.get("rules", [])
     except AttributeError as exc:
-        raise errors.UserError("Invalid pa.sber2csv configuration") from exc
+        raise errors.UserError(
+            "Invalid pa.{} configuration".format(name)
+        ) from exc
     if not isinstance(rules, list):
-        raise errors.UserError("Invalid pa.sber2csv.rules: expected a list")
+        raise errors.UserError(
+            "Invalid pa.{}.rules: expected a list".format(name)
+        )
     result = []
     for rule in rules:
         if not isinstance(rule, dict) or set(rule) - {
@@ -224,32 +236,50 @@ def _load_sber2csv_config(start):
             "action",
             "value",
         }:
-            raise errors.UserError("Invalid pa.sber2csv rule")
+            raise errors.UserError("Invalid pa.{} rule".format(name))
         if not all(
             isinstance(rule.get(key), str) for key in ("pattern", "action")
-        ) or rule["action"] not in {"remove", "place", "category"}:
-            raise errors.UserError("Invalid pa.sber2csv rule")
-        if rule["action"] in {"place", "category"} and not isinstance(
-            rule.get("value"), str
-        ):
-            raise errors.UserError("Invalid pa.sber2csv rule")
+        ) or rule["action"] not in {
+            "remove",
+            "replace",
+            "place",
+            "category",
+        }:
+            raise errors.UserError("Invalid pa.{} rule".format(name))
+        requires_value = rule["action"] in {
+            "replace",
+            "place",
+            "category",
+        }
+        if requires_value and not isinstance(rule.get("value"), str):
+            raise errors.UserError("Invalid pa.{} rule".format(name))
         try:
             pattern = re.compile(rule["pattern"])
         except re.error as exc:
             raise errors.UserError(
-                "Invalid pa.sber2csv rule pattern: {}".format(exc)
+                "Invalid pa.{} rule pattern: {}".format(name, exc)
             ) from exc
         value = rule.get("value", "")
-        if rule["action"] in {"place", "category"}:
+        if rule["action"] in {"replace", "place", "category"}:
             try:
                 # re.sub validates all numeric and named group references.
                 pattern.sub(value, "")
             except (re.error, IndexError) as exc:
                 raise errors.UserError(
-                    "Invalid pa.sber2csv rule value: {}".format(exc)
+                    "Invalid pa.{} rule value: {}".format(name, exc)
                 ) from exc
         result.append((pattern, rule["action"], value))
     return result
+
+
+def _load_sber2csv_config(start):
+    """Load and validate Sber conversion rules before processing PDFs."""
+    return _load_rules_config(start, "sber2csv")
+
+
+def _load_ozon2csv_config(start):
+    """Load and validate Ozon conversion rules before processing PDFs."""
+    return _load_rules_config(start, "ozon2csv")
 
 
 def _apply_rules(operation, rules):
@@ -260,6 +290,8 @@ def _apply_rules(operation, rules):
     for pattern, action, value in rules:
         if action == "remove":
             operation = pattern.sub("", operation)
+        elif action == "replace":
+            operation = pattern.sub(value, operation)
         elif action == "place" and not place:
             match = pattern.search(operation)
             if match:
@@ -351,6 +383,157 @@ def _format_amount(value):
     return "{:,.2f}".format(value).replace(",", " ")
 
 
+def _ozon_amount(value):
+    """Parse an Ozon amount such as ``- RUR 2 728.52``."""
+    match = re.search(r"([+-])\s*RUR\s*([\d ]+\.\d{2})", value)
+    if match is None:
+        raise errors.UserError(
+            "Missing Ozon operation amount: {}".format(value)
+        )
+    return Decimal(match.group(2).replace(" ", "")) * (
+        1 if match.group(1) == "+" else -1
+    )
+
+
+def _ozon_account(page):
+    match = _OZON_ACCOUNT_RE.search(page.get_text())
+    if match is None:
+        raise errors.UserError("Missing account number in Ozon statement")
+    return match.group(1).strip()
+
+
+def _ozon_page_rows(page):
+    """Extract Ozon table rows, using its fixed four-column layout."""
+    words = page.get_text("words", sort=True)
+    starts = [
+        word[1]
+        for word in words
+        if word[0] < 145 and _DATE_RE.match(word[4])
+    ]
+    rows = []
+    total_positions = [
+        word[1] for word in words if word[4] == "Total" and word[0] < 150
+    ]
+    table_end = min(total_positions, default=float("inf"))
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else table_end
+        row_words = [
+            word for word in words if start - 1 <= word[1] < end
+        ]
+        date_words = [word[4] for word in row_words if word[0] < 145]
+        if len(date_words) < 2 or not _DATE_RE.match(date_words[0]):
+            raise errors.UserError("Incomplete Ozon operation in PDF")
+        date_time = "{} {}".format(date_words[0], date_words[1])
+        if not _OZON_DATE_TIME_RE.match(date_time):
+            raise errors.UserError(
+                "Invalid Ozon operation date: {}".format(date_time)
+            )
+        document = _join_words(
+            [word for word in row_words if 145 <= word[0] < 220]
+        ).replace("\n", " ")
+        document = "".join(document.split())
+        purpose = _join_words(
+            [word for word in row_words if 220 <= word[0] < 340]
+        ).replace("\n", " ")
+        amount = _join_words(
+            [word for word in row_words if 340 <= word[0] < 452]
+        ).replace("\n", " ")
+        if not document or not purpose or not amount:
+            raise errors.UserError("Incomplete Ozon operation in PDF")
+        rows.append((date_time, document, purpose, _ozon_amount(amount)))
+    return rows
+
+
+def _ozon_totals(page):
+    values = {
+        kind: Decimal(amount.replace(" ", ""))
+        for kind, amount in _OZON_TOTAL_RE.findall(page.get_text())
+    }
+    if not values:
+        return None
+    if set(values) != {"deposits", "withdrawals"}:
+        raise errors.UserError("Incomplete totals in Ozon statement")
+    return values["deposits"], values["withdrawals"]
+
+
+def _parse_ozon_statement(path, rules, original_comment=False):
+    """Parse all Ozon Operations Statements contained in one PDF."""
+    try:
+        import fitz  # pylint: disable=import-outside-toplevel
+    except ImportError as exc:
+        raise errors.UserError(
+            "Missing PyMuPDF; install davo-tools[full]"
+        ) from exc
+    try:
+        document = fitz.open(path)
+    except Exception as exc:  # PyMuPDF exposes document-specific errors.
+        raise errors.UserError(
+            "Cannot read PDF {}: {}".format(path, exc)
+        ) from exc
+    result = []
+    active_account = None
+    statement_rows = []
+    found = False
+    with document:
+        for page in document:
+            text = page.get_text()
+            if "Operations Statement" in text:
+                if active_account is not None:
+                    raise errors.UserError("Missing totals in Ozon statement")
+                active_account = _ozon_account(page)
+                found = True
+            if active_account is None:
+                continue
+            statement_rows.extend(_ozon_page_rows(page))
+            totals = _ozon_totals(page)
+            if totals is None:
+                continue
+            if not statement_rows:
+                raise errors.UserError("No operations found in Ozon statement")
+            deposits = sum(
+                (amount for *_rest, amount in statement_rows if amount > 0),
+                Decimal(),
+            )
+            withdrawals = sum(
+                (-amount for *_rest, amount in statement_rows if amount < 0),
+                Decimal(),
+            )
+            if (deposits, withdrawals) != totals:
+                raise errors.UserError(
+                    "Totals do not match {} (deposits {} != {}, withdrawals "
+                    "{} != {})".format(
+                        path, deposits, totals[0], withdrawals, totals[1]
+                    )
+                )
+            for date_time, number, raw, amount in statement_rows:
+                place, category, operation = _apply_rules(raw, rules)
+                result.append(
+                    (
+                        date_time,
+                        "O{}_{}".format(active_account, number),
+                        place,
+                        operation,
+                        category,
+                        "",
+                        _format_amount(amount),
+                    )
+                    + ((raw,) if original_comment else ())
+                )
+            active_account = None
+            statement_rows = []
+    if not found:
+        raise errors.UserError(
+            "Not a supported Ozon statement: {}".format(path)
+        )
+    if active_account is not None:
+        raise errors.UserError("Missing totals in Ozon statement")
+    if not result:
+        raise errors.UserError(
+            "No operations found in statement: {}".format(path)
+        )
+    return result
+
+
 def _input_pdfs(paths):
     result = []
     for value in paths:
@@ -406,7 +589,7 @@ def command_sber2csv(  # pylint: disable=too-many-positional-arguments
             if verbose:
                 print("skip unsupported PDF: {}".format(source))
             continue
-        target = explicit or source.with_name(source.stem + "_sber.csv")
+        target = explicit or source.with_name(source.stem + ".csv")
         if target in targets:
             raise errors.UserError(
                 "Duplicate output target: {}".format(target)
@@ -425,4 +608,54 @@ def command_sber2csv(  # pylint: disable=too-many-positional-arguments
         with target.open("w", encoding="utf-8-sig", newline="") as file:
             writer = csv.writer(file)
             writer.writerow(_CSV_HEADER)
+            writer.writerows(rows)
+
+
+def command_ozon2csv(  # pylint: disable=too-many-positional-arguments
+    paths, out_path=None, dry_run=False, verbose=False, rewrite=False,
+    original_comment=False,
+):
+    """Convert Ozon Bank Operations Statements to expense CSV."""
+    inputs = _input_pdfs(paths)
+    if out_path and len(inputs) != 1:
+        raise errors.UserError("-o/--out requires exactly one PDF input")
+    rules = _load_ozon2csv_config(Path.cwd())
+    plan = []
+    targets = set()
+    explicit = Path(out_path).expanduser() if out_path else None
+    requested = {Path(value).expanduser() for value in paths}
+    for source in inputs:
+        try:
+            rows = _parse_ozon_statement(
+                source, rules, original_comment=original_comment
+            )
+        except errors.UserError as exc:
+            if source in requested or not str(exc).startswith(
+                "Not a supported"
+            ):
+                raise
+            if verbose:
+                print("skip unsupported PDF: {}".format(source))
+            continue
+        target = explicit or source.with_name(source.stem + ".csv")
+        if target in targets:
+            raise errors.UserError(
+                "Duplicate output target: {}".format(target)
+            )
+        if target.exists() and (explicit or not rewrite):
+            raise errors.UserError("Output already exists: {}".format(target))
+        plan.append((target, rows))
+        targets.add(target)
+    if not plan:
+        raise errors.UserError("No supported Ozon statements found")
+    if dry_run:
+        for target, _rows in plan:
+            print(target)
+        return
+    for target, rows in plan:
+        with target.open("w", encoding="utf-8-sig", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(
+                _OZON_CSV_HEADER if original_comment else _CSV_HEADER
+            )
             writer.writerows(rows)

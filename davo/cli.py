@@ -234,6 +234,33 @@ def init_parser():
         help="keep the complete original bank description in Комент",
     )
     sber2csv.set_defaults(func=_run_sber2csv)
+    ozon2csv = pa_subparsers.add_parser(
+        "ozon2csv", help="convert Ozon Bank PDF statements to expense CSV"
+    )
+    ozon2csv.add_argument("paths", nargs="+", metavar="PATH")
+    ozon2csv.add_argument("-o", "--out", dest="out_path")
+    ozon2csv.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="validate without writing CSV",
+    )
+    ozon2csv.add_argument(
+        "-v", "--verbose", action="store_true", help="show skipped PDF files"
+    )
+    ozon2csv.add_argument(
+        "-W",
+        "--rewrite",
+        action="store_true",
+        help="replace automatic CSV targets",
+    )
+    ozon2csv.add_argument(
+        "-O",
+        "--original-comment",
+        action="store_true",
+        help="add the complete original bank description in Оригинал",
+    )
+    ozon2csv.set_defaults(func=_run_ozon2csv)
 
     cmd = subparsers.add_parser("file", help="file tools")
     cmd, _subparsers = services.photo.cli.init_parser(
@@ -314,6 +341,22 @@ def _run_sber2csv(namespace):
     """Make Sber statement parsing failures observable to the shell."""
     try:
         return services.pa.command_sber2csv(
+            namespace.paths,
+            out_path=namespace.out_path,
+            dry_run=namespace.dry_run,
+            verbose=namespace.verbose,
+            rewrite=namespace.rewrite,
+            original_comment=namespace.original_comment,
+        )
+    except errors.UserError as exc:
+        logger.error(exc)
+        raise SystemExit(1) from exc
+
+
+def _run_ozon2csv(namespace):
+    """Make Ozon statement parsing failures observable to the shell."""
+    try:
+        return services.pa.command_ozon2csv(
             namespace.paths,
             out_path=namespace.out_path,
             dry_run=namespace.dry_run,
