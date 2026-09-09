@@ -6,6 +6,9 @@ import pytest
 from davo.services import pa
 
 _STATEMENTS = Path(__file__).parents[2] / "examples" / "stmt"
+_TBANK_STATEMENT = (
+    Path(__file__).parents[2] / "examples" / "20260909 tbank golub dd.pdf"
+)
 
 
 def _rules(*items):
@@ -74,6 +77,102 @@ def test_ozon2csv_extracts_statement_totals():
     assert pa._ozon_totals(page) == (  # pylint: disable=protected-access
         pa.Decimal("1000.25"), pa.Decimal("999.00")
     )
+
+
+def test_tbank2csv_parses_known_english_statement():
+    rows = pa._parse_tbank_statement(  # pylint: disable=protected-access
+        _TBANK_STATEMENT, _TAIL_RULE, original_comment=True
+    )
+
+    import fitz  # pylint: disable=import-outside-toplevel
+
+    with fitz.open(_TBANK_STATEMENT) as document:
+        account = pa._tbank_account(  # pylint: disable=protected-access
+            document[0]
+        )
+    assert account == "40817810200142781910"
+    assert len(rows) == 13
+    assert rows[0] == (
+        "07.09.2026 21:01:00",
+        "",
+        "",
+        "Replenishment with a partner ATM T-Bank Moscow RU",
+        "",
+        "",
+        "-5 000.00",
+        "Replenishment with a partner ATM T-Bank Moscow RU",
+    )
+    assert rows[1][3] == "Cash withdrawal in ATM.T- BANK MOSCOW RUS"
+    assert sum(
+        -pa.Decimal(row[6].replace(" ", ""))
+        for row in rows
+        if row[6].startswith("-")
+    ) == pa.Decimal("41800.00")
+    assert sum(
+        pa.Decimal(row[6].replace(" ", ""))
+        for row in rows
+        if not row[6].startswith("-")
+    ) == pa.Decimal("5597.00")
+
+
+@pytest.mark.parametrize("original_comment", [False, True])
+def test_tbank2csv_writes_original_only_with_original_comment_flag(
+    mocker, tmp_path, original_comment
+):
+    source = tmp_path / "statement.pdf"
+    target = tmp_path / "result.csv"
+    source.touch()
+    row = (
+        "01.02.2026 10:20:00",
+        "",
+        "",
+        "Payment",
+        "",
+        "",
+        "10.00",
+    ) + (("Original bank description",) if original_comment else ())
+    mocker.patch.object(pa, "_load_tbank2csv_config", return_value=[])
+    mocker.patch.object(pa, "_parse_tbank_statement", return_value=[row])
+
+    pa.command_tbank2csv(
+        [source], out_path=target, original_comment=original_comment
+    )
+
+    with target.open(encoding="utf-8-sig", newline="") as file:
+        written = list(csv.reader(file))
+    expected_header = pa._CSV_HEADER + (  # pylint: disable=protected-access
+        ("Оригинал",) if original_comment else ()
+    )
+    assert written == [list(expected_header), list(row)]
+
+
+@pytest.mark.parametrize("original_comment", [False, True])
+def test_sber2csv_writes_original_in_own_column(
+    mocker, tmp_path, original_comment
+):
+    source = tmp_path / "statement.pdf"
+    target = tmp_path / "result.csv"
+    source.touch()
+    row = ("01.02.2026 10:20:00", "", "", "Payment", "", "raw", "10.00")
+    mocker.patch.object(pa, "_load_sber2csv_config", return_value=[])
+    mocker.patch.object(pa, "_parse_statement", return_value=[row])
+
+    pa.command_sber2csv(
+        [source], out_path=target, original_comment=original_comment
+    )
+
+    with target.open(encoding="utf-8-sig", newline="") as file:
+        written = list(csv.reader(file))
+    expected = ["01.02.2026 10:20:00", "", "", "Payment", "", "", "10.00"]
+    if original_comment:
+        expected.append("raw")
+    assert written == [
+        list(
+            pa._CSV_HEADER  # pylint: disable=protected-access
+            + (("Оригинал",) if original_comment else ())
+        ),
+        expected,
+    ]
 
 
 @pytest.mark.parametrize("original_comment", [False, True])

@@ -25,13 +25,17 @@ _CSV_HEADER = (
     "Комент",
     "Сумма",
 )
-_OZON_CSV_HEADER = _CSV_HEADER + ("Оригинал",)
+_CSV_HEADER_WITH_ORIGINAL = _CSV_HEADER + ("Оригинал",)
 _OZON_DATE_TIME_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}:\d{2}$")
 _OZON_ACCOUNT_RE = re.compile(
     r"Account number:\s*№\s*(.+?)(?:,|\s+dated\s|\n)"
 )
 _OZON_TOTAL_RE = re.compile(
     r"Total (deposits|withdrawals) for the period:\s*RUR\s*([\d ]+\.\d{2})"
+)
+_TBANK_ACCOUNT_RE = re.compile(r"Personal account number:\s*(\d+)")
+_TBANK_AMOUNT_RE = re.compile(
+    r"[+-]?(?:\d{1,3}(?:[ \u00a0]\d{3})*|\d+)\.\d{2}"
 )
 
 
@@ -282,6 +286,11 @@ def _load_ozon2csv_config(start):
     return _load_rules_config(start, "ozon2csv")
 
 
+def _load_tbank2csv_config(start):
+    """Load and validate T-Bank conversion rules before processing PDFs."""
+    return _load_rules_config(start, "tbank2csv")
+
+
 def _apply_rules(operation, rules):
     """Normalise an operation and extract its place and category."""
     place = ""
@@ -381,6 +390,165 @@ def _parse_statement(path, rules, original_comment=True):
 
 def _format_amount(value):
     return "{:,.2f}".format(value).replace(",", " ")
+
+
+def _tbank_table_start(words):
+    """Return the first operation line below the T-Bank table heading."""
+    headings = [
+        word[1]
+        for word in words
+        if word[4] == "Date" and word[0] < 100 and word[1] > 300
+    ]
+    return max(headings) + 25 if headings else None
+
+
+def _tbank_account(page):
+    """Extract the personal account number from a T-Bank statement."""
+    match = _TBANK_ACCOUNT_RE.search(page.get_text())
+    if match is None:
+        raise errors.UserError("Missing account number in T-Bank statement")
+    return match.group(1)
+
+
+def _tbank_normalised_amount(value):
+    """Return a T-Bank amount in the common expense-import convention."""
+    match = _TBANK_AMOUNT_RE.search(value.replace("\u202f", "\u00a0"))
+    if match is None:
+        raise errors.UserError(
+            "Missing T-Bank operation amount: {}".format(value)
+        )
+    try:
+        amount = Decimal(match.group().replace("\u00a0", "").replace(" ", ""))
+    except InvalidOperation as exc:
+        raise errors.UserError(
+            "Invalid T-Bank operation amount: {}".format(value)
+        ) from exc
+    return -abs(amount) if value.lstrip().startswith("+") else abs(amount)
+
+
+def _tbank_page_rows(page):
+    """Extract operations from the fixed-column English T-Bank statement."""
+    words = page.get_text("words", sort=True)
+    table_start = _tbank_table_start(words)
+    if table_start is None:
+        return []
+    starts = [
+        word[1]
+        for word in words
+        if word[0] < 110
+        and table_start <= word[1] < 780
+        and _DATE_RE.match(word[4])
+    ]
+    rows = []
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else 780
+        row_words = [
+            word for word in words if start - 1 <= word[1] < end
+        ]
+        date_time = _join_words(
+            [word for word in row_words if word[0] < 110]
+        ).splitlines()
+        amount = _join_words(
+            [word for word in row_words if 195 <= word[0] < 290]
+        )
+        description = _join_words(
+            [word for word in row_words if 385 <= word[0] < 499]
+        ).replace("\n", " ")
+        if (
+            len(date_time) < 2
+            or not _DATE_RE.match(date_time[0])
+            or not _TIME_RE.match(date_time[1])
+            or not amount
+            or not description
+        ):
+            raise errors.UserError("Incomplete T-Bank operation in PDF")
+        rows.append(
+            (
+                "{} {}:00".format(date_time[0], date_time[1]),
+                description,
+                _tbank_normalised_amount(amount),
+            )
+        )
+    return rows
+
+
+def _tbank_totals(page):
+    """Read Replenishment and Expenses totals from a T-Bank statement."""
+    words = page.get_text("words", sort=True)
+    totals = {}
+    for label in ("Replenishment:", "Expenses:"):
+        matches = [word for word in words if word[4] == label]
+        if len(matches) != 1:
+            continue
+        totals[label] = abs(
+            _amount(_line_words(words, matches[0][1], x0=100))
+        )
+    if set(totals) != {"Replenishment:", "Expenses:"}:
+        raise errors.UserError("Incomplete totals in T-Bank statement")
+    return totals["Replenishment:"], totals["Expenses:"]
+
+
+def _parse_tbank_statement(path, rules, original_comment=False):
+    """Parse one English T-Bank Bank Statement."""
+    try:
+        import fitz  # pylint: disable=import-outside-toplevel
+    except ImportError as exc:
+        raise errors.UserError(
+            "Missing PyMuPDF; install davo-tools[full]"
+        ) from exc
+    try:
+        document = fitz.open(path)
+    except Exception as exc:  # PyMuPDF exposes document-specific errors.
+        raise errors.UserError(
+            "Cannot read PDF {}: {}".format(path, exc)
+        ) from exc
+    with document:
+        first_text = document[0].get_text()
+        if (
+            "Bank Statement" not in first_text
+            or "TBANK" not in first_text
+        ):
+            raise errors.UserError(
+                "Not a supported T-Bank statement: {}".format(path)
+            )
+        _tbank_account(document[0])
+        parsed = []
+        for page in document:
+            parsed.extend(_tbank_page_rows(page))
+        income, expense = _tbank_totals(document[-1])
+    if not parsed:
+        raise errors.UserError(
+            "No operations found in statement: {}".format(path)
+        )
+    actual_income = sum(
+        (abs(amount) for *_rest, amount in parsed if amount < 0), Decimal()
+    )
+    actual_expense = sum(
+        (amount for *_rest, amount in parsed if amount > 0), Decimal()
+    )
+    if (actual_income, actual_expense) != (income, expense):
+        raise errors.UserError(
+            "Totals do not match {} (replenishment {} != {}, expenses "
+            "{} != {})".format(
+                path, actual_income, income, actual_expense, expense
+            )
+        )
+    result = []
+    for date_time, raw, amount in parsed:
+        place, category, operation = _apply_rules(raw, rules)
+        result.append(
+            (
+                date_time,
+                "",
+                place,
+                operation,
+                category,
+                "",
+                _format_amount(amount),
+            )
+            + ((raw,) if original_comment else ())
+        )
+    return result
 
 
 def _ozon_amount(value):
@@ -579,7 +747,7 @@ def command_sber2csv(  # pylint: disable=too-many-positional-arguments
             rows = _parse_statement(
                 source,
                 rules,
-                original_comment=original_comment,
+                original_comment=True,
             )
         except errors.UserError as exc:
             if source in requested or not str(exc).startswith(
@@ -607,7 +775,71 @@ def command_sber2csv(  # pylint: disable=too-many-positional-arguments
     for target, rows in plan:
         with target.open("w", encoding="utf-8-sig", newline="") as file:
             writer = csv.writer(file)
-            writer.writerow(_CSV_HEADER)
+            writer.writerow(
+                _CSV_HEADER_WITH_ORIGINAL
+                if original_comment
+                else _CSV_HEADER
+            )
+            for row in rows:
+                result = row[:5] + ("",) + row[6:]
+                if original_comment:
+                    result += (row[5],)
+                writer.writerow(result)
+
+
+def command_tbank2csv(  # pylint: disable=too-many-positional-arguments
+    paths,
+    out_path=None,
+    dry_run=False,
+    verbose=False,
+    rewrite=False,
+    original_comment=False,
+):
+    """Convert English T-Bank PDF statements to expense CSV."""
+    inputs = _input_pdfs(paths)
+    if out_path and len(inputs) != 1:
+        raise errors.UserError("-o/--out requires exactly one PDF input")
+    rules = _load_tbank2csv_config(Path.cwd())
+    plan = []
+    targets = set()
+    explicit = Path(out_path).expanduser() if out_path else None
+    requested = {Path(value).expanduser() for value in paths}
+    for source in inputs:
+        try:
+            rows = _parse_tbank_statement(
+                source, rules, original_comment=original_comment
+            )
+        except errors.UserError as exc:
+            if source in requested or not str(exc).startswith(
+                "Not a supported"
+            ):
+                raise
+            if verbose:
+                print("skip unsupported PDF: {}".format(source))
+            continue
+        target = explicit or source.with_name(source.stem + ".csv")
+        if target in targets:
+            raise errors.UserError(
+                "Duplicate output target: {}".format(target)
+            )
+        if target.exists() and (explicit or not rewrite):
+            raise errors.UserError("Output already exists: {}".format(target))
+        plan.append((target, rows))
+        targets.add(target)
+    if not plan:
+        raise errors.UserError("No supported T-Bank statements found")
+    if dry_run:
+        for target, _rows in plan:
+            print(target)
+        return
+    for target, rows in plan:
+        with target.open("w", encoding="utf-8-sig", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(
+                _CSV_HEADER_WITH_ORIGINAL
+                if original_comment
+                else _CSV_HEADER
+            )
             writer.writerows(rows)
 
 
@@ -656,6 +888,8 @@ def command_ozon2csv(  # pylint: disable=too-many-positional-arguments
         with target.open("w", encoding="utf-8-sig", newline="") as file:
             writer = csv.writer(file)
             writer.writerow(
-                _OZON_CSV_HEADER if original_comment else _CSV_HEADER
+                _CSV_HEADER_WITH_ORIGINAL
+                if original_comment
+                else _CSV_HEADER
             )
             writer.writerows(rows)

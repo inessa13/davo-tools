@@ -29,6 +29,14 @@ pa:
         action: replace
         value: ''
 
+  tbank2csv:
+    rules:
+      # Rules use the same remove / replace / place / category actions as
+      # sber2csv and ozon2csv.
+      - pattern: '\bSBP\b'
+        action: place
+        value: СБП
+
 s3:
   BUCKET: my-bucket
   IGNORE:

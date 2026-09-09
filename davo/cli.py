@@ -231,9 +231,36 @@ def init_parser():
         "-O",
         "--original-comment",
         action="store_true",
-        help="keep the complete original bank description in Комент",
+        help="add the complete original bank description in Оригинал",
     )
     sber2csv.set_defaults(func=_run_sber2csv)
+    tbank2csv = pa_subparsers.add_parser(
+        "tbank2csv", help="convert T-Bank PDF statements to expense CSV"
+    )
+    tbank2csv.add_argument("paths", nargs="+", metavar="PATH")
+    tbank2csv.add_argument("-o", "--out", dest="out_path")
+    tbank2csv.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="validate without writing CSV",
+    )
+    tbank2csv.add_argument(
+        "-v", "--verbose", action="store_true", help="show skipped PDF files"
+    )
+    tbank2csv.add_argument(
+        "-W",
+        "--rewrite",
+        action="store_true",
+        help="replace automatic CSV targets",
+    )
+    tbank2csv.add_argument(
+        "-O",
+        "--original-comment",
+        action="store_true",
+        help="add the complete original bank description in Оригинал",
+    )
+    tbank2csv.set_defaults(func=_run_tbank2csv)
     ozon2csv = pa_subparsers.add_parser(
         "ozon2csv", help="convert Ozon Bank PDF statements to expense CSV"
     )
@@ -357,6 +384,22 @@ def _run_ozon2csv(namespace):
     """Make Ozon statement parsing failures observable to the shell."""
     try:
         return services.pa.command_ozon2csv(
+            namespace.paths,
+            out_path=namespace.out_path,
+            dry_run=namespace.dry_run,
+            verbose=namespace.verbose,
+            rewrite=namespace.rewrite,
+            original_comment=namespace.original_comment,
+        )
+    except errors.UserError as exc:
+        logger.error(exc)
+        raise SystemExit(1) from exc
+
+
+def _run_tbank2csv(namespace):
+    """Make T-Bank statement parsing failures observable to the shell."""
+    try:
+        return services.pa.command_tbank2csv(
             namespace.paths,
             out_path=namespace.out_path,
             dry_run=namespace.dry_run,

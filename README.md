@@ -267,3 +267,16 @@ Each successful file reports its original and compressed size and the percentage
 reduction; multiple successes also print a total. `-R/--rename-processed`
 renames a source to `<stem>_processed<extension>` only after compression
 succeeds.
+
+## Bank statements
+
+`davo pa sber2csv`, `davo pa tbank2csv`, and `davo pa ozon2csv` convert their
+supported PDF statements into the common expenses CSV format. Each accepts PDF
+paths or directories, `-o/--out`, `-0/--dry-run`, `-v/--verbose`, and
+`-W/--rewrite`; automatic output is named after its PDF. `-O/--original-comment`
+adds an `Оригинал` column with the unmodified bank description.
+
+T-Bank supports the text-based English `Bank Statement` / `TBANK` template.
+All converters validate statement totals before writing. Description rules live
+under `pa.sber2csv.rules`, `pa.tbank2csv.rules`, or `pa.ozon2csv.rules` in the
+configuration; the example configuration documents their shared actions.

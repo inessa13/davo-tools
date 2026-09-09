@@ -57,6 +57,25 @@ def test_parser_accepts_sber_original_comment_option(option):
 
 
 @pytest.mark.parametrize("option", ["-0", "--dry-run"])
+def test_parser_accepts_tbank2csv_options(option):
+    namespace = cli.init_parser().parse_args(
+        ["pa", "tbank2csv", option, "statement.pdf"]
+    )
+
+    assert namespace.dry_run is True
+    assert callable(namespace.func)
+
+
+@pytest.mark.parametrize("option", ["-O", "--original-comment"])
+def test_parser_accepts_tbank_original_comment_option(option):
+    namespace = cli.init_parser().parse_args(
+        ["pa", "tbank2csv", option, "statement.pdf"]
+    )
+
+    assert namespace.original_comment is True
+
+
+@pytest.mark.parametrize("option", ["-0", "--dry-run"])
 def test_parser_accepts_ozon2csv_options(option):
     namespace = cli.init_parser().parse_args(
         ["pa", "ozon2csv", option, "statement.pdf"]
