@@ -206,7 +206,9 @@ def init_parser(parser=None, subparsers=None, commands=()):
 
     if not commands or "convert" in commands:
         cmd = subparsers.add_parser(
-            "convert", parents=p_common, help="convert images (PIL)"
+            "convert",
+            parents=[p_root, p_recursive, p_silent],
+            help="convert images (PIL)",
         )
         cmd.add_argument(
             "-P", "--replace-pattern", default="[source]_converted.[Ext]"
@@ -216,6 +218,12 @@ def init_parser(parser=None, subparsers=None, commands=()):
             "--rename-processed",
             action="store_true",
             help="rename each source with a _processed suffix after success",
+        )
+        cmd.add_argument(
+            "-0",
+            "--dry-run",
+            action="store_true",
+            help="report planned conversions without writing files",
         )
         cmd.add_argument(
             "-W",
@@ -232,11 +240,11 @@ def init_parser(parser=None, subparsers=None, commands=()):
                 replace=namespace.replace_pattern,
                 recursive=namespace.recursive,
                 rename_processed=namespace.rename_processed,
+                dry_run=namespace.dry_run,
                 rewrite=namespace.rewrite,
                 thumbnail=namespace.thumbnail,
                 skip_no_exif=namespace.skip_no_exif,
                 drop_alpha=namespace.drop_alpha,
-                commit=namespace.commit,
             )
         )
 

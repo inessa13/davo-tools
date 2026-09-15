@@ -602,7 +602,7 @@ def command_convert(
     thumbnail,
     skip_no_exif,
     drop_alpha,
-    commit=False,
+    dry_run=False,
     rename_processed=False,
     rewrite=False,
 ):
@@ -615,10 +615,11 @@ def command_convert(
     :param int thumbnail:
     :param bool skip_no_exif: skip files with no exif data
     :param bool drop_alpha: drop alpha channel
-    :param bool commit:
+    :param bool dry_run: report planned conversions without writing files
     """
     index = 1
     converted = 0
+    commit = not dry_run
     for file_path in utils.iter_files(root, recursive=recursive, sort=True):
         file_root, file_base = os.path.split(file_path)
 

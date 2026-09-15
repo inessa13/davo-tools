@@ -353,6 +353,8 @@ def test_file_keeps_compare():
         ["arch", "fns-rename", "-0"],
         ["arch", "fns-rename", "--dry-run"],
         ["vid", "compress", "-0", "movie.mov"],
+        ["im", "convert", "-0"],
+        ["im", "convert", "--dry-run"],
     ],
 )
 def test_parser_accepts_dry_run_short_option(arguments):
@@ -389,7 +391,6 @@ def test_fns_extract_parser_defaults_to_html():
         ["vid", "split", "-C", "input.mp4", "00:00:10"],
         ["vid", "trim", "-C"],
         ["vid", "web", "-C"],
-        ["im", "convert", "-C"],
         ["im", "recover", "-C"],
         ["im", "downscale", "-C"],
     ],
@@ -404,7 +405,6 @@ def test_parser_uses_uppercase_short_option_for_commit(arguments):
     "arguments",
     [
         ["file", "rename", "-c"],
-        ["im", "convert", "-c"],
     ],
 )
 def test_parser_uses_lowercase_short_option_for_copy(arguments):
@@ -418,7 +418,6 @@ def test_parser_uses_lowercase_short_option_for_copy(arguments):
     ("arguments", "handler_name"),
     [
         (["file", "rename", "-c", "-C"], "command_regexp"),
-        (["im", "convert", "-c", "-C"], "command_convert"),
     ],
 )
 def test_parser_forwards_copy_and_commit_options(
@@ -461,6 +460,7 @@ def test_cit_parser_accepts_all_short_option(option):
         ["vid", "split", "-c", "input.mp4", "00:00:10"],
         ["vid", "trim", "-c"],
         ["vid", "web", "-c"],
+        ["im", "convert", "-C"],
         ["im", "recover", "-c"],
         ["im", "downscale", "-c"],
         ["cit", "-A"],
@@ -514,6 +514,27 @@ def test_parser_rejects_removed_clips_group():
 def test_photo_cli_rejects_legacy_clip_commands(arguments):
     with pytest.raises(SystemExit):
         photo_cli.init_parser()[0].parse_args(arguments)
+
+
+def test_im_convert_cli_forwards_options(mocker):
+    handler = mocker.patch.object(photo_cli.helpers, "command_convert")
+    namespace = cli.init_parser().parse_args(
+        ["im", "convert", "--dry-run", "-W", "-r", "photo.jpg"]
+    )
+
+    namespace.func(namespace)
+
+    assert handler.call_args.kwargs == {
+        "root": "photo.jpg",
+        "replace": "[source]_converted.[Ext]",
+        "recursive": True,
+        "rename_processed": False,
+        "dry_run": True,
+        "rewrite": True,
+        "thumbnail": None,
+        "skip_no_exif": False,
+        "drop_alpha": False,
+    }
 
 
 def test_vid_compress_cli_forwards_options(mocker):

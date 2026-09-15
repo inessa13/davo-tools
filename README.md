@@ -148,6 +148,22 @@ with `-W/--rewrite`; an explicit `-o/--out` or custom image pattern is never
 overwritten.  Use `-R/--rename-processed` to mark sources after success.
 See [docs/file-safety.md](docs/file-safety.md) for the full contract.
 
+## Image conversion
+
+`davo im convert` writes derived copies beside their sources. The default
+output is `<stem>_converted<extension>`. Execution is the default; use
+`-0/--dry-run` to report the plan without writing files. Existing automatic
+outputs are skipped unless `-W/--rewrite` is provided. A custom
+`-P/--replace-pattern` is never overwritten, including with `-W`.
+`-R/--rename-processed` marks sources after a successful write.
+
+```bash
+davo im convert photo.jpg
+davo im convert -0 photo.jpg
+davo im convert -W photo.jpg
+davo im convert -t 800 photo.jpg
+```
+
 `davo pdf form` creates a PDF from PDF, JPEG, PNG, BMP, TXT, and HTML inputs, fitting each
 page onto the requested paper size without cropping.  A source page's
 orientation is preserved; use `-W` to replace an existing output file.
