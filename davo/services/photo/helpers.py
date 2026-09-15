@@ -595,6 +595,9 @@ def command_search_duplicates(root, md5, recursive, verbose):
             )
 
 
+_CONVERT_REPLACE_DEFAULT = "[source]_converted.[Ext]"
+
+
 def command_convert(
     root,
     replace,
@@ -605,6 +608,7 @@ def command_convert(
     dry_run=False,
     rename_processed=False,
     rewrite=False,
+    separate_dir=False,
 ):
     """
     Convert command.
@@ -616,11 +620,17 @@ def command_convert(
     :param bool skip_no_exif: skip files with no exif data
     :param bool drop_alpha: drop alpha channel
     :param bool dry_run: report planned conversions without writing files
+    :param bool separate_dir: write under cwd/davo_im_convert instead of suffix
     """
     index = 1
     converted = 0
     commit = not dry_run
+    output_root = None
+    if separate_dir:
+        output_root = davo.utils.path.command_output_dir("im", "convert")
     for file_path in utils.iter_files(root, recursive=recursive, sort=True):
+        if output_root and davo.utils.path.is_under(file_path, output_root):
+            continue
         file_root, file_base = os.path.split(file_path)
 
         exif = None
@@ -629,16 +639,31 @@ def command_convert(
             if exif is None:
                 continue
 
-        new_name = utils.replace_file_params(
-            file_path, ".*", replace, index=index, exif_data=exif
-        )
-        if not new_name:
-            continue
+        is_default = replace == _CONVERT_REPLACE_DEFAULT
+        if separate_dir:
+            mirrored = davo.utils.path.mirrored_under(file_path, output_root)
+            if mirrored is None:
+                logger.warning("source outside cwd, skipped: %s", file_path)
+                continue
+            if is_default:
+                new_name = file_base
+            else:
+                new_name = utils.replace_file_params(
+                    file_path, ".*", replace, index=index, exif_data=exif
+                )
+            if not new_name:
+                continue
+            file_path_new = os.path.join(os.path.dirname(mirrored), new_name)
+        else:
+            new_name = utils.replace_file_params(
+                file_path, ".*", replace, index=index, exif_data=exif
+            )
+            if not new_name:
+                continue
+            file_path_new = os.path.join(file_root, new_name)
 
-        logger.info("%-41s %s", file_base, new_name)
+        logger.info("%-41s %s", file_base, os.path.relpath(file_path_new))
 
-        file_path_new = os.path.join(file_root, new_name)
-        is_default = replace == "[source]_converted.[Ext]"
         if os.path.exists(file_path_new):
             if not (is_default and rewrite):
                 logger.warning("output exists, skipped: %s", file_path_new)

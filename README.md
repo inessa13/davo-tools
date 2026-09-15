@@ -151,16 +151,19 @@ See [docs/file-safety.md](docs/file-safety.md) for the full contract.
 ## Image conversion
 
 `davo im convert` writes derived copies beside their sources. The default
-output is `<stem>_converted<extension>`. Execution is the default; use
-`-0/--dry-run` to report the plan without writing files. Existing automatic
-outputs are skipped unless `-W/--rewrite` is provided. A custom
-`-P/--replace-pattern` is never overwritten, including with `-W`.
-`-R/--rename-processed` marks sources after a successful write.
+output is `<stem>_converted<extension>`. With `-D/--separate-dir` it writes
+`davo_im_convert/<relative-path-from-cwd>` using the original filename
+instead of a suffix. Execution is the default; use `-0/--dry-run` to report
+the plan without writing files. Existing automatic outputs are skipped unless
+`-W/--rewrite` is provided. A custom `-P/--replace-pattern` is never
+overwritten, including with `-W`. `-R/--rename-processed` marks sources after
+a successful write.
 
 ```bash
 davo im convert photo.jpg
 davo im convert -0 photo.jpg
 davo im convert -W photo.jpg
+davo im convert -D photo.jpg
 davo im convert -t 800 photo.jpg
 ```
 

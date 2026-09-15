@@ -1,10 +1,11 @@
 # Safe derived files
 
 Commands that create a derived file keep their source by default.  Their
-automatic name is based on the first input and a command-specific suffix.
-An automatic target that already exists is refused unless `-W/--rewrite` is
-provided.  An explicit `-o/--out` target (or an image conversion pattern) is
-never overwritten, including with `-W`.
+automatic name is based on the first input and a command-specific suffix, or
+with `-D/--separate-dir` a mirrored path under `./davo_<group>_<command>/`
+using the original filename.  An automatic target that already exists is
+refused unless `-W/--rewrite` is provided.  An explicit `-o/--out` target
+(or an image conversion pattern) is never overwritten, including with `-W`.
 
 `-R/--rename-processed` marks every unique successfully processed source as
 `<stem>_processed<ext>`.  It is checked before output is written: already

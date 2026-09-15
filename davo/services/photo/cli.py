@@ -226,6 +226,12 @@ def init_parser(parser=None, subparsers=None, commands=()):
             help="report planned conversions without writing files",
         )
         cmd.add_argument(
+            "-D",
+            "--separate-dir",
+            action="store_true",
+            help="write outputs under ./davo_im_convert instead of a suffix",
+        )
+        cmd.add_argument(
             "-W",
             "--rewrite",
             action="store_true",
@@ -245,6 +251,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
                 thumbnail=namespace.thumbnail,
                 skip_no_exif=namespace.skip_no_exif,
                 drop_alpha=namespace.drop_alpha,
+                separate_dir=namespace.separate_dir,
             )
         )
 
