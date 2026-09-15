@@ -21,6 +21,7 @@ def _convert(path, **kwargs):
         dry_run=kwargs.get("dry_run", False),
         rewrite=kwargs.get("rewrite", False),
         separate_dir=kwargs.get("separate_dir", False),
+        verbose=kwargs.get("verbose", False),
     )
 
 
@@ -231,3 +232,55 @@ def test_command_convert_separate_dir_skips_files_in_output_dir(
 
     assert inside.read_bytes() == inside_data
     assert list(output_dir.iterdir()) == [inside]
+
+
+def test_command_convert_logs_total_size_without_per_file(tmp_path, caplog):
+    source = tmp_path / "photo.jpg"
+    Image.new("RGB", (8, 8), "red").save(source)
+    caplog.set_level("INFO")
+
+    _convert(source)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(message.startswith("total:") for message in messages)
+    name_lines = [
+        message
+        for message in messages
+        if message.startswith("photo.jpg") and "photo_converted.jpg" in message
+    ]
+    assert name_lines
+    assert not any("reduction)" in message for message in name_lines)
+
+
+def test_command_convert_logs_per_file_size_when_verbose(tmp_path, caplog):
+    source = tmp_path / "photo.jpg"
+    Image.new("RGB", (8, 8), "red").save(source)
+    caplog.set_level("INFO")
+
+    _convert(source, verbose=True)
+
+    messages = [record.getMessage() for record in caplog.records]
+    name_lines = [
+        message
+        for message in messages
+        if message.startswith("photo.jpg") and "photo_converted.jpg" in message
+    ]
+    assert len(name_lines) == 1
+    assert name_lines[0].endswith("reduction)")
+    assert "->" not in name_lines[0]
+    assert not any(
+        message.startswith("photo.jpg:") for message in messages
+    )
+    assert any(message.startswith("total:") for message in messages)
+
+
+def test_command_convert_dry_run_does_not_log_sizes(tmp_path, caplog):
+    source = tmp_path / "photo.jpg"
+    Image.new("RGB", (8, 8), "red").save(source)
+    caplog.set_level("INFO")
+
+    _convert(source, dry_run=True, verbose=True)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert not any("reduction)" in message for message in messages)
+    assert not any(message.startswith("total:") for message in messages)

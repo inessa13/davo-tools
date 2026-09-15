@@ -157,13 +157,16 @@ instead of a suffix. Execution is the default; use `-0/--dry-run` to report
 the plan without writing files. Existing automatic outputs are skipped unless
 `-W/--rewrite` is provided. A custom `-P/--replace-pattern` is never
 overwritten, including with `-W`. `-R/--rename-processed` marks sources after
-a successful write.
+a successful write. After writing files it reports total original and result
+sizes and the percentage reduction. With `-v/--verbose` each file line also
+ends with `(NN.NN% reduction)`.
 
 ```bash
 davo im convert photo.jpg
 davo im convert -0 photo.jpg
 davo im convert -W photo.jpg
 davo im convert -D photo.jpg
+davo im convert -v photo.jpg
 davo im convert -t 800 photo.jpg
 ```
 

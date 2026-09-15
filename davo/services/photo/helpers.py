@@ -609,6 +609,7 @@ def command_convert(
     rename_processed=False,
     rewrite=False,
     separate_dir=False,
+    verbose=False,
 ):
     """
     Convert command.
@@ -621,10 +622,12 @@ def command_convert(
     :param bool drop_alpha: drop alpha channel
     :param bool dry_run: report planned conversions without writing files
     :param bool separate_dir: write under cwd/davo_im_convert instead of suffix
+    :param bool verbose: append per-file reduction percent to the name line
     """
     index = 1
     converted = 0
     commit = not dry_run
+    successful_sizes = []
     output_root = None
     if separate_dir:
         output_root = davo.utils.path.command_output_dir("im", "convert")
@@ -662,15 +665,17 @@ def command_convert(
                 continue
             file_path_new = os.path.join(file_root, new_name)
 
-        logger.info("%-41s %s", file_base, os.path.relpath(file_path_new))
+        dest_rel = os.path.relpath(file_path_new)
 
         if os.path.exists(file_path_new):
             if not (is_default and rewrite):
+                logger.info("%-41s %s", file_base, dest_rel)
                 logger.warning("output exists, skipped: %s", file_path_new)
                 continue
         if os.path.normcase(os.path.abspath(file_path)) == os.path.normcase(
             os.path.abspath(file_path_new)
         ):
+            logger.info("%-41s %s", file_base, dest_rel)
             logger.warning(
                 "output must differ from source, skipped: %s", file_path
             )
@@ -685,6 +690,7 @@ def command_convert(
             or os.path.splitext(file_path)[0].endswith("_processed")
             or processed_path == file_path_new
         ):
+            logger.info("%-41s %s", file_base, dest_rel)
             logger.warning(
                 "processed target unavailable, skipped: %s", file_path
             )
@@ -701,22 +707,68 @@ def command_convert(
                 drop_alpha=drop_alpha,
                 commit=commit,
             )
+            if commit:
+                reduction = _record_convert_sizes(
+                    file_path, file_path_new, successful_sizes
+                )
+            else:
+                reduction = None
             if commit and rename_processed:
                 os.link(file_path, processed_path)
                 os.unlink(file_path)
+            _log_convert_destination(
+                file_base, dest_rel, verbose=verbose, reduction=reduction
+            )
             converted += 1
             continue
 
         if commit:
             shutil.copy2(file_path, file_path_new)
+            reduction = _record_convert_sizes(
+                file_path, file_path_new, successful_sizes
+            )
             if rename_processed:
                 os.link(file_path, processed_path)
                 os.unlink(file_path)
+        else:
+            reduction = None
+        _log_convert_destination(
+            file_base, dest_rel, verbose=verbose, reduction=reduction
+        )
         converted += 1
 
         index += 1
 
+    if successful_sizes:
+        source_size = sum(sizes[0] for sizes in successful_sizes)
+        result_size = sum(sizes[1] for sizes in successful_sizes)
+        logger.info(
+            "total: %s -> %s (%.2f%% reduction)",
+            format_utils.humanize_bytes(source_size),
+            format_utils.humanize_bytes(result_size),
+            _clips_compress_reduction(source_size, result_size),
+        )
     logger.info("converted: %d", converted)
+
+
+def _log_convert_destination(
+    file_base, dest_rel, verbose=False, reduction=None
+):
+    if verbose and reduction is not None:
+        logger.info(
+            "%-41s %s (%.2f%% reduction)", file_base, dest_rel, reduction
+        )
+        return
+    logger.info("%-41s %s", file_base, dest_rel)
+
+
+def _record_convert_sizes(file_path, file_path_new, successful_sizes):
+    if not os.path.exists(file_path_new):
+        return None
+    source_size = os.path.getsize(file_path)
+    result_size = os.path.getsize(file_path_new)
+    successful_sizes.append((source_size, result_size))
+    return _clips_compress_reduction(source_size, result_size)
 
 
 @utils.each_file(elt=True, cycled=30)

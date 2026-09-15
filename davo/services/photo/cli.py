@@ -207,7 +207,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
     if not commands or "convert" in commands:
         cmd = subparsers.add_parser(
             "convert",
-            parents=[p_root, p_recursive, p_silent],
+            parents=[p_root, p_recursive, p_verbose, p_silent],
             help="convert images (PIL)",
         )
         cmd.add_argument(
@@ -252,6 +252,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
                 skip_no_exif=namespace.skip_no_exif,
                 drop_alpha=namespace.drop_alpha,
                 separate_dir=namespace.separate_dir,
+                verbose=namespace.verbose,
             )
         )
 

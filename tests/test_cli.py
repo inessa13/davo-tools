@@ -519,7 +519,7 @@ def test_photo_cli_rejects_legacy_clip_commands(arguments):
 def test_im_convert_cli_forwards_options(mocker):
     handler = mocker.patch.object(photo_cli.helpers, "command_convert")
     namespace = cli.init_parser().parse_args(
-        ["im", "convert", "--dry-run", "-W", "-D", "-r", "photo.jpg"]
+        ["im", "convert", "--dry-run", "-W", "-D", "-v", "-r", "photo.jpg"]
     )
 
     namespace.func(namespace)
@@ -535,6 +535,7 @@ def test_im_convert_cli_forwards_options(mocker):
         "skip_no_exif": False,
         "drop_alpha": False,
         "separate_dir": True,
+        "verbose": True,
     }
 
 
