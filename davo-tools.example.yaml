@@ -1,0 +1,57 @@
+# Copy selected blocks to ~/Dropbox/etc/davo-tools.yaml or .davo-tools.yaml.
+# Project values override and recursively merge with user values.
+fns:
+  user_names:
+    "ООО «Интернет Решения»": Озон
+
+pa:
+  sber2csv:
+    rules:
+      # Built-in classifications from earlier versions.
+      - pattern: '(?:_SBP\b|\bСБП\b)'
+        action: place
+        value: СБП
+      - pattern: '\bSBOL\b'
+        action: place
+        value: SBOL
+
+      # Place extraction formerly configured through place_patterns.
+      - pattern: '\s+(?P<place>MOSCOW RUS|MOSKVA RUS)$'
+        action: place
+        value: '\g<place>'
+      - pattern: '^(?P<place>MOSCOW)\s+'
+        action: place
+        value: '\g<place>'
+
+  ozon2csv:
+    rules:
+      - pattern: 'VAT not applicable\.'
+        action: replace
+        value: ''
+
+  tbank2csv:
+    rules:
+      # Rules use the same remove / replace / place / category actions as
+      # sber2csv and ozon2csv.
+      - pattern: '\bSBP\b'
+        action: place
+        value: СБП
+
+s3:
+  BUCKET: my-bucket
+  IGNORE:
+    - .git
+
+compare:
+  # A project configuration anchors this relative destination.
+  dest_path: ./backup
+  ignore:
+    - .git
+
+vpn:
+  keepass_db_path: ./pwd.kdbx
+  default_account: work
+  accounts:
+    work:
+      handler: openvpn
+      config_path: ./work.ovpn

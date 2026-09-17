@@ -47,6 +47,53 @@ def test_parser_sets_recursive_for_image_diff(option):
     assert namespace.recursive is True
 
 
+@pytest.mark.parametrize("option", ["-O", "--original-comment"])
+def test_parser_accepts_sber_original_comment_option(option):
+    namespace = cli.init_parser().parse_args(
+        ["pa", "sber2csv", option, "statement.pdf"]
+    )
+
+    assert namespace.original_comment is True
+
+
+@pytest.mark.parametrize("option", ["-0", "--dry-run"])
+def test_parser_accepts_tbank2csv_options(option):
+    namespace = cli.init_parser().parse_args(
+        ["pa", "tbank2csv", option, "statement.pdf"]
+    )
+
+    assert namespace.dry_run is True
+    assert callable(namespace.func)
+
+
+@pytest.mark.parametrize("option", ["-O", "--original-comment"])
+def test_parser_accepts_tbank_original_comment_option(option):
+    namespace = cli.init_parser().parse_args(
+        ["pa", "tbank2csv", option, "statement.pdf"]
+    )
+
+    assert namespace.original_comment is True
+
+
+@pytest.mark.parametrize("option", ["-0", "--dry-run"])
+def test_parser_accepts_ozon2csv_options(option):
+    namespace = cli.init_parser().parse_args(
+        ["pa", "ozon2csv", option, "statement.pdf"]
+    )
+
+    assert namespace.dry_run is True
+    assert callable(namespace.func)
+
+
+@pytest.mark.parametrize("option", ["-O", "--original-comment"])
+def test_parser_accepts_ozon_original_comment_option(option):
+    namespace = cli.init_parser().parse_args(
+        ["pa", "ozon2csv", option, "statement.pdf"]
+    )
+
+    assert namespace.original_comment is True
+
+
 @pytest.mark.parametrize("option", ["-t", "--table"])
 def test_parser_sets_table_for_image_diff(option):
     namespace = cli.init_parser().parse_args(
@@ -193,6 +240,7 @@ def test_parser_keeps_pdf_commands(command):
         (["-M"], 200),
         (["-l"], 150),
         (["-L"], 96),
+        (["-d", "800"], 800),
         (["--dpi", "800"], 800),
     ],
 )
@@ -298,6 +346,132 @@ def test_file_keeps_compare():
 
 
 @pytest.mark.parametrize(
+    "arguments",
+    [
+        ["arch", "fns-extract", "-0", "export.json"],
+        ["arch", "fns-extract", "--dry-run", "export.json"],
+        ["arch", "fns-rename", "-0"],
+        ["arch", "fns-rename", "--dry-run"],
+        ["vid", "compress", "-0", "movie.mov"],
+        ["im", "convert", "-0"],
+        ["im", "convert", "--dry-run"],
+    ],
+)
+def test_parser_accepts_dry_run_short_option(arguments):
+    namespace = cli.init_parser().parse_args(arguments)
+
+    assert namespace.dry_run is True
+
+
+def test_fns_extract_parser_output_options():
+    namespace = cli.init_parser().parse_args(
+        ["arch", "fns-extract", "-A", "-t", "pdf", "export.json"]
+    )
+
+    assert namespace.no_autogen is True
+    assert namespace.type == "pdf"
+
+
+def test_fns_extract_parser_defaults_to_html():
+    namespace = cli.init_parser().parse_args(
+        ["arch", "fns-extract", "export.json"]
+    )
+
+    assert namespace.no_autogen is False
+    assert namespace.type == "html"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["file", "rename", "-C"],
+        ["file", "iphone-clean-live", "-C"],
+        ["file", "compare", "-C"],
+        ["vid", "convert", "-C"],
+        ["vid", "split", "-C", "input.mp4", "00:00:10"],
+        ["vid", "trim", "-C"],
+        ["vid", "web", "-C"],
+        ["im", "recover", "-C"],
+        ["im", "downscale", "-C"],
+    ],
+)
+def test_parser_uses_uppercase_short_option_for_commit(arguments):
+    namespace = cli.init_parser().parse_args(arguments)
+
+    assert namespace.commit is True
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["file", "rename", "-c"],
+    ],
+)
+def test_parser_uses_lowercase_short_option_for_copy(arguments):
+    namespace = cli.init_parser().parse_args(arguments)
+
+    assert namespace.copy is True
+    assert namespace.commit is False
+
+
+@pytest.mark.parametrize(
+    ("arguments", "handler_name"),
+    [
+        (["file", "rename", "-c", "-C"], "command_regexp"),
+    ],
+)
+def test_parser_forwards_copy_and_commit_options(
+    mocker, arguments, handler_name
+):
+    handler = mocker.patch.object(photo_cli.helpers, handler_name)
+    namespace = cli.init_parser().parse_args(arguments)
+
+    namespace.func(namespace)
+
+    assert handler.call_args.kwargs["copy"] is True
+    assert handler.call_args.kwargs["commit"] is True
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["pdf", "info", "-c"],
+        ["pdf", "info", "--compact"],
+    ],
+)
+def test_parser_accepts_compact_pdf_info_option(arguments):
+    namespace = cli.init_parser().parse_args(arguments)
+
+    assert namespace.compact is True
+
+
+@pytest.mark.parametrize("option", ["-a", "--all"])
+def test_cit_parser_accepts_all_short_option(option):
+    namespace = cli.init_parser().parse_args(["cit", option])
+
+    assert namespace.all is True
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["arch", "fns-rename", "-c"],
+        ["vid", "convert", "-c"],
+        ["vid", "split", "-c", "input.mp4", "00:00:10"],
+        ["vid", "trim", "-c"],
+        ["vid", "web", "-c"],
+        ["im", "convert", "-C"],
+        ["im", "recover", "-c"],
+        ["im", "downscale", "-c"],
+        ["cit", "-A"],
+    ],
+)
+def test_parser_rejects_removed_conflicting_short_options(arguments):
+    with pytest.raises(SystemExit):
+        cli.init_parser().parse_args(arguments)
+
+
+@pytest.mark.parametrize(
     "command",
     [
         "rename",
@@ -340,6 +514,29 @@ def test_parser_rejects_removed_clips_group():
 def test_photo_cli_rejects_legacy_clip_commands(arguments):
     with pytest.raises(SystemExit):
         photo_cli.init_parser()[0].parse_args(arguments)
+
+
+def test_im_convert_cli_forwards_options(mocker):
+    handler = mocker.patch.object(photo_cli.helpers, "command_convert")
+    namespace = cli.init_parser().parse_args(
+        ["im", "convert", "--dry-run", "-W", "-D", "-v", "-r", "photo.jpg"]
+    )
+
+    namespace.func(namespace)
+
+    assert handler.call_args.kwargs == {
+        "root": "photo.jpg",
+        "replace": "[source]_converted.[Ext]",
+        "recursive": True,
+        "rename_processed": False,
+        "dry_run": True,
+        "rewrite": True,
+        "thumbnail": None,
+        "skip_no_exif": False,
+        "drop_alpha": False,
+        "separate_dir": True,
+        "verbose": True,
+    }
 
 
 def test_vid_compress_cli_forwards_options(mocker):

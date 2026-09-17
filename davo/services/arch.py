@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +14,8 @@ from pathlib import Path
 import qrcode
 import yaml
 
-from davo import errors
+from davo import errors, settings
+from davo.utils import conf as config_utils
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +23,8 @@ _DATE_RE = re.compile(
     r"Дата\s*:\s*(?P<day>\d{2})\.(?P<month>\d{2})\.(?P<year>\d{2})\b",
     re.IGNORECASE,
 )
-_PLACE_RE = re.compile(
-    r"Место\s+расчета\s*:\s*(?P<place>.*?)\s*</td\s*>",
+_USER_RE = re.compile(
+    r"Пользователь\s*:\s*(?P<user>.*?)\s*</td\s*>",
     re.IGNORECASE | re.DOTALL,
 )
 _TAGS_RE = re.compile(r"<[^>]+>")
@@ -31,7 +33,73 @@ _AUTOGEN_ID_RE = re.compile(
     r"fn=(?P<fn>[^\s]+)\s+fd=(?P<fd>[^\s]+)\s+fp=(?P<fp>[^\s]+)\s*-->",
     re.IGNORECASE,
 )
+_PDF_AUTOGEN_ID_RE = re.compile(
+    r"davo-fns-autogen\s+fiscal-identity:\s*"
+    r"fn=(?P<fn>[^\s]+)\s+fd=(?P<fd>[^\s]+)\s+fp=(?P<fp>[^\s;]+)",
+    re.IGNORECASE,
+)
+_FNS_HTML_ID_RE = re.compile(
+    r"(?:^|\s)ФН(?:Д)?\s*(?:[:№#N]\s*)+(?P<fn>\d+)"
+    r".*?(?:^|\s)ФД\s*(?:[:№#N]\s*)+(?P<fd>\d+)"
+    r".*?(?:^|\s)ФП(?:Д)?\s*(?:[:№#N]\s*)+(?P<fp>\d+)",
+    re.IGNORECASE | re.DOTALL,
+)
+_FNS_EXTRACT_TYPES = {"html", "pdf"}
 _UNSAFE_FILENAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_FNS_META_FIELDS = (
+    "retailPlace",
+    "userInn",
+    "retailPlaceAddress",
+    "sellerAddress",
+)
+_ARCHIVE_CODES = frozenset(
+    {
+        "REC",
+        "INV",
+        "TRN",
+        "TCK",
+        "BPD",
+        "FIN",
+        "ACT",
+        "CLM",
+        "CMP",
+        "WRN",
+        "TAX",
+        "STM",
+    }
+)
+_ARCHIVE_TYPE_CODES = {
+    "check": "REC",
+    "чек": "REC",
+    "receipt": "REC",
+    "r": "REC",
+    "ч": "REC",
+    "purchase": "REC",
+    "recept": "REC",
+    "receip": "REC",
+    "invoice": "INV",
+    "счет": "INV",
+    "i": "INV",
+    "transfer": "TRN",
+    "ticket": "TCK",
+    "pass": "TCK",
+    "voucher": "TCK",
+    "bp": "BPD",
+    "посадочные": "BPD",
+    "fine": "FIN",
+    "notice": "FIN",
+    "act": "ACT",
+    "акт": "ACT",
+    "claim": "CLM",
+    "compensation": "CMP",
+    "warranty": "WRN",
+    "guaranty": "WRN",
+    "tax": "TAX",
+    "выписка": "STM",
+}
+_ARCHIVE_NAME_RE = re.compile(
+    r"^(?P<date>\d{8})[ _]+(?P<type>[^ _]+)(?P<detail>(?:[ _]+.*)?)$"
+)
 
 
 @dataclass(frozen=True)
@@ -40,63 +108,116 @@ class FnsRename:
     target: Path
 
 
-def _normalise_place(value):
+@dataclass(frozen=True)
+class ArchiveRename:
+    """One archive document rename, excluding an optional sidecar."""
+
+    source: Path
+    target: Path
+
+
+@dataclass(frozen=True)
+class FnsDedupFile:
+    """Fiscal identities found in one input file."""
+
+    path: Path
+    identities: frozenset[tuple[str, str, str]]
+
+
+@dataclass(frozen=True)
+class FnsDedupMatch:
+    """A receipt identity found in a candidate file and a reference file."""
+
+    candidate: Path
+    identity: tuple[str, str, str]
+    reference: Path
+
+
+def _normalise_value(value):
     value = html.unescape(_TAGS_RE.sub(" ", value))
     return " ".join(value.split()).rstrip("/").rstrip()
 
 
-def _safe_store_name(value):
+def _safe_user_name(value):
     """Return a portable, human-readable filename component."""
-    value = _UNSAFE_FILENAME_RE.sub(" ", _normalise_place(str(value)))
+    value = _UNSAFE_FILENAME_RE.sub(" ", _normalise_value(str(value)))
     return " ".join(value.split()).strip(". ") or "receipt"
 
 
-def find_fns_config(start=None, config=None):
-    """Find a supplied config or the nearest project .dtconf file."""
-    if config:
-        return Path(config).expanduser().resolve()
-    current = Path(start or os.getcwd()).expanduser().resolve()
-    if current.is_file():
-        current = current.parent
-    for directory in (current, *current.parents):
-        candidate = directory / ".dtconf"
-        if candidate.is_file():
-            return candidate
-    return None
+_QUOTES_RE = re.compile(r'["\'«»„“”‟‹›〝〞「」『』《》]')
+_LEGAL_FORM_RE = re.compile(
+    r"\b(?:"
+    r"индивидуальн(?:ый|ая)\s+предпринимател(?:ь|я)|"
+    r"общество\s+с\s+ограниченной\s+ответственностью|"
+    r"публичное\s+акционерное\s+общество|"
+    r"непубличное\s+акционерное\s+общество|"
+    r"акционерное\s+общество|"
+    r"общество\s+с\s+дополнительной\s+ответственностью|"
+    r"ооо|зао|пао|оао|нао|ао|ип"
+    r")\b",
+    re.IGNORECASE,
+)
+_EDGE_SEPARATORS_RE = re.compile(
+    r"^[\s,.;:—–\-_()\[\]{}]+|[\s,.;:—–\-_()\[\]{}]+$"
+)
+_FIO_INITIALS_RE = re.compile(
+    r"^(?P<surname>[А-ЯЁ][А-ЯЁа-яё-]+)\s+"
+    r"[А-ЯЁ]\.?\s*[А-ЯЁ]\.?$"
+)
+_FIO_PATRONYMIC_RE = re.compile(
+    r"^(?P<surname>[А-ЯЁ][А-ЯЁа-яё-]+)\s+"
+    r"[А-ЯЁ][А-ЯЁа-яё-]+\s+"
+    r"[А-ЯЁ][А-ЯЁа-яё-]+(?:вич|вна|ична|оглы|кызы)$",
+    re.IGNORECASE,
+)
 
 
-def load_fns_store_names(start=None, config=None):
-    """Read FNS store aliases without requiring a project configuration."""
-    config_path = find_fns_config(start=start, config=config)
-    if config_path is None:
-        return {}, None
-    try:
-        contents = (
-            yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-            if config_path.exists()
-            else {}
-        )
-    except (OSError, yaml.YAMLError) as exc:
-        raise errors.UserError(
-            "Invalid config {}: {}".format(config_path, exc)
-        )
-    if not isinstance(contents, dict):
-        raise errors.UserError(
-            "Invalid config {}: expected a mapping".format(config_path)
-        )
-    store_names = contents.get("fns", {}).get("store_names", {})
-    if not isinstance(store_names, dict):
-        raise errors.UserError("Invalid fns.store_names: expected a mapping")
+def _normalise_user(value):
+    """Make an unmapped FNS seller name suitable for a receipt filename."""
+    value = _normalise_value(str(value))
+    value = _QUOTES_RE.sub("", value)
+    while True:
+        previous = value
+        value = _EDGE_SEPARATORS_RE.sub("", value)
+        value = _LEGAL_FORM_RE.sub("", value, count=1)
+        value = _EDGE_SEPARATORS_RE.sub("", value)
+        if value == previous:
+            break
+    value = " ".join(value.split())
+    match = _FIO_INITIALS_RE.match(value) or _FIO_PATRONYMIC_RE.match(value)
+    if match:
+        value = "ИП " + match.group("surname")
+    return _safe_user_name(value)
+
+
+def find_fns_config(start=None):
+    """Return the nearest project configuration used by FNS writes."""
+    return config_utils.find_project_config(start)
+
+
+def load_fns_user_names(start=None):
+    """Read FNS seller aliases without requiring a project configuration."""
+    contents, _user_path, config_path = config_utils.load_davo_config(start)
+    fns = contents.get("fns", {})
+    if not isinstance(fns, dict):
+        raise errors.UserError("Invalid fns: expected a mapping")
+    user_names = fns.get("user_names", {})
+    if not isinstance(user_names, dict):
+        raise errors.UserError("Invalid fns.user_names: expected a mapping")
     return {
-        str(key): str(value) for key, value in store_names.items()
+        str(key): str(value) for key, value in user_names.items()
     }, config_path
 
 
-def _store_name(place, store_names):
-    return _safe_store_name(store_names.get(str(place), place))
+def _user_name(user, user_names):
+    user = str(user)
+    if user in user_names:
+        alias = user_names[user]
+        return "" if alias == "" else _safe_user_name(alias)
+    return _normalise_user(user)
 
 
-def extract_fns_name(path, store_names=None):
+def extract_fns_name(path, user_names=None):
     """Return the unnumbered target filename encoded in an FNS receipt."""
     try:
         contents = path.read_text(encoding="utf-8")
@@ -107,18 +228,22 @@ def extract_fns_name(path, store_names=None):
     if date is None:
         raise ValueError("receipt date is missing")
 
-    place = _PLACE_RE.search(contents)
-    if place is None:
-        raise ValueError("receipt place is missing")
+    user = _USER_RE.search(contents)
+    if user is None:
+        raise ValueError("receipt user is missing")
 
-    raw_store = _normalise_place(place.group("place"))
-    store = _store_name(raw_store, store_names or {})
-    if not store:
-        raise ValueError("receipt place is empty")
+    raw_user = _normalise_value(user.group("user"))
+    if not raw_user:
+        raise ValueError("receipt user is empty")
+    seller = _user_name(raw_user, user_names or {})
 
-    return "20{}{}{} REC {}.html".format(
-        date.group("year"), date.group("month"), date.group("day"), store
+    date_part = "20{}{}{}".format(
+        date.group("year"), date.group("month"), date.group("day")
     )
+    parts = [date_part, "REC"]
+    if seller:
+        parts.append(seller)
+    return " ".join(parts) + ".html"
 
 
 def _number_names(files):
@@ -139,16 +264,16 @@ def _number_names(files):
     return names
 
 
-def plan_fns_rename(root, config=None):
+def plan_fns_rename(root):
     """Build an FNS receipt rename plan for direct HTML children of *root*."""
     root = Path(root)
-    store_names, _config_path = load_fns_store_names(root, config=config)
+    user_names, _config_path = load_fns_user_names(root)
     candidates = []
     for path in sorted(root.iterdir(), key=lambda item: item.name):
         if not path.is_file() or path.suffix.lower() not in {".htm", ".html"}:
             continue
         try:
-            candidates.append((path, extract_fns_name(path, store_names)))
+            candidates.append((path, extract_fns_name(path, user_names)))
         except (OSError, ValueError) as exc:
             logger.warning(
                 "fns-rename: skip %s: %s", _display_path(path, root), exc
@@ -171,14 +296,14 @@ def _display_path(path, root):
     return path.relative_to(root)
 
 
-def command_fns_rename(root, commit=False, rename=False, config=None):
-    """Plan or apply names for FNS receipt HTML files in one directory."""
+def command_fns_rename(root, rename=False, dry_run=False):
+    """Copy or rename FNS receipts, optionally only reporting the plan."""
     root = Path(root)
     if not root.is_dir():
         logger.warning("fns-rename: directory not found: %s", root)
         return
 
-    plan = plan_fns_rename(root, config=config)
+    plan = plan_fns_rename(root)
     collisions = {item.target for item in plan if item.target.exists()}
     for target in sorted(collisions):
         logger.warning(
@@ -187,16 +312,17 @@ def command_fns_rename(root, commit=False, rename=False, config=None):
         )
 
     action = "rename" if rename else "copy"
+    log_action = "would {}".format(action) if dry_run else action
     for item in plan:
         if item.target in collisions:
             continue
         logger.info(
             "fns-rename: %s %s -> %s",
-            action,
+            log_action,
             _display_path(item.source, root),
             _display_path(item.target, root),
         )
-        if not commit:
+        if dry_run:
             continue
         try:
             if rename:
@@ -214,12 +340,203 @@ def command_fns_rename(root, commit=False, rename=False, config=None):
             )
 
 
+def _normalised_archive_name(path, underscores=False):
+    """Return a normalized filename for *path*, or ``None`` if unchanged."""
+    if path.name.endswith(".drj.json"):
+        stem = path.name.removesuffix(".drj.json")
+        suffix = ".drj.json"
+    else:
+        stem = path.stem
+        suffix = path.suffix
+
+    match = _ARCHIVE_NAME_RE.match(stem)
+    if match is None:
+        return None
+
+    document_type = match.group("type")
+    if document_type in _ARCHIVE_CODES:
+        code = document_type
+    else:
+        code = _ARCHIVE_TYPE_CODES.get(document_type.casefold())
+        if code is None:
+            return None
+
+    parts = [match.group("date"), code]
+    detail = match.group("detail").strip(" _")
+    detail_parts = [part for part in re.split(r"[ _]+", detail) if part]
+    if document_type in {"claim", "compensation"}:
+        if detail_parts[:1] == ["insurance"]:
+            detail_parts.pop(0)
+        detail_parts = [
+            "+REC" if part == "+invoice" else part
+            for part in detail_parts
+        ]
+    parts.extend(detail_parts)
+    separator = "_" if underscores else " "
+    target_name = separator.join(parts) + suffix
+    return target_name if target_name != path.name else None
+
+
+def _check_norm_files(paths, recursive=False):
+    """Collect regular input files for archive name normalization."""
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    files = []
+    seen = set()
+    for raw_path in paths:
+        path = Path(raw_path)
+        if path.is_file():
+            candidates = [path]
+        elif path.is_dir():
+            candidates = (
+                sorted(path.rglob("*"))
+                if recursive
+                else sorted(path.iterdir())
+            )
+        else:
+            logger.warning("check-norm: path not found: %s", path)
+            continue
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            files.append(candidate)
+    return files
+
+
+def plan_check_norm(paths, recursive=False, underscores=False):
+    """Build a normalization plan for archive files in *paths*."""
+    plan = []
+    for source in _check_norm_files(paths, recursive=recursive):
+        target_name = _normalised_archive_name(source, underscores=underscores)
+        if target_name is not None:
+            plan.append(ArchiveRename(source, source.with_name(target_name)))
+    return plan
+
+
+def _check_norm_collisions(operations):
+    """Return collision reasons for every invalid planned operation."""
+    sources_by_target = defaultdict(list)
+    for operation in operations:
+        sources_by_target[operation.target].append(operation.source)
+
+    collisions = {}
+    for target, sources in sources_by_target.items():
+        if len(sources) > 1:
+            for source in sources:
+                collisions[(source, target)] = (
+                    "multiple sources have the same target"
+                )
+        if target.exists():
+            for source in sources:
+                collisions[(source, target)] = "target already exists"
+    return collisions
+
+
+def _check_norm_display_path(path):
+    """Return *path* relative to the current working directory."""
+    try:
+        return os.path.relpath(path, os.getcwd())
+    except ValueError:
+        # Different Windows drives have no relative representation.
+        return str(path)
+
+
+def _format_check_norm_table(rows):
+    """Return archive normalization rows as an ASCII table."""
+    headers = ("Action", "Source", "Target", "Details")
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, value in enumerate(row):
+            widths[index] = max(widths[index], len(value))
+
+    border = "+{}+".format("+".join("-" * (width + 2) for width in widths))
+
+    def format_row(row):
+        return "| {} |".format(
+            " | ".join(
+                value.ljust(widths[index])
+                for index, value in enumerate(row)
+            )
+        )
+
+    return "\n".join(
+        (
+            border,
+            format_row(headers),
+            border,
+            *(format_row(row) for row in rows),
+            border,
+        )
+    )
+
+
+def _log_check_norm_operations(operations, collisions, dry_run, table):
+    """Log the complete rename plan in a compact or tabular form."""
+    rows = []
+    for operation in operations:
+        collision = collisions.get((operation.source, operation.target))
+        if collision:
+            action = "collision"
+        elif dry_run:
+            action = "would rename"
+        else:
+            action = "rename"
+        rows.append(
+            (
+                action,
+                _check_norm_display_path(operation.source),
+                _check_norm_display_path(operation.target),
+                collision or "",
+            )
+        )
+
+    if table:
+        if rows:
+            log = logger.error if collisions else logger.info
+            log("check-norm:\n%s", _format_check_norm_table(rows))
+        return
+
+    action_width = max((len(row[0]) for row in rows), default=0)
+    source_width = max((len(row[1]) for row in rows), default=0)
+    for action, source, target, details in rows:
+        log = logger.error if details else logger.info
+        message = "check-norm: {}  {} -> {}".format(
+            action.ljust(action_width), source.ljust(source_width), target
+        )
+        if details:
+            message += ": " + details
+        log(message)
+
+
+def command_check_norm(
+    paths, recursive=False, dry_run=False, underscores=False, table=False
+):
+    """Normalize legacy archive file names."""
+    plan = plan_check_norm(
+        paths, recursive=recursive, underscores=underscores
+    )
+    collisions = _check_norm_collisions(plan)
+
+    _log_check_norm_operations(plan, collisions, dry_run, table)
+
+    if dry_run or collisions:
+        return plan
+
+    for operation in plan:
+        operation.source.rename(operation.target)
+    return plan
+
+
 @dataclass(frozen=True)
 class FnsReceipt:
     receipt: dict
     identity: tuple[str, str, str]
     date: str
-    store: str
+    user: str
 
 
 def _money(value):
@@ -233,7 +550,7 @@ def _required(receipt, name):
     return value
 
 
-def _receipt_from_entry(entry, store_names):
+def _receipt_from_entry(entry, user_names):
     try:
         receipt = entry["ticket"]["document"]["receipt"]
     except (KeyError, TypeError) as exc:
@@ -255,7 +572,7 @@ def _receipt_from_entry(entry, store_names):
             )
         )
         _required(receipt, "totalSum")
-        place = str(_required(receipt, "retailPlace"))
+        user = str(_required(receipt, "user"))
         items = _required(receipt, "items")
         if not isinstance(items, list):
             raise ValueError("items is not a list")
@@ -263,7 +580,7 @@ def _receipt_from_entry(entry, store_names):
             raise ValueError("an item is not an object")
     except (TypeError, ValueError) as exc:
         raise ValueError(str(exc)) from exc
-    return FnsReceipt(receipt, identity, date, _store_name(place, store_names))
+    return FnsReceipt(receipt, identity, date, _user_name(user, user_names))
 
 
 def _qr_payload(receipt):
@@ -365,35 +682,131 @@ src="data:image/png;base64,{qr}"></body></html>""".format(
     )
 
 
-def _existing_fiscal_identities(root):
+def _existing_fiscal_identities(root, output_type):
+    """Return identities already exported in the requested output type."""
     existing = set()
     for path in root.iterdir():
-        if path.is_file() and path.suffix.lower() in {".htm", ".html"}:
+        if not path.is_file():
+            continue
+        if output_type == "html" and path.suffix.lower() in {".htm", ".html"}:
             try:
                 match = _AUTOGEN_ID_RE.search(path.read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError):
                 continue
             if match:
                 existing.add((match["fn"], match["fd"], match["fp"]))
+        elif output_type == "pdf" and path.suffix.lower() == ".pdf":
+            try:
+                from davo.services.photo import pdf  # pylint: disable=C0415
+
+                fitz = pdf._import_fitz(  # pylint: disable=W0212
+                    "FNS receipt inspection"
+                )
+                with pdf._open_pdf(  # pylint: disable=W0212
+                    fitz, str(path), "FNS receipt inspection"
+                ) as doc:
+                    match = _PDF_AUTOGEN_ID_RE.search(
+                        (doc.metadata or {}).get(  # pylint: disable=E1101
+                            "keywords"
+                        )
+                        or ""
+                    )
+            except Exception:  # pylint: disable=W0718
+                # Foreign and corrupt PDFs are irrelevant here.
+                continue
+            if match:
+                existing.add((match["fn"], match["fd"], match["fp"]))
     return existing
 
 
-def _target_name(receipt, multiple, root, reserved):
-    base = "{} REC {} autogen".format(receipt.date, receipt.store)
+def _target_name(
+    receipt, multiple, root, reserved, *, output_type, no_autogen
+):
+    parts = [receipt.date, "REC"]
+    if receipt.user:
+        parts.append(receipt.user)
+    if not no_autogen:
+        parts.append("autogen")
+    base = " ".join(parts)
+    suffix = ".{}".format(output_type)
     if not multiple:
-        candidate = root / (base + ".html")
+        candidate = root / (base + suffix)
         if candidate not in reserved and not candidate.exists():
             return candidate
     index = 1
     while True:
-        candidate = root / "{} {}.html".format(base, index)
+        candidate = root / "{} {}{}".format(base, index, suffix)
         if candidate not in reserved and not candidate.exists():
             return candidate
         index += 1
 
 
-def command_fns_extract(json_path, out_dir=None, config=None, dry_run=False):
+def _pdf_metadata_identity(receipt):
+    fn, fd, fp = receipt.identity
+    return "davo-fns-autogen fiscal-identity: fn={} fd={} fp={}".format(
+        fn, fd, fp
+    )
+
+
+def _write_fns_pdf(target, receipt_html, receipt):
+    """Render receipt HTML into a checked PDF carrying its resume marker."""
+    from davo.services.photo import pdf  # pylint: disable=C0415
+
+    try:
+        fitz = pdf._import_fitz("FNS receipt creation")  # pylint: disable=W0212
+        with tempfile.TemporaryDirectory(prefix="davo-fns-") as temp_dir:
+            source = Path(temp_dir) / "receipt.html"
+            source.write_text(receipt_html, encoding="utf-8")
+            rendered = pdf._render_html_to_pdf(  # pylint: disable=W0212
+                fitz, str(source), temp_dir
+            )
+            marked = Path(temp_dir) / "receipt.pdf"
+            with pdf._open_pdf(  # pylint: disable=W0212
+                fitz, rendered, "FNS receipt creation"
+            ) as doc:
+                metadata = dict(doc.metadata or {})  # pylint: disable=E1101
+                keywords = metadata.get("keywords") or ""
+                marker = _pdf_metadata_identity(receipt)
+                metadata["keywords"] = "; ".join(
+                    part for part in (keywords, marker) if part
+                )
+                doc.set_metadata(metadata)  # pylint: disable=E1101
+                doc.save(str(marked))
+            with pdf._open_pdf(  # pylint: disable=W0212
+                fitz, str(marked), "FNS receipt creation"
+            ) as doc:
+                if doc.page_count == 0:
+                    raise ValueError("renderer produced an empty PDF")
+            created = False
+            try:
+                with target.open("xb") as output:
+                    created = True
+                    with marked.open("rb") as source_pdf:
+                        shutil.copyfileobj(source_pdf, output)
+            except Exception:
+                # Only remove a file created here; never replace a collision.
+                if created and target.exists():
+                    target.unlink()
+                raise
+    except Exception as exc:
+        raise errors.UserError(
+            "fns-extract: PDF render failed: {}".format(exc)
+        ) from exc
+
+
+def command_fns_extract(
+    json_path,
+    out_dir=None,
+    dry_run=False,
+    *,
+    output_type="html",
+    no_autogen=False,
+):
     """Render FNS JSON receipts and return generated paths."""
+    if output_type not in _FNS_EXTRACT_TYPES:
+        raise errors.UserError(
+            "fns-extract: invalid output type: {}".format(output_type)
+        )
     source = Path(json_path)
     try:
         entries = json.loads(source.read_text(encoding="utf-8"))
@@ -406,13 +819,11 @@ def command_fns_extract(json_path, out_dir=None, config=None, dry_run=False):
         raise errors.UserError(
             "fns-extract: output directory not found: {}".format(root)
         )
-    store_names, _config_path = load_fns_store_names(
-        os.getcwd(), config=config
-    )
+    user_names, _config_path = load_fns_user_names(os.getcwd())
     receipts, failed = [], []
     for index, entry in enumerate(entries, start=1):
         try:
-            receipts.append(_receipt_from_entry(entry, store_names))
+            receipts.append(_receipt_from_entry(entry, user_names))
         except ValueError as exc:
             failed.append("entry {}: {}".format(index, exc))
     if failed:
@@ -427,7 +838,7 @@ def command_fns_extract(json_path, out_dir=None, config=None, dry_run=False):
         raise errors.UserError(
             "fns-extract: input contains duplicate fiscal identities"
         )
-    existing = _existing_fiscal_identities(root)
+    existing = _existing_fiscal_identities(root, output_type)
     missing = [item for item in receipts if item.identity not in existing]
     if not missing:
         if failed:
@@ -439,11 +850,16 @@ def command_fns_extract(json_path, out_dir=None, config=None, dry_run=False):
         )
     counts = defaultdict(int)
     for item in receipts:
-        counts[(item.date, item.store)] += 1
+        counts[(item.date, item.user)] += 1
     reserved, plan = set(), []
     for item in missing:
         target = _target_name(
-            item, counts[(item.date, item.store)] > 1, root, reserved
+            item,
+            counts[(item.date, item.user)] > 1,
+            root,
+            reserved,
+            output_type=output_type,
+            no_autogen=no_autogen,
         )
         reserved.add(target)
         plan.append((item, target))
@@ -452,14 +868,19 @@ def command_fns_extract(json_path, out_dir=None, config=None, dry_run=False):
             logger.info("fns-extract: existing receipt %s", item.identity)
     rendered = []
     try:
-        rendered = [(target, _receipt_html(item)) for item, target in plan]
+        rendered = [
+            (item, target, _receipt_html(item)) for item, target in plan
+        ]
     except (TypeError, ValueError, KeyError) as exc:
         raise errors.UserError("fns-extract: invalid receipt: {}".format(exc))
-    for target, receipt_html in rendered:
+    for item, target, receipt_html in rendered:
         message = "would create" if dry_run else "create"
         logger.info("fns-extract: %s %s", message, target.name)
         if not dry_run:
-            target.write_text(receipt_html, encoding="utf-8")
+            if output_type == "html":
+                target.write_text(receipt_html, encoding="utf-8")
+            else:
+                _write_fns_pdf(target, receipt_html, item)
     if failed:
         raise errors.UserError(
             "fns-extract: {} invalid receipt(s)".format(len(failed))
@@ -467,8 +888,294 @@ def command_fns_extract(json_path, out_dir=None, config=None, dry_run=False):
     return [target for _item, target in plan]
 
 
-def command_fns_config_init_map(json_path, config=None, verbose=False):
-    """Add previously unseen retail places to fns.store_names."""
+def _receipt_identity(receipt):
+    """Return an FNS identity if *receipt* has all three fiscal fields."""
+    if not isinstance(receipt, dict):
+        return None
+    values = []
+    for name in (
+        "fiscalDriveNumber",
+        "fiscalDocumentNumber",
+        "fiscalSign",
+    ):
+        value = receipt.get(name)
+        if value is None or not str(value).strip():
+            return None
+        values.append(str(value).strip())
+    return tuple(values)
+
+
+def _json_fiscal_identities(contents):
+    """Find receipt objects in an FNS JSON export, regardless of nesting."""
+    identities = set()
+
+    def visit(value):
+        if isinstance(value, dict):
+            identity = _receipt_identity(value)
+            if identity:
+                identities.add(identity)
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(contents)
+    return identities
+
+
+def _html_fiscal_identities(contents):
+    match = _AUTOGEN_ID_RE.search(contents)
+    if match:
+        return {(match["fn"], match["fd"], match["fp"])}
+    match = _FNS_HTML_ID_RE.search(_normalise_value(contents))
+    if match:
+        return {(match["fn"], match["fd"], match["fp"])}
+    return set()
+
+
+def _pdf_fiscal_identities(path):
+    from davo.services.photo import pdf  # pylint: disable=C0415
+
+    fitz = pdf._import_fitz("FNS receipt inspection")  # pylint: disable=W0212
+    with pdf._open_pdf(  # pylint: disable=W0212
+        fitz, str(path), "FNS receipt inspection"
+    ) as document:
+        match = _PDF_AUTOGEN_ID_RE.search(
+            (document.metadata or {}).get("keywords") or ""  # pylint: disable=E1101
+        )
+    if not match:
+        return set()
+    return {(match["fn"], match["fd"], match["fp"])}
+
+
+def _fiscal_identities_from_file(path, verbose=False):
+    suffix = path.suffix.lower()
+    try:
+        if suffix == ".json":
+            identities = _json_fiscal_identities(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+        elif suffix in {".htm", ".html"}:
+            try:
+                contents = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                contents = path.read_text(encoding="utf-8-sig")
+            identities = _html_fiscal_identities(contents)
+        elif suffix == ".pdf":
+            identities = _pdf_fiscal_identities(path)
+        else:
+            return None
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValueError,
+    ) as exc:
+        logger.warning("fns-dedup: skip %s: %s", path, exc)
+        return None
+    except Exception as exc:  # pylint: disable=W0718
+        # PDF parsing may fail for a corrupt PDF or when its optional backend
+        # is unavailable.  Neither condition should stop archive inspection.
+        logger.warning("fns-dedup: skip %s: %s", path, exc)
+        return None
+    if not identities:
+        if verbose:
+            logger.warning(
+                "fns-dedup: skip %s: no fiscal identity found", path
+            )
+        return None
+    return frozenset(identities)
+
+
+def _scan_fns_dedup_directories(directories, verbose=False):
+    files = []
+    roots = []
+    for directory in directories:
+        root = Path(directory)
+        if not root.is_dir():
+            logger.warning("fns-dedup: directory not found: %s", root)
+            continue
+        roots.append(root.resolve())
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            identities = _fiscal_identities_from_file(path, verbose=verbose)
+            if identities:
+                files.append(FnsDedupFile(path, identities))
+    return files, roots
+
+
+def _identity_text(identity):
+    return "fn={} fd={} fp={}".format(*identity)
+
+
+def command_fns_dedup(
+    directories, reference, delete=False, dry_run=False, verbose=False
+):
+    """Report receipts from *directories* already in *reference* archives.
+
+    Reference directories are strictly read-only, even if a directory was
+    accidentally supplied in both argument groups.
+    """
+    reference_files, reference_roots = _scan_fns_dedup_directories(
+        reference, verbose=verbose
+    )
+    candidate_files, _candidate_roots = _scan_fns_dedup_directories(
+        directories, verbose=verbose
+    )
+    references = {}
+    for file in reference_files:
+        for identity in file.identities:
+            references.setdefault(identity, file.path)
+
+    matches = []
+    for file in candidate_files:
+        for identity in sorted(file.identities):
+            source = references.get(identity)
+            if source:
+                matches.append(FnsDedupMatch(file.path, identity, source))
+                if not delete:
+                    logger.info(
+                        "fns-dedup: duplicate %s: %s; reference %s",
+                        file.path,
+                        _identity_text(identity),
+                        source,
+                    )
+
+    if not delete:
+        return matches
+
+    for file in candidate_files:
+        matched = file.identities.intersection(references)
+        if not matched:
+            continue
+        if matched != file.identities:
+            logger.warning(
+                "fns-dedup: keep %s: it also contains unique receipts",
+                file.path,
+            )
+            continue
+        resolved = file.path.resolve()
+        if any(resolved.is_relative_to(root) for root in reference_roots):
+            logger.warning("fns-dedup: keep reference file: %s", file.path)
+            continue
+        action = "would delete" if dry_run else "delete"
+        logger.info("fns-dedup: %s %s", action, file.path)
+        if not dry_run:
+            try:
+                file.path.unlink()
+            except OSError as exc:
+                logger.warning(
+                    "fns-dedup: cannot delete %s: %s", file.path, exc
+                )
+    return matches
+
+
+def _add_fns_metadata(metadata, user, receipt):
+    for field in _FNS_META_FIELDS:
+        value = receipt.get(field)
+        if value is None or value == "":
+            continue
+        value = _normalise_value(str(value))
+        if value and value not in metadata[user][field]:
+            metadata[user][field].append(value)
+
+
+def _metadata_comments(metadata):
+    return [
+        "# {}: {}".format(field, "; ".join(values))
+        for field in _FNS_META_FIELDS
+        for values in [metadata.get(field, [])]
+        if values
+    ]
+
+
+def _yaml_mapping_entry(key, value):
+    return yaml.safe_dump(
+        {key: value}, allow_unicode=True, sort_keys=False
+    ).splitlines()[0]
+
+
+def _existing_user_comments(config_text, user_names):
+    """Return comments immediately preceding existing user_names entries."""
+    lines = config_text.splitlines()
+    user_names_line = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.strip() == "user_names:"
+        ),
+        None,
+    )
+    if user_names_line is None:
+        return {}
+    parent_indent = len(lines[user_names_line]) - len(
+        lines[user_names_line].lstrip()
+    )
+    entry_indent = parent_indent + 2
+    entries = {
+        " " * entry_indent + _yaml_mapping_entry(user, value): str(user)
+        for user, value in user_names.items()
+    }
+    comments, pending = {}, []
+    for line in lines[user_names_line + 1 :]:
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+        if (
+            stripped
+            and not stripped.startswith("#")
+            and indent <= parent_indent
+        ):
+            break
+        if indent == entry_indent and stripped.startswith("#"):
+            pending.append(stripped)
+            continue
+        user = entries.get(line)
+        if user is not None:
+            if pending:
+                comments[user] = pending
+            pending = []
+            continue
+        if stripped or indent <= entry_indent:
+            pending = []
+    return comments
+
+
+def _dump_fns_config(contents, metadata, preserved_comments):
+    """Dump config and restore comments before user_names mappings."""
+    rendered = yaml.safe_dump(contents, allow_unicode=True, sort_keys=False)
+    comments_by_user = dict(preserved_comments)
+    comments_by_user.update(
+        {
+            user: _metadata_comments(user_metadata)
+            for user, user_metadata in metadata.items()
+        }
+    )
+    if not comments_by_user:
+        return rendered
+    lines = rendered.splitlines()
+    for user, comments in comments_by_user.items():
+        if not comments:
+            continue
+        entry = _yaml_mapping_entry(user, contents["fns"]["user_names"][user])
+        try:
+            index = lines.index("    " + entry)
+        except ValueError:
+            continue
+        lines[index:index] = ["    " + comment for comment in comments]
+    return "\n".join(lines) + "\n"
+
+
+def command_fns_config_init_map(
+    json_path,
+    local=False,
+    verbose=False,
+    normalise=False,
+    dry_run=False,
+    extra_meta=False,
+):
+    """Add previously unseen exact FNS users to fns.user_names."""
     source = Path(json_path)
     try:
         entries = json.loads(source.read_text(encoding="utf-8"))
@@ -476,17 +1183,19 @@ def command_fns_config_init_map(json_path, config=None, verbose=False):
         raise errors.UserError("fns-config: invalid JSON: {}".format(exc))
     if not isinstance(entries, list):
         raise errors.UserError("fns-config: expected a JSON array")
-    config_path = find_fns_config(os.getcwd(), config=config)
-    if config_path is None:
-        raise errors.UserError(
-            "fns-config: no .dtconf found; use --config PATH"
-        )
+    if local:
+        config_path = find_fns_config(os.getcwd())
+        if config_path is None:
+            config_path = Path.cwd() / settings.PROJECT_CONFIG_NAME
+    else:
+        config_path = Path(settings.CONFIG_PATH_DAVO_TOOLS).expanduser()
     try:
-        contents = (
-            yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        config_text = (
+            config_path.read_text(encoding="utf-8")
             if config_path.exists()
-            else {}
+            else ""
         )
+        contents = yaml.safe_load(config_text) or {}
     except (OSError, yaml.YAMLError) as exc:
         raise errors.UserError(
             "Invalid config {}: {}".format(config_path, exc)
@@ -498,38 +1207,60 @@ def command_fns_config_init_map(json_path, config=None, verbose=False):
     fns = contents.setdefault("fns", {})
     if not isinstance(fns, dict):
         raise errors.UserError("Invalid fns: expected a mapping")
-    store_names = fns.setdefault("store_names", {})
-    if not isinstance(store_names, dict):
-        raise errors.UserError("Invalid fns.store_names: expected a mapping")
-    seen_places = set()
+    user_names = fns.setdefault("user_names", {})
+    if not isinstance(user_names, dict):
+        raise errors.UserError("Invalid fns.user_names: expected a mapping")
+    preserved_comments = _existing_user_comments(config_text, user_names)
+    seen_users = set()
+    metadata = defaultdict(lambda: defaultdict(list))
     changes = []
     for entry in entries:
         try:
-            place = str(entry["ticket"]["document"]["receipt"]["retailPlace"])
+            receipt = entry["ticket"]["document"]["receipt"]
+            user = str(receipt["user"])
         except (KeyError, TypeError):
             continue
-        if place in seen_places:
+        if not isinstance(receipt, dict) or not user:
             continue
-        seen_places.add(place)
-        if place in store_names:
-            changes.append(("existing", place, store_names[place]))
+        if extra_meta:
+            _add_fns_metadata(metadata, user, receipt)
+        if user in seen_users:
             continue
-        store_name = _safe_store_name(place)
-        store_names[place] = store_name
-        changes.append(("added", place, store_name))
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
-        yaml.safe_dump(contents, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
-    logger.info("fns-config: updated %s", config_path)
-    if verbose:
-        for status, place, store_name in changes:
-            logger.info("fns-config: %s %s -> %s", status, place, store_name)
+        seen_users.add(user)
+        if user in user_names:
+            changes.append(("existing", user, user_names[user]))
+            continue
+        user_name = _normalise_user(user) if normalise else ""
+        user_names[user] = user_name
+        changes.append(("added", user, user_name))
+    if dry_run:
+        logger.info("fns-config: would update %s", config_path)
+    else:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            _dump_fns_config(
+                contents,
+                {
+                    user: metadata[user]
+                    for status, user, _user_name in changes
+                    if status == "added" and extra_meta
+                },
+                preserved_comments,
+            ),
+            encoding="utf-8",
+        )
+        logger.info("fns-config: updated %s", config_path)
+    if verbose or dry_run:
+        for status, user, user_name in changes:
+            action = "would add" if dry_run and status == "added" else status
+            logger.info("fns-config: %s %s -> %s", action, user, user_name)
+            if dry_run and extra_meta and status == "added":
+                for comment in _metadata_comments(metadata[user]):
+                    logger.info("fns-config: would add %s", comment)
 
 
-def command_fns_config_show_map(config=None):
-    store_names, config_path = load_fns_store_names(os.getcwd(), config=config)
-    logger.info("fns-config: %s", config_path or "no .dtconf")
-    for source, target in sorted(store_names.items()):
+def command_fns_config_show_map():
+    user_names, config_path = load_fns_user_names(os.getcwd())
+    logger.info("fns-config: %s", config_path or "no project config")
+    for source, target in sorted(user_names.items()):
         logger.info("%s: %s", source, target)

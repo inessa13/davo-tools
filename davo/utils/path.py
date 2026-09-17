@@ -89,6 +89,39 @@ def ensure(path, commit=False):
         os.makedirs(root)
 
 
+def command_output_dir(group, command, cwd=None):
+    """Return `<cwd>/davo_<group>_<command>` for `-D/--separate-dir` output."""
+    cwd = os.path.abspath(cwd or os.getcwd())
+    return os.path.join(cwd, "davo_{}_{}".format(group, command))
+
+
+def is_under(path, root):
+    """Return whether *path* is *root* or a file/dir inside it."""
+    path = os.path.normcase(os.path.abspath(path))
+    root = os.path.normcase(os.path.abspath(root))
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
+
+
+def mirrored_under(source, output_root, cwd=None):
+    """Mirror *source* under *output_root* using its path relative to *cwd*.
+
+    Return ``None`` when *source* is outside *cwd*.
+    """
+    cwd = os.path.abspath(cwd or os.getcwd())
+    source = os.path.abspath(source)
+    output_root = os.path.abspath(output_root)
+    try:
+        relative = os.path.relpath(source, cwd)
+    except ValueError:
+        return None
+    if relative == os.pardir or relative.startswith(os.pardir + os.sep):
+        return None
+    return os.path.join(output_root, relative)
+
+
 def file_hash(f_path):
     """
     Calculate file md5 hash.

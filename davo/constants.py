@@ -39,4 +39,4 @@ STATE_CHOICES = (
 )
 STATE_CHOICES_DICT = dict(STATE_CHOICES)
 
-LOCAL_CONF_PATH = ".dtconf"
+LOCAL_CONF_PATH = ".davo-tools.yaml"

@@ -30,60 +30,264 @@ def init_parser():
         "fns-rename", help="name FNS receipt HTML files"
     )
     fns_rename.add_argument("path", nargs="?", default=os.getcwd())
-    fns_rename.add_argument("--config", help="path to project .dtconf")
-    fns_rename.add_argument(
-        "-c", "--commit", action="store_true", help="apply changes"
-    )
     fns_rename.add_argument(
         "-R",
         "--rename",
         action="store_true",
         help="rename source files instead of copying them",
     )
+    fns_rename.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="show the rename plan without changing files",
+    )
     fns_rename.set_defaults(
         func=lambda namespace: services.arch.command_fns_rename(
             root=namespace.path,
-            commit=namespace.commit,
             rename=namespace.rename,
-            config=namespace.config,
+            dry_run=namespace.dry_run,
+        )
+    )
+
+    check_norm = arch_subparsers.add_parser(
+        "check-norm", help="normalize legacy archive document names"
+    )
+    check_norm.add_argument("paths", nargs="*", metavar="PATH")
+    check_norm.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="show the rename plan without changing files",
+    )
+    check_norm.add_argument(
+        "-r",
+        "--recursive",
+        action="store_true",
+        help="scan subdirectories recursively",
+    )
+    check_norm.add_argument(
+        "-u",
+        "--underscores",
+        action="store_true",
+        help="use underscores instead of spaces in normalized names",
+    )
+    check_norm.add_argument(
+        "-t",
+        "--table",
+        action="store_true",
+        help="print the rename plan as an ASCII table",
+    )
+    check_norm.set_defaults(
+        func=lambda namespace: services.arch.command_check_norm(
+            paths=namespace.paths or [os.getcwd()],
+            recursive=namespace.recursive,
+            dry_run=namespace.dry_run,
+            underscores=namespace.underscores,
+            table=namespace.table,
         )
     )
 
     fns_extract = arch_subparsers.add_parser(
-        "fns-extract", help="render FNS JSON receipts as HTML"
+        "fns-extract", help="render FNS JSON receipts as HTML or PDF"
     )
     fns_extract.add_argument("json_path")
     fns_extract.add_argument("-o", "--out-dir")
-    fns_extract.add_argument("--config", help="path to project .dtconf")
-    fns_extract.add_argument("--dry-run", action="store_true")
+    fns_extract.add_argument(
+        "-A",
+        "--no-autogen",
+        action="store_true",
+        help="omit autogen from generated filenames",
+    )
+    fns_extract.add_argument(
+        "-t",
+        "--type",
+        choices=("html", "pdf"),
+        default="html",
+        help="output type (default: html)",
+    )
+    fns_extract.add_argument("-0", "--dry-run", action="store_true")
     fns_extract.set_defaults(func=_run_fns_extract)
+
+    fns_dedup = arch_subparsers.add_parser(
+        "fns-dedup", help="find FNS receipts already present in an archive"
+    )
+    fns_dedup.add_argument(
+        "-d",
+        "--directories",
+        nargs="+",
+        required=True,
+        metavar="DIR",
+        help="candidate directories to scan recursively",
+    )
+    fns_dedup.add_argument(
+        "-r",
+        "--reference",
+        nargs="+",
+        required=True,
+        metavar="DIR",
+        help="reference archive directories to scan recursively",
+    )
+    fns_dedup.add_argument(
+        "-D",
+        "--delete",
+        action="store_true",
+        help="delete duplicate files from candidate directories",
+    )
+    fns_dedup.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="show deletions without changing files",
+    )
+    fns_dedup.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="show files without an FNS fiscal identity",
+    )
+    fns_dedup.set_defaults(
+        func=lambda namespace: services.arch.command_fns_dedup(
+            directories=namespace.directories,
+            reference=namespace.reference,
+            delete=namespace.delete,
+            dry_run=namespace.dry_run,
+            verbose=namespace.verbose,
+        )
+    )
 
     fns_config = arch_subparsers.add_parser(
         "fns-config", help="manage FNS receipt settings"
     )
     fns_config_subparsers = fns_config.add_subparsers(title="list of commands")
     fns_init_map = fns_config_subparsers.add_parser(
-        "init-map", help="add retail places from FNS JSON to .dtconf"
+        "init-map", help="add sellers from FNS JSON to davo-tools config"
     )
     fns_init_map.add_argument("json_path")
-    fns_init_map.add_argument("--config", help="path to project .dtconf")
+    fns_init_map.add_argument(
+        "--local",
+        action="store_true",
+        help="write the nearest project .davo-tools.yaml",
+    )
     fns_init_map.add_argument("-v", "--verbose", action="store_true")
+    fns_init_map.add_argument(
+        "-n",
+        "--normalise",
+        action="store_true",
+        help="pre-fill new aliases with normalized seller names",
+    )
+    fns_init_map.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="show changes without writing",
+    )
+    fns_init_map.add_argument(
+        "-e",
+        "--extra-meta",
+        action="store_true",
+        help="add receipt metadata comments for new sellers",
+    )
     fns_init_map.set_defaults(
         func=lambda namespace: services.arch.command_fns_config_init_map(
             namespace.json_path,
-            config=namespace.config,
+            local=namespace.local,
             verbose=namespace.verbose,
+            normalise=namespace.normalise,
+            dry_run=namespace.dry_run,
+            extra_meta=namespace.extra_meta,
         )
     )
     fns_show_map = fns_config_subparsers.add_parser(
-        "show-map", help="show effective FNS store aliases"
+        "show-map", help="show effective FNS seller aliases"
     )
-    fns_show_map.add_argument("--config", help="path to project .dtconf")
     fns_show_map.set_defaults(
-        func=lambda namespace: services.arch.command_fns_config_show_map(
-            config=namespace.config
-        )
+        func=lambda namespace: services.arch.command_fns_config_show_map()
     )
+
+    cmd = subparsers.add_parser("pa", help="personal accounting tools")
+    pa_subparsers = cmd.add_subparsers(title="list of commands")
+    sber2csv = pa_subparsers.add_parser(
+        "sber2csv", help="convert Sberbank PDF statements to expense CSV"
+    )
+    sber2csv.add_argument("paths", nargs="+", metavar="PATH")
+    sber2csv.add_argument("-o", "--out", dest="out_path")
+    sber2csv.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="validate without writing CSV",
+    )
+    sber2csv.add_argument(
+        "-v", "--verbose", action="store_true", help="show skipped PDF files"
+    )
+    sber2csv.add_argument(
+        "-W",
+        "--rewrite",
+        action="store_true",
+        help="replace automatic CSV targets",
+    )
+    sber2csv.add_argument(
+        "-O",
+        "--original-comment",
+        action="store_true",
+        help="add the complete original bank description in Оригинал",
+    )
+    sber2csv.set_defaults(func=_run_sber2csv)
+    tbank2csv = pa_subparsers.add_parser(
+        "tbank2csv", help="convert T-Bank PDF statements to expense CSV"
+    )
+    tbank2csv.add_argument("paths", nargs="+", metavar="PATH")
+    tbank2csv.add_argument("-o", "--out", dest="out_path")
+    tbank2csv.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="validate without writing CSV",
+    )
+    tbank2csv.add_argument(
+        "-v", "--verbose", action="store_true", help="show skipped PDF files"
+    )
+    tbank2csv.add_argument(
+        "-W",
+        "--rewrite",
+        action="store_true",
+        help="replace automatic CSV targets",
+    )
+    tbank2csv.add_argument(
+        "-O",
+        "--original-comment",
+        action="store_true",
+        help="add the complete original bank description in Оригинал",
+    )
+    tbank2csv.set_defaults(func=_run_tbank2csv)
+    ozon2csv = pa_subparsers.add_parser(
+        "ozon2csv", help="convert Ozon Bank PDF statements to expense CSV"
+    )
+    ozon2csv.add_argument("paths", nargs="+", metavar="PATH")
+    ozon2csv.add_argument("-o", "--out", dest="out_path")
+    ozon2csv.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="validate without writing CSV",
+    )
+    ozon2csv.add_argument(
+        "-v", "--verbose", action="store_true", help="show skipped PDF files"
+    )
+    ozon2csv.add_argument(
+        "-W",
+        "--rewrite",
+        action="store_true",
+        help="replace automatic CSV targets",
+    )
+    ozon2csv.add_argument(
+        "-O",
+        "--original-comment",
+        action="store_true",
+        help="add the complete original bank description in Оригинал",
+    )
+    ozon2csv.set_defaults(func=_run_ozon2csv)
 
     cmd = subparsers.add_parser("file", help="file tools")
     cmd, _subparsers = services.photo.cli.init_parser(
@@ -117,7 +321,6 @@ def init_parser():
     cmd.add_argument("account", nargs="?", action="store")
     cmd.set_defaults(
         func=lambda namespace: services.vpn.helpers.connect(
-            config_root=settings.CONFIG_PATH,
             account_name=namespace.account,
         )
     )
@@ -132,6 +335,7 @@ def init_parser():
         cmd,
         commands=(
             "config",
+            "init",
             "info",
             "buckets",
             "list",
@@ -151,8 +355,57 @@ def _run_fns_extract(namespace):
         return services.arch.command_fns_extract(
             namespace.json_path,
             out_dir=namespace.out_dir,
-            config=namespace.config,
             dry_run=namespace.dry_run,
+            output_type=namespace.type,
+            no_autogen=namespace.no_autogen,
+        )
+    except errors.UserError as exc:
+        logger.error(exc)
+        raise SystemExit(1) from exc
+
+
+def _run_sber2csv(namespace):
+    """Make Sber statement parsing failures observable to the shell."""
+    try:
+        return services.pa.command_sber2csv(
+            namespace.paths,
+            out_path=namespace.out_path,
+            dry_run=namespace.dry_run,
+            verbose=namespace.verbose,
+            rewrite=namespace.rewrite,
+            original_comment=namespace.original_comment,
+        )
+    except errors.UserError as exc:
+        logger.error(exc)
+        raise SystemExit(1) from exc
+
+
+def _run_ozon2csv(namespace):
+    """Make Ozon statement parsing failures observable to the shell."""
+    try:
+        return services.pa.command_ozon2csv(
+            namespace.paths,
+            out_path=namespace.out_path,
+            dry_run=namespace.dry_run,
+            verbose=namespace.verbose,
+            rewrite=namespace.rewrite,
+            original_comment=namespace.original_comment,
+        )
+    except errors.UserError as exc:
+        logger.error(exc)
+        raise SystemExit(1) from exc
+
+
+def _run_tbank2csv(namespace):
+    """Make T-Bank statement parsing failures observable to the shell."""
+    try:
+        return services.pa.command_tbank2csv(
+            namespace.paths,
+            out_path=namespace.out_path,
+            dry_run=namespace.dry_run,
+            verbose=namespace.verbose,
+            rewrite=namespace.rewrite,
+            original_comment=namespace.original_comment,
         )
     except errors.UserError as exc:
         logger.error(exc)

@@ -127,7 +127,7 @@ def init_parser(parser=None):
         "-S", "--search", action="store_true", help="auto discover projects"
     )
     parser.add_argument(
-        "-A", "--all", action="store_true", help="use all projects"
+        "-a", "--all", action="store_true", help="use all projects"
     )
     parser.add_argument(
         "-T", "--tag", action="append", help="use projects with tag"

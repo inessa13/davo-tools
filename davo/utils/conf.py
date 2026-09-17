@@ -1,6 +1,8 @@
 import logging
 import os
 import re
+from copy import deepcopy
+from pathlib import Path
 
 import keyring
 import keyring.errors
@@ -9,6 +11,64 @@ import yaml
 from davo import errors, settings
 
 logger = logging.getLogger(__name__)
+
+
+def find_project_config(start=None):
+    """Return the nearest project davo-tools configuration, if any."""
+    current = Path(start or os.getcwd()).expanduser().resolve()
+    if current.is_file():
+        current = current.parent
+    for directory in (current, *current.parents):
+        candidate = directory / settings.PROJECT_CONFIG_NAME
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _load_yaml_mapping(path, optional=False):
+    """Load *path* as a YAML mapping, retaining the configuration root."""
+    if path is None:
+        return None
+    path = Path(path).expanduser()
+    if not path.exists():
+        if optional:
+            return None
+        raise errors.UserError("Missing config: {}".format(path))
+    try:
+        contents = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise errors.UserError(
+            "Invalid config {}: {}".format(path, exc)
+        ) from exc
+    if not isinstance(contents, dict):
+        raise errors.UserError(
+            "Invalid config {}: expected a mapping".format(path)
+        )
+    return fix_config_paths(contents, root={"root": str(path.parent)})
+
+
+def deep_merge(base, override):
+    """Merge mappings recursively; override scalars and lists wholesale."""
+    result = deepcopy(base)
+    for key, value in override.items():
+        if isinstance(result.get(key), dict) and isinstance(value, dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+    return result
+
+
+def load_davo_config(start=None, user_path=None):
+    """Load the effective user and nearest-project davo-tools config.
+
+    Each layer has its own path root: relative paths are expanded before the
+    project layer is merged over the user layer.
+    """
+    user_path = Path(user_path or settings.CONFIG_PATH_DAVO_TOOLS).expanduser()
+    project_path = find_project_config(start)
+    user = _load_yaml_mapping(user_path, optional=True) or {}
+    project = _load_yaml_mapping(project_path, optional=True) or {}
+    return deep_merge(user, project), user_path, project_path
 
 _P_KP_STR = r"kp:(?P<key>.*):(?P<attr>username|password|url)$"
 _P_KR_STR = r"kr:((?P<service>.+):)?(?P<key>.+)$"

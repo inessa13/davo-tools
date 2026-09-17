@@ -18,6 +18,7 @@ Treat implementation in this repo (`pyproject.toml`, `davo/`, `tests/`, CI) as t
 | --- | --- |
 | Roadmap (read first for planned work) | [`docs/roadmap.md`](docs/roadmap.md); lifecycle in [`docs/shared/docs/conventions/roadmap-process.md`](docs/shared/docs/conventions/roadmap-process.md) |
 | Specs | [`docs/specs/`](docs/specs/) |
+| File-output safety | [`docs/file-safety.md`](docs/file-safety.md) |
 | Package | `davo` (declared in [`pyproject.toml`](pyproject.toml) → `[project]` / `[tool.setuptools.packages.find]`) |
 | CLI entry | `davo.cli:main` → `[project.scripts]` `davo` in [`pyproject.toml`](pyproject.toml) |
 | Other console scripts | `cit`, `davo-photo`, `davo-s3sync` — see `[project.scripts]` in [`pyproject.toml`](pyproject.toml) |

@@ -20,7 +20,7 @@ davo vid compress movie.mov
 davo vid compress first.mp4 second.mkv --crf 20
 davo vid compress -r .
 davo vid compress --mp4 movie.mov
-davo vid compress --replace-source movie.mov
+davo vid compress -R movie.mov
 davo vid compress --dry-run movie.mov
 davo vid compress -W movie.mov
 davo vid compress -H 720 movie.mov
@@ -43,12 +43,10 @@ sizes, and percentage reduction (which is negative if the file grows). When two
 or more files succeed, a final total uses the summed sizes. Skipped, failed, and
 dry-run inputs are excluded.
 
-`--replace-source` replaces a source only after ffmpeg successfully creates the
-compressed output. Without `--mp4`, the temporary compressed copy atomically
-replaces the source. With `--mp4`, the result is named `<stem>.mp4` and the
-non-MP4 source is removed; if that target already exists, that input is skipped.
-`-W/--rewrite` applies only to the temporary `_compressed` output and does not
-permit overwriting this separate MP4 target.
+`-R/--rename-processed` renames a source to `<stem>_processed<extension>` only
+after ffmpeg successfully creates its output. Already marked inputs and
+existing processed targets are refused. `-W/--rewrite` applies only to the
+automatic `_compressed` output.
 
 `-H/--height HEIGHT` limits the output height to 144--2160 pixels; typical
 values are `240`, `360`, and `720`. The width is calculated automatically to

@@ -51,7 +51,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
 
     p_commit = argparse.ArgumentParser(add_help=False)
     p_commit.add_argument(
-        "-c", "--commit", action="store_true", help="commit mode"
+        "-C", "--commit", action="store_true", help="commit mode"
     )
 
     p_verbose = argparse.ArgumentParser(add_help=False)
@@ -141,7 +141,7 @@ def init_parser(parser=None, subparsers=None, commands=()):
             help="replace pattern, default %(default)s",
         )
         cmd.add_argument("-l", "--limit", action="store", type=int, default=0)
-        cmd.add_argument("-C", "--copy", action="store_true")
+        cmd.add_argument("-c", "--copy", action="store_true")
         cmd.add_argument(
             "-F", "--filter", action="append", help="filter pattern"
         )
@@ -206,22 +206,36 @@ def init_parser(parser=None, subparsers=None, commands=()):
 
     if not commands or "convert" in commands:
         cmd = subparsers.add_parser(
-            "convert", parents=p_common, help="convert images (PIL)"
+            "convert",
+            parents=[p_root, p_recursive, p_verbose, p_silent],
+            help="convert images (PIL)",
         )
-        cmd.add_argument("-R", "--replace-pattern", default="[source].[Ext]")
+        cmd.add_argument(
+            "-P", "--replace-pattern", default="[source]_converted.[Ext]"
+        )
+        cmd.add_argument(
+            "-R",
+            "--rename-processed",
+            action="store_true",
+            help="rename each source with a _processed suffix after success",
+        )
+        cmd.add_argument(
+            "-0",
+            "--dry-run",
+            action="store_true",
+            help="report planned conversions without writing files",
+        )
         cmd.add_argument(
             "-D",
-            "--delete-source",
+            "--separate-dir",
             action="store_true",
-            help="delete source files on image conversion if name had not "
-            "been changed",
+            help="write outputs under ./davo_im_convert instead of a suffix",
         )
         cmd.add_argument(
-            "-C",
-            "--copy",
+            "-W",
+            "--rewrite",
             action="store_true",
-            help="make backup copies of source images on  conversion if "
-            "name had been changed",
+            help="overwrite only an existing default converted output",
         )
         cmd.add_argument("-t", "--thumbnail", type=int)
         cmd.add_argument("--skip-no-exif", action="store_true")
@@ -231,12 +245,14 @@ def init_parser(parser=None, subparsers=None, commands=()):
                 root=namespace.path,
                 replace=namespace.replace_pattern,
                 recursive=namespace.recursive,
-                copy=namespace.copy,
-                delete=namespace.delete_source,
+                rename_processed=namespace.rename_processed,
+                dry_run=namespace.dry_run,
+                rewrite=namespace.rewrite,
                 thumbnail=namespace.thumbnail,
                 skip_no_exif=namespace.skip_no_exif,
                 drop_alpha=namespace.drop_alpha,
-                commit=namespace.commit,
+                separate_dir=namespace.separate_dir,
+                verbose=namespace.verbose,
             )
         )
 
@@ -613,7 +629,7 @@ def init_parser_clips(parser=None, subparsers=None):
 
     p_commit = argparse.ArgumentParser(add_help=False)
     p_commit.add_argument(
-        "-c", "--commit", action="store_true", help="commit mode"
+        "-C", "--commit", action="store_true", help="commit mode"
     )
 
     p_verbose = argparse.ArgumentParser(add_help=False)
@@ -772,11 +788,13 @@ def init_parser_clips(parser=None, subparsers=None):
         help="write compressed files as .mp4",
     )
     cmd.add_argument(
-        "--replace-source",
+        "-R",
+        "--rename-processed",
         action="store_true",
-        help="replace each source after it is successfully compressed",
+        help="rename each source with a _processed suffix after success",
     )
     cmd.add_argument(
+        "-0",
         "--dry-run",
         action="store_true",
         help="print ffmpeg commands without running them",
@@ -797,7 +815,7 @@ def init_parser_clips(parser=None, subparsers=None):
             crf=namespace.crf,
             height=namespace.height,
             mp4=namespace.mp4,
-            replace_source=namespace.replace_source,
+            rename_processed=namespace.rename_processed,
             dry_run=namespace.dry_run,
             rewrite=namespace.rewrite,
             recursive=namespace.recursive,
@@ -836,7 +854,10 @@ def init_parser_pdf(
         "-W",
         "--rewrite",
         action="store_true",
-        help="overwrite existing output files (never input files)",
+        help=(
+            "overwrite existing automatic output files "
+            "(never inputs or -o targets)"
+        ),
     )
     write_parents = [*parents, p_rewrite]
 
@@ -857,6 +878,14 @@ def init_parser_pdf(
     def root(namespace):
         return namespace.path if legacy else None
 
+    def add_rename_processed(command):
+        command.add_argument(
+            "-R",
+            "--rename-processed",
+            action="store_true",
+            help="rename each source with a _processed suffix after success",
+        )
+
     if not commands or "merge" in commands:
         cmd = subparsers.add_parser(
             "{}merge".format(prefix),
@@ -869,6 +898,7 @@ def init_parser_pdf(
             ),
         )
         cmd.add_argument("-o", "--out", action="store")
+        add_rename_processed(cmd)
         add_input_argument(cmd, multiple=True)
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_merge(  # noqa
@@ -876,6 +906,7 @@ def init_parser_pdf(
                 out=namespace.out,
                 inf=namespace.inf,
                 rewrite=namespace.rewrite,
+                rename_processed=namespace.rename_processed,
                 verbose=namespace.verbose,
             )
         )
@@ -887,6 +918,7 @@ def init_parser_pdf(
             help="pdf: rotate pages (PyMuPDF)",
         )
         cmd.add_argument("-o", "--out", action="store")
+        add_rename_processed(cmd)
         add_input_argument(cmd)
         cmd.add_argument(
             "-d",
@@ -902,6 +934,7 @@ def init_parser_pdf(
                 inf=namespace.inf,
                 direction=namespace.dir,
                 rewrite=namespace.rewrite,
+                rename_processed=namespace.rename_processed,
                 verbose=namespace.verbose,
             )
         )
@@ -913,6 +946,7 @@ def init_parser_pdf(
             help="pdf: delete pages (PyMuPDF)",
         )
         cmd.add_argument("-o", "--out", action="store")
+        add_rename_processed(cmd)
         add_input_argument(cmd)
         cmd.add_argument(
             "-p",
@@ -928,6 +962,7 @@ def init_parser_pdf(
                 inf=namespace.inf,
                 pages=namespace.pages,
                 rewrite=namespace.rewrite,
+                rename_processed=namespace.rename_processed,
                 verbose=namespace.verbose,
             )
         )
@@ -939,6 +974,7 @@ def init_parser_pdf(
             help="pdf: split into separate docs (PyMuPDF)",
         )
         cmd.add_argument("-o", "--out", action="store")
+        add_rename_processed(cmd)
         add_input_argument(cmd)
         cmd.add_argument(
             "-p",
@@ -954,6 +990,7 @@ def init_parser_pdf(
                 inf=namespace.inf,
                 pages=namespace.pages,
                 rewrite=namespace.rewrite,
+                rename_processed=namespace.rename_processed,
                 verbose=namespace.verbose,
             )
         )
@@ -965,6 +1002,7 @@ def init_parser_pdf(
             help="pdf: delete pages (PyMuPDF)",
         )
         cmd.add_argument("-o", "--out", action="store")
+        add_rename_processed(cmd)
         add_input_argument(cmd)
         cmd.set_defaults(
             func=lambda namespace: helpers.command_pdf_clean(  # noqa
@@ -972,6 +1010,7 @@ def init_parser_pdf(
                 out=namespace.out,
                 inf=namespace.inf,
                 rewrite=namespace.rewrite,
+                rename_processed=namespace.rename_processed,
                 verbose=namespace.verbose,
             )
         )
@@ -983,9 +1022,11 @@ def init_parser_pdf(
             help="pdf: compress embedded images (PyMuPDF)",
         )
         cmd.add_argument("-o", "--out", action="store")
+        add_rename_processed(cmd)
         add_input_argument(cmd)
         cmd.add_argument(
-            "-d", "--dpi",
+            "-d",
+            "--dpi",
             action="store",
             type=int,
             choices=(72, 96, 150, 200, 300, 400),
@@ -993,7 +1034,8 @@ def init_parser_pdf(
             help="target embedded image dpi, default %(default)s",
         )
         cmd.add_argument(
-            "-q", "--quality",
+            "-q",
+            "--quality",
             action="store",
             type=int,
             metavar="0..100",
@@ -1001,7 +1043,8 @@ def init_parser_pdf(
             help="jpeg recompression quality 0..100, default %(default)s",
         )
         cmd.add_argument(
-            "-g", "--grayscale",
+            "-g",
+            "--grayscale",
             action="store_true",
             help=(
                 "convert the output document to grayscale before rewriting "
@@ -1018,6 +1061,7 @@ def init_parser_pdf(
                 grayscale=namespace.grayscale,
                 rebuild=True,
                 rewrite=namespace.rewrite,
+                rename_processed=namespace.rename_processed,
                 verbose=namespace.verbose,
             )
         )
@@ -1039,59 +1083,95 @@ def init_parser_pdf(
         cmd.add_argument("-o", "--out", action="store")
         format_group = cmd.add_mutually_exclusive_group(required=True)
         format_group.add_argument(
-            "-4", dest="paper_format", action="store_const", const="a4",
+            "-4",
+            dest="paper_format",
+            action="store_const",
+            const="a4",
             help="A4 paper size",
         )
         format_group.add_argument(
-            "-5", dest="paper_format", action="store_const", const="a5",
+            "-5",
+            dest="paper_format",
+            action="store_const",
+            const="a5",
             help="A5 paper size",
         )
         format_group.add_argument(
-            "-6", dest="paper_format", action="store_const", const="a6",
+            "-6",
+            dest="paper_format",
+            action="store_const",
+            const="a6",
             help="A6 paper size",
         )
         format_group.add_argument(
-            "-s", "--size", nargs=2, type=float, metavar=("WIDTH", "HEIGHT"),
+            "-s",
+            "--size",
+            nargs=2,
+            type=float,
+            metavar=("WIDTH", "HEIGHT"),
             help="custom paper size in centimetres",
         )
         orientation_group = cmd.add_mutually_exclusive_group()
         orientation_group.add_argument(
-            "--force-landscape", dest="force_orientation",
-            action="store_const", const="landscape",
+            "--force-landscape",
+            dest="force_orientation",
+            action="store_const",
+            const="landscape",
             help="use landscape sheets for all output pages",
         )
         orientation_group.add_argument(
-            "--force-portrait", dest="force_orientation",
-            action="store_const", const="portrait",
+            "--force-portrait",
+            dest="force_orientation",
+            action="store_const",
+            const="portrait",
             help="use portrait sheets for all output pages",
         )
         dpi_group = cmd.add_mutually_exclusive_group()
         dpi_group.add_argument(
-            "-H", dest="dpi", action="store_const", const=400,
+            "-H",
+            dest="dpi",
+            action="store_const",
+            const=400,
             help="target image DPI: 400",
         )
         dpi_group.add_argument(
-            "-Q", dest="dpi", action="store_const", const=300,
+            "-Q",
+            dest="dpi",
+            action="store_const",
+            const=300,
             help="target image DPI: 300",
         )
         dpi_group.add_argument(
-            "-M", dest="dpi", action="store_const", const=200,
+            "-M",
+            dest="dpi",
+            action="store_const",
+            const=200,
             help="target image DPI: 200",
         )
         dpi_group.add_argument(
-            "-l", dest="dpi", action="store_const", const=150,
+            "-l",
+            dest="dpi",
+            action="store_const",
+            const=150,
             help="target image DPI: 150",
         )
         dpi_group.add_argument(
-            "-L", dest="dpi", action="store_const", const=96,
+            "-L",
+            dest="dpi",
+            action="store_const",
+            const=96,
             help="target image DPI: 96",
         )
         dpi_group.add_argument(
-            "--dpi", type=_form_dpi, metavar="N",
+            "-d",
+            "--dpi",
+            type=_form_dpi,
+            metavar="N",
             help="target image DPI, from 72 to 800",
         )
         cmd.add_argument(
-            "-q", "--quality",
+            "-q",
+            "--quality",
             action="store",
             type=int,
             metavar="0..100",
@@ -1110,7 +1190,8 @@ def init_parser_pdf(
             help="crop source edges with %% or px values",
         )
         cmd.add_argument(
-            "-R", "--rename-processed",
+            "-R",
+            "--rename-processed",
             action="store_true",
             help="rename each source with a _processed suffix after success",
         )
@@ -1131,7 +1212,7 @@ def init_parser_pdf(
                 rename_processed=namespace.rename_processed,
                 rewrite=namespace.rewrite,
                 verbose=namespace.verbose,
-            )
+            ),
         )
 
     if not commands or "extract" in commands:
@@ -1141,6 +1222,7 @@ def init_parser_pdf(
             help="pdf: extract embedded images (PyMuPDF)",
         )
         cmd.add_argument("-o", "--out", action="store")
+        add_rename_processed(cmd)
         add_input_argument(cmd)
         cmd.add_argument(
             "-p",
@@ -1170,6 +1252,7 @@ def init_parser_pdf(
                 output_type=namespace.type,
                 whole_page=namespace.whole_page,
                 rewrite=namespace.rewrite,
+                rename_processed=namespace.rename_processed,
                 verbose=namespace.verbose,
             )
         )
@@ -1203,6 +1286,7 @@ def init_parser_pdf(
             help="print an ASCII table",
         )
         cmd.add_argument(
+            "-c",
             "--compact",
             action="store_true",
             help="print page rows without file names or column headers",
@@ -1226,6 +1310,7 @@ def init_parser_pdf(
             help="pdf: scale pages to A4/A5 (PyMuPDF)",
         )
         cmd.add_argument("-o", "--out", action="store")
+        add_rename_processed(cmd)
         add_input_argument(cmd)
         cmd.add_argument(
             "-p",
@@ -1251,6 +1336,7 @@ def init_parser_pdf(
                 pages=namespace.pages,
                 paper_format=namespace.paper_format,
                 rewrite=namespace.rewrite,
+                rename_processed=namespace.rename_processed,
                 verbose=namespace.verbose,
             )
         )
