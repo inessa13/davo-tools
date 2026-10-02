@@ -28,14 +28,25 @@ _CSV_HEADER = (
 _CSV_HEADER_WITH_ORIGINAL = _CSV_HEADER + ("Оригинал",)
 _OZON_DATE_TIME_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}:\d{2}$")
 _OZON_ACCOUNT_RE = re.compile(
-    r"Account number:\s*№\s*(.+?)(?:,|\s+dated\s|\n)"
+    r"(?:Account number|Номер лицевого счёта):\s*№\s*"
+    r"(.+?)(?:,|\s+(?:dated|открыт)\s|\n)"
 )
 _OZON_TOTAL_RE = re.compile(
     r"Total (deposits|withdrawals) for the period:\s*RUR\s*([\d ]+\.\d{2})"
 )
-_TBANK_ACCOUNT_RE = re.compile(r"Personal account number:\s*(\d+)")
+_OZON_TOTAL_RU_RE = re.compile(
+    r"Итого (зачислений|списаний) за период:\s*([\d ]+[.,]\d{2})\s*₽"
+)
+_OZON_TOTAL_RU_KINDS = {"зачислений": "deposits", "списаний": "withdrawals"}
+_TBANK_ACCOUNT_RE = re.compile(
+    r"(?:Personal account number|Номер лицевого счета):\s*(\d+)"
+)
+_TBANK_TOTAL_LABELS = {
+    "income": ("Replenishment:", "Пополнения:"),
+    "expense": ("Expenses:", "Расходы:"),
+}
 _TBANK_AMOUNT_RE = re.compile(
-    r"[+-]?(?:\d{1,3}(?:[ \u00a0]\d{3})*|\d+)\.\d{2}"
+    r"[+-]?(?:\d{1,3}(?:[ \u00a0]\d{3})*|\d+)[.,]\d{2}"
 )
 
 
@@ -392,12 +403,14 @@ def _format_amount(value):
     return "{:,.2f}".format(value).replace(",", " ")
 
 
-def _tbank_table_start(words):
+def _tbank_table_start(words, russian=False):
     """Return the first operation line below the T-Bank table heading."""
+    label = "Дата" if russian else "Date"
+    y_min = 250 if russian else 300
     headings = [
         word[1]
         for word in words
-        if word[4] == "Date" and word[0] < 100 and word[1] > 300
+        if word[4] == label and word[0] < 100 and word[1] > y_min
     ]
     return max(headings) + 25 if headings else None
 
@@ -418,7 +431,12 @@ def _tbank_normalised_amount(value):
             "Missing T-Bank operation amount: {}".format(value)
         )
     try:
-        amount = Decimal(match.group().replace("\u00a0", "").replace(" ", ""))
+        amount = Decimal(
+            match.group()
+            .replace("\u00a0", "")
+            .replace(" ", "")
+            .replace(",", ".")
+        )
     except InvalidOperation as exc:
         raise errors.UserError(
             "Invalid T-Bank operation amount: {}".format(value)
@@ -426,10 +444,10 @@ def _tbank_normalised_amount(value):
     return -abs(amount) if value.lstrip().startswith("+") else abs(amount)
 
 
-def _tbank_page_rows(page):
-    """Extract operations from the fixed-column English T-Bank statement."""
+def _tbank_page_rows(page, russian=False):
+    """Extract operations from the fixed-column T-Bank statement table."""
     words = page.get_text("words", sort=True)
-    table_start = _tbank_table_start(words)
+    table_start = _tbank_table_start(words, russian)
     if table_start is None:
         return []
     starts = [
@@ -476,20 +494,20 @@ def _tbank_totals(page):
     """Read Replenishment and Expenses totals from a T-Bank statement."""
     words = page.get_text("words", sort=True)
     totals = {}
-    for label in ("Replenishment:", "Expenses:"):
-        matches = [word for word in words if word[4] == label]
+    for key, labels in _TBANK_TOTAL_LABELS.items():
+        matches = [word for word in words if word[4] in labels]
         if len(matches) != 1:
             continue
-        totals[label] = abs(
+        totals[key] = abs(
             _amount(_line_words(words, matches[0][1], x0=100))
         )
-    if set(totals) != {"Replenishment:", "Expenses:"}:
+    if set(totals) != {"income", "expense"}:
         raise errors.UserError("Incomplete totals in T-Bank statement")
-    return totals["Replenishment:"], totals["Expenses:"]
+    return totals["income"], totals["expense"]
 
 
 def _parse_tbank_statement(path, rules, original_comment=False):
-    """Parse one English T-Bank Bank Statement."""
+    """Parse one T-Bank Bank Statement (English or Russian)."""
     try:
         import fitz  # pylint: disable=import-outside-toplevel
     except ImportError as exc:
@@ -504,17 +522,16 @@ def _parse_tbank_statement(path, rules, original_comment=False):
         ) from exc
     with document:
         first_text = document[0].get_text()
-        if (
-            "Bank Statement" not in first_text
-            or "TBANK" not in first_text
-        ):
+        russian = "Справка о движении средств" in first_text
+        english = "Bank Statement" in first_text and "TBANK" in first_text
+        if not russian and not english:
             raise errors.UserError(
                 "Not a supported T-Bank statement: {}".format(path)
             )
         _tbank_account(document[0])
         parsed = []
         for page in document:
-            parsed.extend(_tbank_page_rows(page))
+            parsed.extend(_tbank_page_rows(page, russian))
         income, expense = _tbank_totals(document[-1])
     if not parsed:
         raise errors.UserError(
@@ -552,15 +569,16 @@ def _parse_tbank_statement(path, rules, original_comment=False):
 
 
 def _ozon_amount(value):
-    """Parse an Ozon amount such as ``- RUR 2 728.52``."""
-    match = re.search(r"([+-])\s*RUR\s*([\d ]+\.\d{2})", value)
+    """Parse an Ozon amount such as ``- RUR 2 728.52`` or ``- 931.37 ₽``."""
+    match = re.search(
+        r"([+-])\s*(?:RUR\s*)?([\d ]+[.,]\d{2})\s*(?:₽)?", value
+    )
     if match is None:
         raise errors.UserError(
             "Missing Ozon operation amount: {}".format(value)
         )
-    return Decimal(match.group(2).replace(" ", "")) * (
-        1 if match.group(1) == "+" else -1
-    )
+    raw = match.group(2).replace(" ", "").replace(",", ".")
+    return Decimal(raw) * (1 if match.group(1) == "+" else -1)
 
 
 def _ozon_account(page):
@@ -570,17 +588,38 @@ def _ozon_account(page):
     return match.group(1).strip()
 
 
+def _ozon_table_start(words):
+    """Return the first row below the Ozon table heading, if present.
+
+    Account/period metadata above the table can itself contain a stray
+    ``dd.mm.yyyy`` date in the date column's x-range (seen in the Russian
+    "Справка о движении средств" layout), so rows are only accepted once
+    the real table heading has been found.
+    """
+    headers = [
+        word[1]
+        for word in words
+        if word[4] in ("Document", "Документ") and 145 <= word[0] < 220
+    ]
+    return min(headers) + 10 if headers else None
+
+
 def _ozon_page_rows(page):
     """Extract Ozon table rows, using its fixed four-column layout."""
     words = page.get_text("words", sort=True)
+    table_start = _ozon_table_start(words)
     starts = [
         word[1]
         for word in words
-        if word[0] < 145 and _DATE_RE.match(word[4])
+        if word[0] < 145
+        and (table_start is None or word[1] >= table_start)
+        and _DATE_RE.match(word[4])
     ]
     rows = []
     total_positions = [
-        word[1] for word in words if word[4] == "Total" and word[0] < 150
+        word[1]
+        for word in words
+        if word[4] in ("Total", "Итого") and word[0] < 150
     ]
     table_end = min(total_positions, default=float("inf"))
     for index, start in enumerate(starts):
@@ -613,10 +652,19 @@ def _ozon_page_rows(page):
 
 
 def _ozon_totals(page):
+    text = page.get_text()
     values = {
         kind: Decimal(amount.replace(" ", ""))
-        for kind, amount in _OZON_TOTAL_RE.findall(page.get_text())
+        for kind, amount in _OZON_TOTAL_RE.findall(text)
     }
+    values.update(
+        {
+            _OZON_TOTAL_RU_KINDS[kind]: Decimal(
+                amount.replace(" ", "").replace(",", ".")
+            )
+            for kind, amount in _OZON_TOTAL_RU_RE.findall(text)
+        }
+    )
     if not values:
         return None
     if set(values) != {"deposits", "withdrawals"}:
@@ -625,7 +673,7 @@ def _ozon_totals(page):
 
 
 def _parse_ozon_statement(path, rules, original_comment=False):
-    """Parse all Ozon Operations Statements contained in one PDF."""
+    """Parse all Ozon statements (English or Russian) in one PDF."""
     try:
         import fitz  # pylint: disable=import-outside-toplevel
     except ImportError as exc:
@@ -645,7 +693,10 @@ def _parse_ozon_statement(path, rules, original_comment=False):
     with document:
         for page in document:
             text = page.get_text()
-            if "Operations Statement" in text:
+            if (
+                "Operations Statement" in text
+                or "Справка о движении средств" in text
+            ):
                 if active_account is not None:
                     raise errors.UserError("Missing totals in Ozon statement")
                 active_account = _ozon_account(page)

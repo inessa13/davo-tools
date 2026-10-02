@@ -37,6 +37,20 @@ def _ozon_word(x, y, value):
     return (x, y, 0, 0, value, 0, 0, 0)
 
 
+class _TBankPage:  # pylint: disable=too-few-public-methods
+    def __init__(self, text, words):
+        self.text = text
+        self.words = words
+
+    def get_text(self, kind=None, sort=False):
+        del sort
+        return self.words if kind == "words" else self.text
+
+
+def _tbank_word(x, y, value):
+    return (x, y, 0, 0, value, 0, 0, 0)
+
+
 def test_ozon2csv_collects_multiline_purposes_and_first_amount_column():
     page = _OzonPage(
         "",
@@ -67,6 +81,36 @@ def test_ozon2csv_collects_multiline_purposes_and_first_amount_column():
     ]
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("- RUR 2 728.52", pa.Decimal("-2728.52")),
+        ("+ RUR 10.50", pa.Decimal("10.50")),
+        ("- 931.37 ₽", pa.Decimal("-931.37")),
+        ("+ 5 000.00 ₽", pa.Decimal("5000.00")),
+    ],
+)
+def test_ozon2csv_parses_english_and_russian_amounts(value, expected):
+    assert pa._ozon_amount(value) == expected  # pylint: disable=protected-access
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("-97 000.00 ₽", pa.Decimal("97000.00")),
+        ("+5 000.00 ₽", pa.Decimal("-5000.00")),
+        ("-5 000.00", pa.Decimal("5000.00")),
+    ],
+)
+def test_tbank2csv_parses_english_and_russian_amounts(value, expected):
+    assert (
+        pa._tbank_normalised_amount(  # pylint: disable=protected-access
+            value
+        )
+        == expected
+    )
+
+
 def test_ozon2csv_extracts_statement_totals():
     page = _OzonPage(
         "Total deposits for the period: RUR 1 000.25\n"
@@ -76,6 +120,114 @@ def test_ozon2csv_extracts_statement_totals():
 
     assert pa._ozon_totals(page) == (  # pylint: disable=protected-access
         pa.Decimal("1000.25"), pa.Decimal("999.00")
+    )
+
+
+def test_ozon2csv_extracts_russian_statement_totals():
+    page = _OzonPage(
+        "Итого зачислений за период: 1 000.00 ₽\n"
+        "Итого списаний за период: 500.00 ₽",
+        [],
+    )
+
+    assert pa._ozon_totals(page) == (  # pylint: disable=protected-access
+        pa.Decimal("1000.00"), pa.Decimal("500.00")
+    )
+
+
+def test_ozon2csv_extracts_russian_account_number():
+    page = _OzonPage(
+        "Номер лицевого счёта: № 00000000000000000000, открыт 01.01.2020",
+        [],
+    )
+
+    assert pa._ozon_account(page) == (  # pylint: disable=protected-access
+        "00000000000000000000"
+    )
+
+
+def test_ozon2csv_table_start_ignores_stray_date_above_heading():
+    page = _OzonPage(
+        "",
+        [
+            # A metadata line (e.g. "Период выписки: ...") whose date
+            # happens to fall in the date column's x-range, above the
+            # real table heading - must not be mistaken for a row.
+            _ozon_word(144.9, 268.3, "14.08.2026"),
+            _ozon_word(159.7, 348.5, "Документ"),
+            _ozon_word(54.7, 383.4, "01.02.2026"),
+            _ozon_word(102.3, 383.4, "10:20:30"),
+            _ozon_word(159.7, 383.4, "123"),
+            _ozon_word(225, 383.4, "Payment"),
+            _ozon_word(380, 383.4, "- RUR 10.50"),
+        ],
+    )
+
+    assert pa._ozon_page_rows(page) == [  # pylint: disable=protected-access
+        ("01.02.2026 10:20:30", "123", "Payment", pa.Decimal("-10.50")),
+    ]
+
+
+def test_tbank2csv_table_start_skips_metadata_date_heading():
+    words = [
+        # e.g. "Дата заключения договора:" above the real table
+        _tbank_word(56, 212, "Дата"),
+        _tbank_word(56, 296, "Дата"),
+    ]
+
+    assert (
+        pa._tbank_table_start(  # pylint: disable=protected-access
+            words, russian=True
+        )
+        == 321.0
+    )
+
+
+def test_tbank2csv_parses_russian_page_rows():
+    page = _TBankPage(
+        "",
+        [
+            _tbank_word(56, 296, "Дата"),
+            _tbank_word(56, 323, "21.09.2026"),
+            _tbank_word(56, 334, "14:15"),
+            # settlement-date column, must be ignored
+            _tbank_word(126, 323, "21.09.2026"),
+            _tbank_word(126, 334, "14:16"),
+            _tbank_word(199, 323, "-1 000,00 ₽"),
+            _tbank_word(389, 323, "Тестовая операция"),
+        ],
+    )
+
+    assert pa._tbank_page_rows(  # pylint: disable=protected-access
+        page, russian=True
+    ) == [
+        ("21.09.2026 14:15:00", "Тестовая операция", pa.Decimal("1000.00")),
+    ]
+
+
+def test_tbank2csv_totals_parses_russian_labels():
+    page = _TBankPage(
+        "",
+        [
+            _tbank_word(56, 21.3, "Пополнения:"),
+            _tbank_word(126, 21.3, "1 000,00 ₽"),
+            _tbank_word(56, 36.3, "Расходы:"),
+            _tbank_word(126, 36.3, "500,00 ₽"),
+        ],
+    )
+
+    assert pa._tbank_totals(page) == (  # pylint: disable=protected-access
+        pa.Decimal("1000.00"), pa.Decimal("500.00")
+    )
+
+
+def test_tbank2csv_account_parses_russian_label():
+    page = _TBankPage(
+        "Номер лицевого счета:  00000000000000000000", []
+    )
+
+    assert pa._tbank_account(page) == (  # pylint: disable=protected-access
+        "00000000000000000000"
     )
 
 
