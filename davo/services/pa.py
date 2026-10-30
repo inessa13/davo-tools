@@ -124,11 +124,11 @@ def _table_start(words):
     """Find the first operation line on a first or continuation page."""
     captions = [word[1] for word in words if word[4] == "Расшифровка"]
     if captions:
-        return max(captions) + 40
+        return max(captions) + 30
     headings = [
         word[1] for word in words if word[4] == "ДАТА" and word[0] < 100
     ]
-    return max(headings) + 40 if headings else None
+    return max(headings) + 30 if headings else None
 
 
 def _table_end(words, table_start):

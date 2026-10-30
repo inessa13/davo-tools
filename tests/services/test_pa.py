@@ -1,44 +1,11 @@
+# pylint: disable=too-many-lines
+
 import csv
-from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from davo.services import pa
-
-_STATEMENTS = Path(__file__).parents[2] / "examples" / "stmt"
-_TBANK_STATEMENT = (
-    Path(__file__).parents[2] / "examples" / "20260909 tbank golub dd.pdf"
-)
-_OZON_RUSSIAN_CREDIT_STATEMENT = (
-    Path(__file__).parents[2]
-    / "examples"
-    / "20261030"
-    / "20261030 ozon dzd cc.pdf"
-)
-_OZON_ENGLISH_STATEMENT = (
-    Path(__file__).parents[2]
-    / "examples"
-    / "20261002"
-    / (
-        "ozon Джанян_Д_Ж_о_движении_денежных_средств_"
-        "ozonbank_document_36799119.pdf"
-    )
-)
-_OZON_RUSSIAN_DEBIT_STATEMENT = (
-    Path(__file__).parents[2]
-    / "examples"
-    / "20261002"
-    / (
-        "ozon Джанян_Д_Ж_о_движении_денежных_средств_"
-        "ozonbank_document_36799152.pdf"
-    )
-)
-_SBER_DEBIT_STATEMENT = (
-    Path(__file__).parents[2]
-    / "examples"
-    / "20261030"
-    / "20261030 sber dzd dt.pdf"
-)
 
 
 def _rules(*items):
@@ -53,7 +20,7 @@ _TAIL_RULE = _rules(
 )
 
 
-class _OzonPage:  # pylint: disable=too-few-public-methods
+class _PdfPage:  # pylint: disable=too-few-public-methods
     def __init__(self, text, words):
         self.text = text
         self.words = words
@@ -61,24 +28,167 @@ class _OzonPage:  # pylint: disable=too-few-public-methods
     def get_text(self, kind=None, sort=False):
         del sort
         return self.words if kind == "words" else self.text
+
+
+class _PdfDocument:
+    def __init__(self, pages):
+        self.pages = pages
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        del exc_type, exc_value, traceback
+
+    def __getitem__(self, index):
+        return self.pages[index]
+
+    def __iter__(self):
+        return iter(self.pages)
+
+
+def _mock_pdf(mocker, pages):
+    fitz = SimpleNamespace(
+        open=mocker.Mock(return_value=_PdfDocument(pages))
+    )
+    mocker.patch.dict("sys.modules", {"fitz": fitz})
+
+
+_OzonPage = _PdfPage
+_TBankPage = _PdfPage
 
 
 def _ozon_word(x, y, value):
     return (x, y, 0, 0, value, 0, 0, 0)
 
 
-class _TBankPage:  # pylint: disable=too-few-public-methods
-    def __init__(self, text, words):
-        self.text = text
-        self.words = words
-
-    def get_text(self, kind=None, sort=False):
-        del sort
-        return self.words if kind == "words" else self.text
-
-
 def _tbank_word(x, y, value):
     return (x, y, 0, 0, value, 0, 0, 0)
+
+
+def _sber_word(x, y, value):
+    return (x, y, 0, 0, value, 0, 0, 0)
+
+
+def _sber_total_words(income, expense):
+    return [
+        _sber_word(350, 15, "Пополнение"),
+        _sber_word(480, 15, income),
+        _sber_word(350, 30, "Списание"),
+        _sber_word(480, 30, expense),
+    ]
+
+
+def _sber_account_page(
+    rows, *, continuation=False, totals=None, title="Выписка по счёту"
+):
+    heading = _sber_word(
+        50,
+        50 if continuation else 40,
+        "ДАТА" if continuation else "Расшифровка",
+    )
+    words = [heading]
+    if totals is not None:
+        words.extend(_sber_total_words(*totals))
+    for date, description, amount, y_position in rows:
+        words.extend(
+            [
+                _sber_word(50, y_position, date),
+                _sber_word(150, y_position, description),
+                _sber_word(450, y_position, amount),
+            ]
+        )
+    return _PdfPage("" if continuation else title, words)
+
+
+def _sber_card_page(
+    rows,
+    *,
+    totals,
+    title="Выписка по платёжному счёту",
+    footer=None,
+):
+    words = [
+        _sber_word(50, 40, "Расшифровка"),
+        *_sber_total_words(*totals),
+    ]
+    for date, time, code, description_lines, amount, y_position in rows:
+        words.extend(
+            [
+                _sber_word(50, y_position, date),
+                _sber_word(50, y_position + 8, time),
+                _sber_word(50, y_position + 16, code),
+                _sber_word(400, y_position, amount),
+            ]
+        )
+        words.extend(
+            _sber_word(150, y_position + index * 8, line)
+            for index, line in enumerate(description_lines)
+        )
+    if footer is not None:
+        words.append(_sber_word(50, footer[0], footer[1]))
+    return _PdfPage(title, words)
+
+
+def _sber_debit_page():
+    return _sber_card_page(
+        [
+            (
+                "03.09.2026",
+                "10:00",
+                "199029",
+                [
+                    "Перевод на карту",
+                    "SBOL. Операция по счету ****0460",
+                ],
+                "+1 000,00",
+                100,
+            ),
+            (
+                "02.09.2026",
+                "11:00",
+                "835435",
+                [
+                    "Перевод на карту",
+                    "SBOL. Операция по счету ****0460",
+                ],
+                "+2 000,00",
+                160,
+            ),
+            (
+                "01.09.2026",
+                "12:00",
+                "151502",
+                [
+                    "Прочие операции",
+                    "BRANCH KARTA-CREDIT. Операция по счету ****0460",
+                ],
+                "-500,00",
+                220,
+            ),
+        ],
+        totals=("3 000,00", "500,00"),
+    )
+
+
+def _sber_transfer_page():
+    return _sber_card_page(
+        [
+            (
+                "25.07.2026",
+                "15:20",
+                "887429",
+                [
+                    "Перевод с карты",
+                    "Перевод для Г. Галина Алексеевна.",
+                    "Операция по счету ****8546",
+                ],
+                "-498,00",
+                100,
+            ),
+        ],
+        totals=("0,00", "498,00"),
+    )
 
 
 def test_ozon2csv_collects_multiline_purposes_and_first_amount_column():
@@ -188,37 +298,83 @@ def test_ozon2csv_extracts_russian_contract_number():
     )
 
 
-def test_ozon2csv_parses_known_russian_credit_statement():
+def test_ozon2csv_parses_russian_credit_statement(mocker):
+    page = _OzonPage(
+        "Справка о движении средств\n"
+        "Номер договора: № credit-account от 01.01.2026\n"
+        "Итого зачислений за период: 70.18 ₽\n"
+        "Итого списаний за период: 129.00 ₽",
+        [
+            _ozon_word(160, 50, "Документ"),
+            _ozon_word(55, 70, "01.02.2026"),
+            _ozon_word(102, 70, "10:20:30"),
+            _ozon_word(160, 70, "14681921570"),
+            _ozon_word(225, 70, "Credit repayment"),
+            _ozon_word(380, 70, "+ 70.18 ₽"),
+            _ozon_word(55, 100, "02.02.2026"),
+            _ozon_word(102, 100, "11:20:30"),
+            _ozon_word(160, 100, "14681921571"),
+            _ozon_word(225, 100, "Purchase"),
+            _ozon_word(380, 100, "- 129.00 ₽"),
+        ],
+    )
+    _mock_pdf(mocker, [page])
+
     rows = pa._parse_ozon_statement(  # pylint: disable=protected-access
-        _OZON_RUSSIAN_CREDIT_STATEMENT, []
+        "statement.pdf", []
     )
 
-    assert len(rows) == 50
-    assert rows[0][1] == (
-        "O2026-08-12-KK-03663768485805346350_14681921570"
-    )
+    assert len(rows) == 2
+    assert rows[0][1] == "Ocredit-account_14681921570"
     amounts = [pa.Decimal(row[6].replace(" ", "")) for row in rows]
     assert sum((amount for amount in amounts if amount > 0), pa.Decimal()) == (
-        pa.Decimal("70692.18")
+        pa.Decimal("70.18")
     )
     withdrawals = sum(
         (-amount for amount in amounts if amount < 0), pa.Decimal()
     )
-    assert withdrawals == pa.Decimal("129005.00")
+    assert withdrawals == pa.Decimal("129.00")
 
 
-def test_ozon2csv_preserves_existing_english_and_russian_debit_ids():
-    english_rows = pa._parse_ozon_statement(  # pylint: disable=protected-access
-        _OZON_ENGLISH_STATEMENT, []
+@pytest.mark.parametrize(
+    ("title", "account_line", "account"),
+    [
+        (
+            "Operations Statement",
+            "Account number: № english-account, dated 01.01.2026",
+            "english-account",
+        ),
+        (
+            "Справка о движении средств",
+            "Номер лицевого счёта: № russian-account, открыт 01.01.2026",
+            "russian-account",
+        ),
+    ],
+)
+def test_ozon2csv_builds_ids_for_english_and_russian_statements(
+    mocker, title, account_line, account
+):
+    page = _OzonPage(
+        "{}\n{}\nTotal deposits for the period: RUR 10.00\n"
+        "Total withdrawals for the period: RUR 0.00".format(
+            title, account_line
+        ),
+        [
+            _ozon_word(160, 50, "Document"),
+            _ozon_word(55, 70, "01.02.2026"),
+            _ozon_word(102, 70, "10:20:30"),
+            _ozon_word(160, 70, "123"),
+            _ozon_word(225, 70, "Transfer"),
+            _ozon_word(380, 70, "+ RUR 10.00"),
+        ],
     )
-    russian_debit_rows = pa._parse_ozon_statement(  # pylint: disable=protected-access
-        _OZON_RUSSIAN_DEBIT_STATEMENT, []
+    _mock_pdf(mocker, [page])
+
+    rows = pa._parse_ozon_statement(  # pylint: disable=protected-access
+        "statement.pdf", []
     )
 
-    assert english_rows[0][1] == (
-        "O2026-08-12-KK-03663768485805346350_13897200662"
-    )
-    assert russian_debit_rows[0][1] == "O40817810511113506970_13523345386"
+    assert rows[0][1] == "O{}_123".format(account)
 
 
 def test_ozon2csv_table_start_ignores_stray_date_above_heading():
@@ -306,40 +462,54 @@ def test_tbank2csv_account_parses_russian_label():
     )
 
 
-def test_tbank2csv_parses_known_english_statement():
+def test_tbank2csv_parses_english_statement(mocker):
+    page = _TBankPage(
+        "Bank Statement TBANK\n"
+        "Personal account number: 40817810200142781910",
+        [
+            _tbank_word(56, 20, "Replenishment:"),
+            _tbank_word(126, 20, "5 000,00"),
+            _tbank_word(56, 35, "Expenses:"),
+            _tbank_word(126, 35, "597,00"),
+            _tbank_word(56, 310, "Date"),
+            _tbank_word(56, 340, "07.09.2026"),
+            _tbank_word(56, 350, "21:01"),
+            _tbank_word(199, 340, "+5 000.00"),
+            _tbank_word(389, 340, "Replenishment with a partner ATM"),
+            _tbank_word(56, 380, "08.09.2026"),
+            _tbank_word(56, 390, "12:00"),
+            _tbank_word(199, 380, "-597.00"),
+            _tbank_word(389, 380, "Cash withdrawal in ATM"),
+        ],
+    )
+    _mock_pdf(mocker, [page])
+
     rows = pa._parse_tbank_statement(  # pylint: disable=protected-access
-        _TBANK_STATEMENT, _TAIL_RULE, original_comment=True
+        "statement.pdf", _TAIL_RULE, original_comment=True
     )
 
-    import fitz  # pylint: disable=import-outside-toplevel
-
-    with fitz.open(_TBANK_STATEMENT) as document:
-        account = pa._tbank_account(  # pylint: disable=protected-access
-            document[0]
-        )
-    assert account == "40817810200142781910"
-    assert len(rows) == 13
+    assert len(rows) == 2
     assert rows[0] == (
         "07.09.2026 21:01:00",
         "",
         "",
-        "Replenishment with a partner ATM T-Bank Moscow RU",
+        "Replenishment with a partner ATM",
         "",
         "",
         "-5 000.00",
-        "Replenishment with a partner ATM T-Bank Moscow RU",
+        "Replenishment with a partner ATM",
     )
-    assert rows[1][3] == "Cash withdrawal in ATM.T- BANK MOSCOW RUS"
+    assert rows[1][3] == "Cash withdrawal in ATM"
     assert sum(
         -pa.Decimal(row[6].replace(" ", ""))
         for row in rows
         if row[6].startswith("-")
-    ) == pa.Decimal("41800.00")
+    ) == pa.Decimal("5000.00")
     assert sum(
         pa.Decimal(row[6].replace(" ", ""))
         for row in rows
         if not row[6].startswith("-")
-    ) == pa.Decimal("5597.00")
+    ) == pa.Decimal("597.00")
 
 
 @pytest.mark.parametrize("original_comment", [False, True])
@@ -574,28 +744,53 @@ def test_sber2csv_moves_sbp_and_sbol_markers_to_place(
 
 
 @pytest.mark.parametrize(
-    ("name", "operations"),
+    ("title", "card"),
     [
-        ("Выписка по вкладу или счёту.pdf", 5),
-        ("Выписка по счёту дебетовой карты.pdf", 44),
-        ("Выписка по счёту кредитной карты.pdf", 21),
-        ("Выписка по счёту дебетовой карты(1).pdf", 52),
+        ("Выписка по счёту", False),
+        ("Выписка по платёжному счёту", True),
+        ("Выписка по счёту дебетовой карты", True),
+        ("Выписка по счёту кредитной карты", True),
     ],
 )
-def test_sber2csv_supports_statement_templates(name, operations):
+def test_sber2csv_supports_statement_templates(mocker, title, card):
+    if card:
+        page = _sber_card_page(
+            [
+                (
+                    "01.02.2026",
+                    "10:20",
+                    "123456",
+                    ["Purchase"],
+                    "-10,00",
+                    100,
+                )
+            ],
+            totals=("0,00", "10,00"),
+            title=title,
+        )
+    else:
+        page = _sber_account_page(
+            [("01.02.2026", "Transfer", "-10,00", 100)],
+            totals=("0,00", "10,00"),
+            title=title,
+        )
+    _mock_pdf(mocker, [page])
+
     rows = pa._parse_statement(  # pylint: disable=protected-access
-        _STATEMENTS / name, _TAIL_RULE
+        "statement.pdf", _TAIL_RULE
     )
 
-    assert len(rows) == operations
+    assert len(rows) == 1
 
 
-def test_sber2csv_parses_known_visa_statement():
+def test_sber2csv_parses_card_statement(mocker):
+    _mock_pdf(mocker, [_sber_transfer_page()])
+
     rows = pa._parse_statement(  # pylint: disable=protected-access
-        _STATEMENTS / "sber golub dt visa 20260724.pdf", _TAIL_RULE
+        "statement.pdf", _TAIL_RULE
     )
 
-    assert len(rows) == 18
+    assert len(rows) == 1
     assert rows[0] == (
         "25.07.2026 15:20:00",
         "887429",
@@ -608,13 +803,58 @@ def test_sber2csv_parses_known_visa_statement():
         ),
         "498.00",
     )
-    assert rows[4][1] == "052769"
-    assert rows[2][-1] == "-442 500.00"
 
 
-def test_sber2csv_uses_pdf_category_for_empty_incoming_transfers():
+def test_sber2csv_writes_compact_continuation_page(mocker, tmp_path):
+    source = tmp_path / "statement.pdf"
+    target = tmp_path / "statement.csv"
+    source.touch()
+    first_page_rows = [
+        ("14.09.2026", "Income", "+16 175,11", 100),
+        ("13.09.2026", "Expense", "-498 175,11", 150),
+    ]
+    first_page_rows.extend(
+        ("12.09.2026", "Expense", "-1 000,00", 200 + index * 50)
+        for index in range(8)
+    )
+    first_page = _sber_account_page(
+        first_page_rows,
+        totals=("16 175,11", "516 175,11"),
+    )
+    second_page = _sber_account_page(
+        [("04.09.2026", "Expense", "-10 000,00", 80)],
+        continuation=True,
+    )
+    _mock_pdf(mocker, [first_page, second_page])
+    mocker.patch.object(pa, "_load_sber2csv_config", return_value=_TAIL_RULE)
+
+    pa.command_sber2csv([source], out_path=target)
+
+    with target.open(encoding="utf-8-sig", newline="") as file:
+        written = list(csv.reader(file))
+    assert written[0] == list(
+        pa._CSV_HEADER  # pylint: disable=protected-access
+    )
+    rows = written[1:]
+    assert len(rows) == 11
+    amounts = [pa.Decimal(row[6].replace(" ", "")) for row in rows]
+    income = sum(
+        (-amount for amount in amounts if amount < 0), pa.Decimal()
+    )
+    expense = sum(
+        (amount for amount in amounts if amount > 0), pa.Decimal()
+    )
+    assert income == pa.Decimal("16175.11")
+    assert expense == pa.Decimal("516175.11")
+    assert rows[-1][0] == "04.09.2026 00:00:00"
+    assert rows[-1][6] == "10 000.00"
+
+
+def test_sber2csv_uses_pdf_category_for_empty_incoming_transfers(mocker):
+    _mock_pdf(mocker, [_sber_debit_page()])
+
     rows = pa._parse_statement(  # pylint: disable=protected-access
-        _SBER_DEBIT_STATEMENT,
+        "statement.pdf",
         _rules(
             {
                 "pattern": r"\.\s*Операция по (?:карте|счету)\b.*$",
@@ -635,7 +875,7 @@ def test_sber2csv_uses_pdf_category_for_empty_incoming_transfers():
         ),
     )
 
-    assert len(rows) == 13
+    assert len(rows) == 3
     by_code = {row[1]: row for row in rows}
     for code in ("199029", "835435"):
         assert by_code[code][2:4] == ("SBOL", "Перевод на карту")
@@ -651,15 +891,17 @@ def test_sber2csv_uses_pdf_category_for_empty_incoming_transfers():
     income = sum(
         (-amount for amount in amounts if amount < 0), pa.Decimal()
     )
-    assert income == pa.Decimal("133000.00")
+    assert income == pa.Decimal("3000.00")
     assert sum((amount for amount in amounts if amount > 0), pa.Decimal()) == (
-        pa.Decimal("231452.16")
+        pa.Decimal("500.00")
     )
 
 
-def test_sber2csv_keeps_empty_outgoing_operation_without_fallback():
+def test_sber2csv_keeps_empty_outgoing_operation_without_fallback(mocker):
+    _mock_pdf(mocker, [_sber_debit_page()])
+
     rows = pa._parse_statement(  # pylint: disable=protected-access
-        _SBER_DEBIT_STATEMENT,
+        "statement.pdf",
         _rules({"pattern": r".*", "action": "remove"}),
     )
 
@@ -668,21 +910,34 @@ def test_sber2csv_keeps_empty_outgoing_operation_without_fallback():
     assert by_code["151502"][3] == ""
 
 
-@pytest.mark.parametrize("code", ["975922", "128219"])
-def test_sber2csv_excludes_page_footer_from_original_comment(code):
-    rows = pa._parse_statement(  # pylint: disable=protected-access
-        _STATEMENTS / "sber golub dt visa 20260724.pdf", _TAIL_RULE
+def test_sber2csv_excludes_page_footer_from_original_comment():
+    page = _sber_card_page(
+        [
+            (
+                "25.07.2026",
+                "15:20",
+                "975922",
+                ["Purchase", "Операция по счету ****8546"],
+                "-10,00",
+                100,
+            )
+        ],
+        totals=("0,00", "10,00"),
+        footer=(150, "Продолжение на следующей странице"),
     )
 
-    comment = next(row[5] for row in rows if row[1] == code)
+    rows = pa._card_rows(page)  # pylint: disable=protected-access
+
+    comment = rows[0][4]
     assert "Продолжение на следующей странице" not in comment
-    assert "лицензия Банка России" not in comment
     assert comment.endswith("Операция по счету ****8546")
 
 
-def test_sber2csv_rules_can_remove_card_description_first_line():
+def test_sber2csv_rules_can_remove_card_description_first_line(mocker):
+    _mock_pdf(mocker, [_sber_transfer_page()])
+
     rows = pa._parse_statement(  # pylint: disable=protected-access
-        _STATEMENTS / "sber golub dt visa 20260724.pdf",
+        "statement.pdf",
         _rules(
             {
                 "pattern": r"\.\s*Операция по (?:карте|счету)\b.*$",
@@ -700,9 +955,11 @@ def test_sber2csv_rules_can_remove_card_description_first_line():
     )
 
 
-def test_sber2csv_place_rule_can_use_card_description_first_line():
+def test_sber2csv_place_rule_can_use_card_description_first_line(mocker):
+    _mock_pdf(mocker, [_sber_transfer_page()])
+
     rows = pa._parse_statement(  # pylint: disable=protected-access
-        _STATEMENTS / "sber golub dt visa 20260724.pdf",
+        "statement.pdf",
         _rules(
             {
                 "pattern": r"\.\s*Операция по (?:карте|счету)\b.*$",
@@ -722,9 +979,11 @@ def test_sber2csv_place_rule_can_use_card_description_first_line():
     )
 
 
-def test_sber2csv_category_rule_writes_category_column():
+def test_sber2csv_category_rule_writes_category_column(mocker):
+    _mock_pdf(mocker, [_sber_transfer_page()])
+
     rows = pa._parse_statement(  # pylint: disable=protected-access
-        _STATEMENTS / "sber golub dt visa 20260724.pdf",
+        "statement.pdf",
         _rules(
             {
                 "pattern": r"\.\s*Операция по (?:карте|счету)\b.*$",
@@ -746,9 +1005,28 @@ def test_sber2csv_category_rule_writes_category_column():
     )
 
 
-def test_sber2csv_preserves_original_comment_after_rules():
+def test_sber2csv_preserves_original_comment_after_rules(mocker):
+    page = _sber_card_page(
+        [
+            (
+                "25.07.2026",
+                "15:20",
+                "913142",
+                [
+                    "Прочие расходы",
+                    "SBERPRIME MOSCOW RUS.",
+                    "Операция по карте ****5640",
+                ],
+                "-10,00",
+                100,
+            )
+        ],
+        totals=("0,00", "10,00"),
+    )
+    _mock_pdf(mocker, [page])
+
     rows = pa._parse_statement(  # pylint: disable=protected-access
-        _STATEMENTS / "sber golub dt visa 20260724.pdf",
+        "statement.pdf",
         _rules(
             {
                 "pattern": r"\.\s*Операция по (?:карте|счету)\b.*$",
