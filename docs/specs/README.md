@@ -6,6 +6,7 @@ Per-change specifications. Naming and front matter: [`docs/shared/docs/conventio
 
 | Spec | Status |
 | --- | --- |
+| [`20261030-bug-russian-ozon-credit-statements.md`](20261030-bug-russian-ozon-credit-statements.md) | implemented |
 | [`20260915-feature-im-convert-separate-dir.md`](20260915-feature-im-convert-separate-dir.md) | implemented |
 | [`20260915-feature-im-convert-write-contract.md`](20260915-feature-im-convert-write-contract.md) | implemented |
 | [`20260823-feature-clips-info.md`](20260823-feature-clips-info.md) | implemented |

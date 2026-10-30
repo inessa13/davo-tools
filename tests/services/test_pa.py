@@ -9,6 +9,30 @@ _STATEMENTS = Path(__file__).parents[2] / "examples" / "stmt"
 _TBANK_STATEMENT = (
     Path(__file__).parents[2] / "examples" / "20260909 tbank golub dd.pdf"
 )
+_OZON_RUSSIAN_CREDIT_STATEMENT = (
+    Path(__file__).parents[2]
+    / "examples"
+    / "20261030"
+    / "20261030 ozon dzd cc.pdf"
+)
+_OZON_ENGLISH_STATEMENT = (
+    Path(__file__).parents[2]
+    / "examples"
+    / "20261002"
+    / (
+        "ozon Джанян_Д_Ж_о_движении_денежных_средств_"
+        "ozonbank_document_36799119.pdf"
+    )
+)
+_OZON_RUSSIAN_DEBIT_STATEMENT = (
+    Path(__file__).parents[2]
+    / "examples"
+    / "20261002"
+    / (
+        "ozon Джанян_Д_Ж_о_движении_денежных_средств_"
+        "ozonbank_document_36799152.pdf"
+    )
+)
 
 
 def _rules(*items):
@@ -144,6 +168,51 @@ def test_ozon2csv_extracts_russian_account_number():
     assert pa._ozon_account(page) == (  # pylint: disable=protected-access
         "00000000000000000000"
     )
+
+
+def test_ozon2csv_extracts_russian_contract_number():
+    page = _OzonPage(
+        "Номер договора: № 2026-08-12-KK-00000000000000000000 "
+        "от 12.08.2026",
+        [],
+    )
+
+    assert pa._ozon_account(page) == (  # pylint: disable=protected-access
+        "2026-08-12-KK-00000000000000000000"
+    )
+
+
+def test_ozon2csv_parses_known_russian_credit_statement():
+    rows = pa._parse_ozon_statement(  # pylint: disable=protected-access
+        _OZON_RUSSIAN_CREDIT_STATEMENT, []
+    )
+
+    assert len(rows) == 50
+    assert rows[0][1] == (
+        "O2026-08-12-KK-03663768485805346350_14681921570"
+    )
+    amounts = [pa.Decimal(row[6].replace(" ", "")) for row in rows]
+    assert sum((amount for amount in amounts if amount > 0), pa.Decimal()) == (
+        pa.Decimal("70692.18")
+    )
+    withdrawals = sum(
+        (-amount for amount in amounts if amount < 0), pa.Decimal()
+    )
+    assert withdrawals == pa.Decimal("129005.00")
+
+
+def test_ozon2csv_preserves_existing_english_and_russian_debit_ids():
+    english_rows = pa._parse_ozon_statement(  # pylint: disable=protected-access
+        _OZON_ENGLISH_STATEMENT, []
+    )
+    russian_debit_rows = pa._parse_ozon_statement(  # pylint: disable=protected-access
+        _OZON_RUSSIAN_DEBIT_STATEMENT, []
+    )
+
+    assert english_rows[0][1] == (
+        "O2026-08-12-KK-03663768485805346350_13897200662"
+    )
+    assert russian_debit_rows[0][1] == "O40817810511113506970_13523345386"
 
 
 def test_ozon2csv_table_start_ignores_stray_date_above_heading():

@@ -28,8 +28,8 @@ _CSV_HEADER = (
 _CSV_HEADER_WITH_ORIGINAL = _CSV_HEADER + ("Оригинал",)
 _OZON_DATE_TIME_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}:\d{2}$")
 _OZON_ACCOUNT_RE = re.compile(
-    r"(?:Account number|Номер лицевого счёта):\s*№\s*"
-    r"(.+?)(?:,|\s+(?:dated|открыт)\s|\n)"
+    r"(?:Account number|Номер лицевого счёта|Номер договора):\s*№\s*"
+    r"(.+?)(?:,|\s+(?:dated|открыт|от)\s|\n)"
 )
 _OZON_TOTAL_RE = re.compile(
     r"Total (deposits|withdrawals) for the period:\s*RUR\s*([\d ]+\.\d{2})"
