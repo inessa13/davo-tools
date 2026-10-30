@@ -33,6 +33,12 @@ _OZON_RUSSIAN_DEBIT_STATEMENT = (
         "ozonbank_document_36799152.pdf"
     )
 )
+_SBER_DEBIT_STATEMENT = (
+    Path(__file__).parents[2]
+    / "examples"
+    / "20261030"
+    / "20261030 sber dzd dt.pdf"
+)
 
 
 def _rules(*items):
@@ -604,6 +610,62 @@ def test_sber2csv_parses_known_visa_statement():
     )
     assert rows[4][1] == "052769"
     assert rows[2][-1] == "-442 500.00"
+
+
+def test_sber2csv_uses_pdf_category_for_empty_incoming_transfers():
+    rows = pa._parse_statement(  # pylint: disable=protected-access
+        _SBER_DEBIT_STATEMENT,
+        _rules(
+            {
+                "pattern": r"\.\s*Операция по (?:карте|счету)\b.*$",
+                "action": "remove",
+            },
+            {
+                "pattern": (
+                    r"^(?:Перевод на карту|Прочие операции|"
+                    r"Оплата по QR–коду|Транспорт)\s*"
+                ),
+                "action": "remove",
+            },
+            {
+                "pattern": r"\bSBOL\b\.?",
+                "action": "place",
+                "value": "SBOL",
+            },
+        ),
+    )
+
+    assert len(rows) == 13
+    by_code = {row[1]: row for row in rows}
+    for code in ("199029", "835435"):
+        assert by_code[code][2:4] == ("SBOL", "Перевод на карту")
+    assert by_code["151502"][3] == "BRANCH KARTA-CREDIT"
+    assert by_code["199029"][5] == (
+        "Перевод на карту SBOL. Операция по счету ****0460"
+    )
+    assert by_code["151502"][5] == (
+        "Прочие операции BRANCH KARTA-CREDIT. "
+        "Операция по счету ****0460"
+    )
+    amounts = [pa.Decimal(row[6].replace(" ", "")) for row in rows]
+    income = sum(
+        (-amount for amount in amounts if amount < 0), pa.Decimal()
+    )
+    assert income == pa.Decimal("133000.00")
+    assert sum((amount for amount in amounts if amount > 0), pa.Decimal()) == (
+        pa.Decimal("231452.16")
+    )
+
+
+def test_sber2csv_keeps_empty_outgoing_operation_without_fallback():
+    rows = pa._parse_statement(  # pylint: disable=protected-access
+        _SBER_DEBIT_STATEMENT,
+        _rules({"pattern": r".*", "action": "remove"}),
+    )
+
+    by_code = {row[1]: row for row in rows}
+    assert by_code["199029"][3] == "Перевод на карту"
+    assert by_code["151502"][3] == ""
 
 
 @pytest.mark.parametrize("code", ["975922", "128219"])

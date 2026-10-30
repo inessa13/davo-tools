@@ -169,6 +169,9 @@ def _card_rows(page):
         ]
         if not dates or not descriptions:
             raise errors.UserError("Incomplete card operation in PDF")
+        source_category = _join_words(
+            [word for word in descriptions if abs(word[1] - start) < 4]
+        )
         raw = _join_words(descriptions).replace("\n", " ")
         amount_words = [
             word
@@ -180,6 +183,7 @@ def _card_rows(page):
                 dates[0],
                 times[0] if times else "00:00",
                 codes[0] if codes else "",
+                source_category,
                 raw,
                 _normalised_amount(_join_words(amount_words)),
             )
@@ -222,6 +226,7 @@ def _account_rows(page):
                     and _DATE_RE.match(word[4])
                 ),
                 "00:00",
+                "",
                 "",
                 raw,
                 _normalised_amount(_join_words(amount_words)),
@@ -383,8 +388,10 @@ def _parse_statement(path, rules, original_comment=True):
             )
         )
     result = []
-    for date, time, code, raw, amount in parsed:
+    for date, time, code, source_category, raw, amount in parsed:
         place, category, operation = _apply_rules(raw, rules)
+        if amount < 0 and not operation and source_category:
+            operation = source_category
         result.append(
             (
                 "{} {}:00".format(date, time),
