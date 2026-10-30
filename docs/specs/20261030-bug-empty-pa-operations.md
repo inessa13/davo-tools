@@ -1,5 +1,5 @@
 ---
-status: ready
+status: implemented
 type: bug
 slug: empty-pa-operations
 date: 2026-10-30

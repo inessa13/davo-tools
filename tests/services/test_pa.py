@@ -605,6 +605,126 @@ def test_ozon2csv_writes_original_only_with_original_comment_flag(
     assert written[1][5] == ""
 
 
+@pytest.mark.parametrize(
+    ("command", "loader_name", "parser_name"),
+    [
+        (
+            pa.command_sber2csv,
+            "_load_sber2csv_config",
+            "_parse_statement",
+        ),
+        (
+            pa.command_tbank2csv,
+            "_load_tbank2csv_config",
+            "_parse_tbank_statement",
+        ),
+        (
+            pa.command_ozon2csv,
+            "_load_ozon2csv_config",
+            "_parse_ozon_statement",
+        ),
+    ],
+)
+@pytest.mark.parametrize("operation", ["", " \t"])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_bank_commands_reject_empty_operations_before_output(  # pylint: disable=too-many-positional-arguments
+    mocker,
+    tmp_path,
+    capsys,
+    command,
+    loader_name,
+    parser_name,
+    operation,
+    dry_run,
+):
+    source = tmp_path / "statement.pdf"
+    target = tmp_path / "result.csv"
+    source.touch()
+    row = (
+        "01.02.2026 10:20:00",
+        "test-id",
+        "",
+        operation,
+        "",
+        "",
+        "10.00",
+    )
+    mocker.patch.object(pa, loader_name, return_value=[])
+    mocker.patch.object(pa, parser_name, return_value=[row])
+
+    with pytest.raises(pa.errors.UserError) as exc_info:
+        command([source], out_path=target, dry_run=dry_run)
+
+    message = str(exc_info.value)
+    assert "Empty operations are not allowed" in message
+    assert "date='01.02.2026 10:20:00'" in message
+    assert "external_id='test-id'" in message
+    assert str(source) in message
+    assert not target.exists()
+    assert capsys.readouterr().out == ""
+
+
+def test_ozon2csv_rejects_whole_batch_before_rewriting_or_creating(
+    mocker, tmp_path
+):
+    valid_source = tmp_path / "a-valid.pdf"
+    invalid_source = tmp_path / "b-invalid.pdf"
+    valid_target = tmp_path / "a-valid.csv"
+    invalid_target = tmp_path / "b-invalid.csv"
+    valid_source.touch()
+    invalid_source.touch()
+    valid_target.write_text("existing output", encoding="utf-8")
+    valid_row = (
+        "01.02.2026 10:20:00",
+        "Oaccount_1",
+        "",
+        "Payment",
+        "",
+        "",
+        "10.00",
+    )
+    invalid_rows = [
+        (
+            "02.02.2026 10:20:00",
+            "Oaccount_2",
+            "",
+            "",
+            "",
+            "",
+            "20.00",
+        ),
+        (
+            "03.02.2026 10:20:00",
+            "Oaccount_3",
+            "",
+            " ",
+            "",
+            "",
+            "30.00",
+        ),
+    ]
+
+    def parse_statement(path, _rules, original_comment=False):
+        del original_comment
+        return [valid_row] if path == valid_source else invalid_rows
+
+    mocker.patch.object(pa, "_load_ozon2csv_config", return_value=[])
+    mocker.patch.object(pa, "_parse_ozon_statement", parse_statement)
+
+    with pytest.raises(pa.errors.UserError) as exc_info:
+        pa.command_ozon2csv(
+            [valid_source, invalid_source],
+            rewrite=True,
+        )
+
+    message = str(exc_info.value)
+    assert "external_id='Oaccount_2'" in message
+    assert "external_id='Oaccount_3'" in message
+    assert str(invalid_source) in message
+    assert valid_target.read_text(encoding="utf-8") == "existing output"
+    assert not invalid_target.exists()
+
+
 def test_sber2csv_removes_footer_and_normalises_operation_spaces():
     assert pa._apply_rules(  # pylint: disable=protected-access
         "  SHOP   NAME. Операция по карте ****1234  ", _TAIL_RULE
@@ -805,6 +925,48 @@ def test_sber2csv_parses_card_statement(mocker):
     )
 
 
+def test_sber2csv_falls_back_to_card_category_after_rules(mocker):
+    page = _sber_card_page(
+        [
+            (
+                "25.07.2026",
+                "15:20",
+                "887429",
+                [
+                    "Перевод с карты",
+                    "SBOL. Операция по счету ****8546",
+                ],
+                "-498,00",
+                100,
+            )
+        ],
+        totals=("0,00", "498,00"),
+    )
+    _mock_pdf(mocker, [page])
+
+    rows = pa._parse_statement(  # pylint: disable=protected-access
+        "statement.pdf",
+        _rules(
+            {
+                "pattern": r"\.\s*Операция по (?:карте|счету)\b.*$",
+                "action": "remove",
+            },
+            {
+                "pattern": r"^Перевод с карты\s*",
+                "action": "category",
+                "value": "__tr__",
+            },
+            {
+                "pattern": r"\bSBOL\b\.?",
+                "action": "place",
+                "value": "SBOL",
+            },
+        ),
+    )
+
+    assert rows[0][2:5] == ("SBOL", "Перевод с карты", "__tr__")
+
+
 def test_sber2csv_writes_compact_continuation_page(mocker, tmp_path):
     source = tmp_path / "statement.pdf"
     target = tmp_path / "statement.csv"
@@ -897,7 +1059,7 @@ def test_sber2csv_uses_pdf_category_for_empty_incoming_transfers(mocker):
     )
 
 
-def test_sber2csv_keeps_empty_outgoing_operation_without_fallback(mocker):
+def test_sber2csv_uses_pdf_category_for_empty_card_operations(mocker):
     _mock_pdf(mocker, [_sber_debit_page()])
 
     rows = pa._parse_statement(  # pylint: disable=protected-access
@@ -907,7 +1069,35 @@ def test_sber2csv_keeps_empty_outgoing_operation_without_fallback(mocker):
 
     by_code = {row[1]: row for row in rows}
     assert by_code["199029"][3] == "Перевод на карту"
-    assert by_code["151502"][3] == ""
+    assert by_code["151502"][3] == "Прочие операции"
+
+
+def test_sber2csv_rejects_empty_account_operation_without_fallback(
+    mocker, tmp_path
+):
+    source = tmp_path / "statement.pdf"
+    target = tmp_path / "statement.csv"
+    source.touch()
+    page = _sber_account_page(
+        [("01.02.2026", "Transfer", "-10,00", 100)],
+        totals=("0,00", "10,00"),
+    )
+    _mock_pdf(mocker, [page])
+    mocker.patch.object(
+        pa,
+        "_load_sber2csv_config",
+        return_value=_rules({"pattern": r".*", "action": "remove"}),
+    )
+
+    with pytest.raises(pa.errors.UserError) as exc_info:
+        pa.command_sber2csv([source])
+
+    message = str(exc_info.value)
+    assert "Empty operations are not allowed" in message
+    assert "date='01.02.2026 00:00:00'" in message
+    assert "external_id=''" in message
+    assert str(source) in message
+    assert not target.exists()
 
 
 def test_sber2csv_excludes_page_footer_from_original_comment():

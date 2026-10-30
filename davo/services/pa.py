@@ -390,7 +390,7 @@ def _parse_statement(path, rules, original_comment=True):
     result = []
     for date, time, code, source_category, raw, amount in parsed:
         place, category, operation = _apply_rules(raw, rules)
-        if amount < 0 and not operation and source_category:
+        if not operation and source_category:
             operation = source_category
         result.append(
             (
@@ -783,6 +783,26 @@ def _input_pdfs(paths):
     return result
 
 
+def _validate_operations(plan):
+    """Reject planned CSV rows whose operation is empty."""
+    invalid = []
+    for source, _target, rows in plan:
+        for row in rows:
+            operation = row[3]
+            if not operation or not operation.strip():
+                invalid.append(
+                    "path={!r}, date={!r}, external_id={!r}".format(
+                        str(source), row[0], row[1]
+                    )
+                )
+    if invalid:
+        raise errors.UserError(
+            "Empty operations are not allowed:\n- {}".format(
+                "\n- ".join(invalid)
+            )
+        )
+
+
 def command_sber2csv(  # pylint: disable=too-many-positional-arguments
     paths,
     out_path=None,
@@ -822,15 +842,16 @@ def command_sber2csv(  # pylint: disable=too-many-positional-arguments
             )
         if target.exists() and (explicit or not rewrite):
             raise errors.UserError("Output already exists: {}".format(target))
-        plan.append((target, rows))
+        plan.append((source, target, rows))
         targets.add(target)
     if not plan:
         raise errors.UserError("No supported Sber statements found")
+    _validate_operations(plan)
     if dry_run:
-        for target, _rows in plan:
+        for _source, target, _rows in plan:
             print(target)
         return
-    for target, rows in plan:
+    for _source, target, rows in plan:
         with target.open("w", encoding="utf-8-sig", newline="") as file:
             writer = csv.writer(file)
             writer.writerow(
@@ -882,15 +903,16 @@ def command_tbank2csv(  # pylint: disable=too-many-positional-arguments
             )
         if target.exists() and (explicit or not rewrite):
             raise errors.UserError("Output already exists: {}".format(target))
-        plan.append((target, rows))
+        plan.append((source, target, rows))
         targets.add(target)
     if not plan:
         raise errors.UserError("No supported T-Bank statements found")
+    _validate_operations(plan)
     if dry_run:
-        for target, _rows in plan:
+        for _source, target, _rows in plan:
             print(target)
         return
-    for target, rows in plan:
+    for _source, target, rows in plan:
         with target.open("w", encoding="utf-8-sig", newline="") as file:
             writer = csv.writer(file)
             writer.writerow(
@@ -934,15 +956,16 @@ def command_ozon2csv(  # pylint: disable=too-many-positional-arguments
             )
         if target.exists() and (explicit or not rewrite):
             raise errors.UserError("Output already exists: {}".format(target))
-        plan.append((target, rows))
+        plan.append((source, target, rows))
         targets.add(target)
     if not plan:
         raise errors.UserError("No supported Ozon statements found")
+    _validate_operations(plan)
     if dry_run:
-        for target, _rows in plan:
+        for _source, target, _rows in plan:
             print(target)
         return
-    for target, rows in plan:
+    for _source, target, rows in plan:
         with target.open("w", encoding="utf-8-sig", newline="") as file:
             writer = csv.writer(file)
             writer.writerow(

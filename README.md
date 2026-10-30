@@ -299,6 +299,7 @@ paths or directories, `-o/--out`, `-0/--dry-run`, `-v/--verbose`, and
 adds an `Оригинал` column with the unmodified bank description.
 
 T-Bank supports the text-based English `Bank Statement` / `TBANK` template.
-All converters validate statement totals before writing. Description rules live
-under `pa.sber2csv.rules`, `pa.tbank2csv.rules`, or `pa.ozon2csv.rules` in the
-configuration; the example configuration documents their shared actions.
+All converters validate statement totals before writing and reject the entire
+batch if description rules leave any `Операция` value empty. Description rules
+live under `pa.sber2csv.rules`, `pa.tbank2csv.rules`, or `pa.ozon2csv.rules` in
+the configuration; the example configuration documents their shared actions.
