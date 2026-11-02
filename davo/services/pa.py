@@ -8,6 +8,8 @@ from pathlib import Path
 from davo import errors
 from davo.utils import conf
 
+from . import pa_common, revolut
+
 _DATE_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
 _TIME_RE = re.compile(r"^\d{2}:\d{2}$")
 _AMOUNT_RE = re.compile(r"[+-]?(?:\d{1,3}(?:[ \u00a0]\d{3})*|\d+),\d{2}")
@@ -760,27 +762,7 @@ def _parse_ozon_statement(path, rules, original_comment=False):
     return result
 
 
-def _input_pdfs(paths):
-    result = []
-    for value in paths:
-        path = Path(value).expanduser()
-        if path.is_dir():
-            result.extend(
-                sorted(
-                    item
-                    for item in path.iterdir()
-                    if item.is_file() and item.suffix.lower() == ".pdf"
-                )
-            )
-        elif path.is_file():
-            if path.suffix.lower() != ".pdf":
-                raise errors.UserError("Input is not a PDF: {}".format(path))
-            result.append(path)
-        else:
-            raise errors.UserError("Missing input: {}".format(path))
-    if not result:
-        raise errors.UserError("No PDF files found")
-    return result
+_input_pdfs = pa_common.input_pdfs
 
 
 def _validate_operations(plan):
@@ -816,34 +798,18 @@ def command_sber2csv(  # pylint: disable=too-many-positional-arguments
     if out_path and len(inputs) != 1:
         raise errors.UserError("-o/--out requires exactly one PDF input")
     rules = _load_sber2csv_config(Path.cwd())
-    plan = []
-    targets = set()
-    explicit = Path(out_path).expanduser() if out_path else None
-    requested = {Path(value).expanduser() for value in paths}
-    for source in inputs:
-        try:
-            rows = _parse_statement(
-                source,
-                rules,
-                original_comment=True,
-            )
-        except errors.UserError as exc:
-            if source in requested or not str(exc).startswith(
-                "Not a supported"
-            ):
-                raise
-            if verbose:
-                print("skip unsupported PDF: {}".format(source))
-            continue
-        target = explicit or source.with_name(source.stem + ".csv")
-        if target in targets:
-            raise errors.UserError(
-                "Duplicate output target: {}".format(target)
-            )
-        if target.exists() and (explicit or not rewrite):
-            raise errors.UserError("Output already exists: {}".format(target))
-        plan.append((source, target, rows))
-        targets.add(target)
+    plan = pa_common.conversion_plan(
+        inputs,
+        paths,
+        out_path=out_path,
+        rewrite=rewrite,
+        verbose=verbose,
+        parser=lambda source: _parse_statement(
+            source,
+            rules,
+            original_comment=True,
+        ),
+    )
     if not plan:
         raise errors.UserError("No supported Sber statements found")
     _validate_operations(plan)
@@ -879,32 +845,16 @@ def command_tbank2csv(  # pylint: disable=too-many-positional-arguments
     if out_path and len(inputs) != 1:
         raise errors.UserError("-o/--out requires exactly one PDF input")
     rules = _load_tbank2csv_config(Path.cwd())
-    plan = []
-    targets = set()
-    explicit = Path(out_path).expanduser() if out_path else None
-    requested = {Path(value).expanduser() for value in paths}
-    for source in inputs:
-        try:
-            rows = _parse_tbank_statement(
-                source, rules, original_comment=original_comment
-            )
-        except errors.UserError as exc:
-            if source in requested or not str(exc).startswith(
-                "Not a supported"
-            ):
-                raise
-            if verbose:
-                print("skip unsupported PDF: {}".format(source))
-            continue
-        target = explicit or source.with_name(source.stem + ".csv")
-        if target in targets:
-            raise errors.UserError(
-                "Duplicate output target: {}".format(target)
-            )
-        if target.exists() and (explicit or not rewrite):
-            raise errors.UserError("Output already exists: {}".format(target))
-        plan.append((source, target, rows))
-        targets.add(target)
+    plan = pa_common.conversion_plan(
+        inputs,
+        paths,
+        out_path=out_path,
+        rewrite=rewrite,
+        verbose=verbose,
+        parser=lambda source: _parse_tbank_statement(
+            source, rules, original_comment=original_comment
+        ),
+    )
     if not plan:
         raise errors.UserError("No supported T-Bank statements found")
     _validate_operations(plan)
@@ -932,32 +882,16 @@ def command_ozon2csv(  # pylint: disable=too-many-positional-arguments
     if out_path and len(inputs) != 1:
         raise errors.UserError("-o/--out requires exactly one PDF input")
     rules = _load_ozon2csv_config(Path.cwd())
-    plan = []
-    targets = set()
-    explicit = Path(out_path).expanduser() if out_path else None
-    requested = {Path(value).expanduser() for value in paths}
-    for source in inputs:
-        try:
-            rows = _parse_ozon_statement(
-                source, rules, original_comment=original_comment
-            )
-        except errors.UserError as exc:
-            if source in requested or not str(exc).startswith(
-                "Not a supported"
-            ):
-                raise
-            if verbose:
-                print("skip unsupported PDF: {}".format(source))
-            continue
-        target = explicit or source.with_name(source.stem + ".csv")
-        if target in targets:
-            raise errors.UserError(
-                "Duplicate output target: {}".format(target)
-            )
-        if target.exists() and (explicit or not rewrite):
-            raise errors.UserError("Output already exists: {}".format(target))
-        plan.append((source, target, rows))
-        targets.add(target)
+    plan = pa_common.conversion_plan(
+        inputs,
+        paths,
+        out_path=out_path,
+        rewrite=rewrite,
+        verbose=verbose,
+        parser=lambda source: _parse_ozon_statement(
+            source, rules, original_comment=original_comment
+        ),
+    )
     if not plan:
         raise errors.UserError("No supported Ozon statements found")
     _validate_operations(plan)
@@ -974,3 +908,6 @@ def command_ozon2csv(  # pylint: disable=too-many-positional-arguments
                 else _CSV_HEADER
             )
             writer.writerows(rows)
+
+
+command_revo2csv = revolut.command

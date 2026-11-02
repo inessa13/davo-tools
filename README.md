@@ -292,11 +292,18 @@ succeeds.
 
 ## Bank statements
 
-`davo pa sber2csv`, `davo pa tbank2csv`, and `davo pa ozon2csv` convert their
-supported PDF statements into the common expenses CSV format. Each accepts PDF
-paths or directories, `-o/--out`, `-0/--dry-run`, `-v/--verbose`, and
-`-W/--rewrite`; automatic output is named after its PDF. `-O/--original-comment`
-adds an `Оригинал` column with the unmodified bank description.
+`davo pa sber2csv`, `davo pa tbank2csv`, `davo pa ozon2csv`, and
+`davo pa revo2csv` convert their supported PDF statements to CSV. Each accepts
+PDF paths or directories, `-o/--out`, `-0/--dry-run`, `-v/--verbose`, and
+`-W/--rewrite`; automatic output is named after its PDF. The first three use
+the common expenses format, and `-O/--original-comment` adds an `Оригинал`
+column with the unmodified bank description.
+
+`revo2csv` accepts Russian and English Revolut current-account statements and
+writes the Russian Revolut V3 importer schema in UTF-8 without a BOM. PDF dates
+are emitted at `00:00:00` because statements contain no transaction time. The
+converter reconciles summary totals and every running balance before any file
+in the batch is written.
 
 T-Bank supports the text-based English `Bank Statement` / `TBANK` template.
 All converters validate statement totals before writing and reject the entire

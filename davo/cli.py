@@ -288,6 +288,27 @@ def init_parser():
         help="add the complete original bank description in Оригинал",
     )
     ozon2csv.set_defaults(func=_run_ozon2csv)
+    revo2csv = pa_subparsers.add_parser(
+        "revo2csv", help="convert Revolut PDF statements to importer CSV"
+    )
+    revo2csv.add_argument("paths", nargs="+", metavar="PATH")
+    revo2csv.add_argument("-o", "--out", dest="out_path")
+    revo2csv.add_argument(
+        "-0",
+        "--dry-run",
+        action="store_true",
+        help="validate without writing CSV",
+    )
+    revo2csv.add_argument(
+        "-v", "--verbose", action="store_true", help="show skipped PDF files"
+    )
+    revo2csv.add_argument(
+        "-W",
+        "--rewrite",
+        action="store_true",
+        help="replace automatic CSV targets",
+    )
+    revo2csv.set_defaults(func=_run_revo2csv)
 
     cmd = subparsers.add_parser("file", help="file tools")
     cmd, _subparsers = services.photo.cli.init_parser(
@@ -406,6 +427,21 @@ def _run_tbank2csv(namespace):
             verbose=namespace.verbose,
             rewrite=namespace.rewrite,
             original_comment=namespace.original_comment,
+        )
+    except errors.UserError as exc:
+        logger.error(exc)
+        raise SystemExit(1) from exc
+
+
+def _run_revo2csv(namespace):
+    """Make Revolut statement parsing failures observable to the shell."""
+    try:
+        return services.pa.command_revo2csv(
+            namespace.paths,
+            out_path=namespace.out_path,
+            dry_run=namespace.dry_run,
+            verbose=namespace.verbose,
+            rewrite=namespace.rewrite,
         )
     except errors.UserError as exc:
         logger.error(exc)

@@ -94,6 +94,49 @@ def test_parser_accepts_ozon_original_comment_option(option):
     assert namespace.original_comment is True
 
 
+@pytest.mark.parametrize(
+    ("option", "attribute"),
+    [
+        ("-0", "dry_run"),
+        ("--dry-run", "dry_run"),
+        ("-v", "verbose"),
+        ("--verbose", "verbose"),
+        ("-W", "rewrite"),
+        ("--rewrite", "rewrite"),
+    ],
+)
+def test_parser_accepts_revo2csv_options(option, attribute):
+    namespace = cli.init_parser().parse_args(
+        ["pa", "revo2csv", option, "statement.pdf"]
+    )
+
+    assert getattr(namespace, attribute) is True
+    assert callable(namespace.func)
+
+
+def test_revo2csv_cli_converts_user_errors_to_failure(mocker):
+    command = mocker.patch.object(
+        cli.services.pa,
+        "command_revo2csv",
+        side_effect=cli.errors.UserError("bad statement"),
+    )
+    namespace = cli.init_parser().parse_args(
+        ["pa", "revo2csv", "-o", "result.csv", "statement.pdf"]
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        namespace.func(namespace)
+
+    assert exc_info.value.code == 1
+    command.assert_called_once_with(
+        ["statement.pdf"],
+        out_path="result.csv",
+        dry_run=False,
+        verbose=False,
+        rewrite=False,
+    )
+
+
 @pytest.mark.parametrize("option", ["-t", "--table"])
 def test_parser_sets_table_for_image_diff(option):
     namespace = cli.init_parser().parse_args(
